@@ -7,7 +7,9 @@
 //! effect that branches (`if cond.get() { a.get() } else { b.get() }`)
 //! only stays subscribed to whichever branch it last took.
 
+use serde::de::DeserializeOwned;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 type EffectFn = dyn FnMut();
@@ -38,6 +40,27 @@ thread_local! {
     static EFFECT_STACK: RefCell<Vec<Rc<EffectNode>>> = const { RefCell::new(Vec::new()) };
 }
 
+// ---------------------------------------------------------------------------
+// Hydration state — set before creating signals so `Signal::hydrated` can
+// restore server-side values instead of using the default.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static HYDRATION_STATE: RefCell<Option<HashMap<String, serde_json::Value>>> =
+        const { RefCell::new(None) };
+}
+
+/// Feed server-serialised signal values into the runtime before any
+/// `Signal::hydrated(...)` call. The map is consumed once (cleared on read).
+pub fn set_hydration_state(state: HashMap<String, serde_json::Value>) {
+    HYDRATION_STATE.with(|s| *s.borrow_mut() = Some(state));
+}
+
+/// Take (and clear) the current hydration state, if any.
+pub fn take_hydration_state() -> Option<HashMap<String, serde_json::Value>> {
+    HYDRATION_STATE.with(|s| s.borrow_mut().take())
+}
+
 /// A reactive value. Cloning a `Signal` gives another handle to the same
 /// underlying storage (like `Rc`), not an independent copy of the value.
 pub struct Signal<T> {
@@ -65,6 +88,24 @@ impl<T: Clone + 'static> Signal<T> {
                 subscribers: Vec::new(),
             })),
         }
+    }
+
+    /// Create a signal whose initial value is taken from the server-side
+    /// hydration state (keyed by `name`). Falls back to `default` when no
+    /// hydration data is available — making it safe to use in both SSR and
+    /// client-only contexts.
+    pub fn hydrated(name: &str, default: T) -> Self
+    where
+        T: DeserializeOwned,
+    {
+        let value = HYDRATION_STATE.with(|s| {
+            s.borrow()
+                .as_ref()
+                .and_then(|m| m.get(name).cloned())
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or(default)
+        });
+        Signal::new(value)
     }
 
     /// Reads the current value, subscribing the currently-running effect
@@ -237,5 +278,30 @@ mod tests {
 
         b.set(300);
         assert_eq!(*seen.borrow(), vec![1, 200, 300]);
+    }
+
+    #[test]
+    fn hydrated_uses_hydration_state_when_available() {
+        let mut state = std::collections::HashMap::new();
+        state.insert("count".to_string(), serde_json::json!(42));
+        super::set_hydration_state(state);
+
+        let s: Signal<i32> = Signal::hydrated("count", 0);
+        assert_eq!(s.get(), 42, "should pick up the server-side value");
+
+        // State is still available (not consumed on read) for subsequent calls.
+        let s2: Signal<i32> = Signal::hydrated("count", 0);
+        assert_eq!(s2.get(), 42, "state is not consumed until take_hydration_state");
+
+        // After explicit take, new signals fall back to default.
+        let _taken = super::take_hydration_state();
+        let s3: Signal<i32> = Signal::hydrated("count", 0);
+        assert_eq!(s3.get(), 0, "hydration state was consumed by take");
+    }
+
+    #[test]
+    fn hydrated_falls_back_to_default_without_hydration_state() {
+        let s: Signal<i32> = Signal::hydrated("missing", 99);
+        assert_eq!(s.get(), 99);
     }
 }

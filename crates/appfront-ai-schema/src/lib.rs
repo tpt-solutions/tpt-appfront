@@ -1,14 +1,16 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! AI Schema backends: `UITree` → JSON-LD (structured data) and
+//! `UITree` → custom AI Schema (interactive elements, actions, params).
+//! See `docs/ai-schema.md` for the format definitions.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod ai_schema;
+mod json_ld;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub use ai_schema::{to_ai_schema, to_ai_schema_value, AiSchemaOutput, DataElement, InteractiveElement};
+pub use json_ld::to_json_ld;
+
+use appfront_core::UITree;
+
+/// Convenience: returns both formats as a pair `(json_ld, ai_schema)`.
+pub fn both<Msg>(ui: &UITree<Msg>) -> (serde_json::Value, ai_schema::AiSchemaOutput) {
+    (json_ld::to_json_ld(ui), ai_schema::to_ai_schema(ui))
 }

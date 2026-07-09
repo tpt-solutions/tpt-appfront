@@ -40,9 +40,10 @@ impl TextMeasurer {
 
         let line_height = font_size * 1.2;
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(font_size, line_height));
-        buffer.set_size(&mut self.font_system, None, None);
+        buffer.set_size(None, None);
         let text = if text.is_empty() { " " } else { text };
-        buffer.set_text(&mut self.font_system, text, &Attrs::new(), Shaping::Advanced);
+        buffer.set_text(text, &Attrs::new(), Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut self.font_system, false);
 
         let mut width = 0.0f32;
         let mut lines = 0usize;

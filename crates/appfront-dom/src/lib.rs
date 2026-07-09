@@ -5,10 +5,19 @@
 //! app-defined `Msg` back through a caller-supplied callback. This crate
 //! only does anything on `wasm32` targets; on other targets it compiles to
 //! an empty crate so the workspace still builds natively.
+//!
+//! ## Hydration
+//!
+//! [`hydrate`] is the counterpart to server-side rendering (SSR). Instead of
+//! creating fresh DOM nodes, it reads the serialised `HydrationPayload` from
+//! `<script id="__APPFRONT_STATE__">`, matches each `UITree` node to its
+//! server-rendered DOM element via `data-appfront-id`, and attaches event
+//! listeners — no DOM mutation.
 
 #![cfg(target_arch = "wasm32")]
 
-use appfront_core::{NodeKind, UITree};
+use appfront_core::{HydrationPayload, NodeKind, UITree};
+use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -112,6 +121,17 @@ where
         }
     }
 
+    if let Some(action) = &ui.meta.ai.action {
+        if let Some(el) = node.dyn_ref::<Element>() {
+            el.set_attribute("data-ai-action", action)?;
+            if !ui.meta.ai.params.is_empty() {
+                let params_json = serde_json::to_string(&json_obj(&ui.meta.ai.params))
+                    .unwrap_or_default();
+                el.set_attribute("data-ai-params", &params_json)?;
+            }
+        }
+    }
+
     if let Some(msg) = ui.meta.on_click.clone() {
         let dispatch = Rc::clone(dispatch);
         let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
@@ -124,6 +144,16 @@ where
     }
 
     Ok(node)
+}
+
+/// Converts `Vec<(String, String)>` to a JSON object for `data-ai-params`.
+fn json_obj(pairs: &[(String, String)]) -> serde_json::Value {
+    use std::collections::BTreeMap;
+    let mut map = BTreeMap::new();
+    for (k, v) in pairs {
+        map.insert(k.clone(), serde_json::Value::String(v.clone()));
+    }
+    serde_json::Value::Object(map.into_iter().collect())
 }
 
 /// Ties a `Text` DOM node's content directly to a `Signal<String>`: when the
@@ -144,4 +174,147 @@ pub fn reactive_text(
     // component-lifecycle system (tracked as future work).
     std::mem::forget(handle);
     Ok(text_node.into())
+}
+
+// ---------------------------------------------------------------------------
+// Hydration (resumability from server-rendered HTML)
+// ---------------------------------------------------------------------------
+
+/// Resume interactivity on a DOM tree that was pre-rendered by the server.
+///
+/// 1. Reads the serialised [`HydrationPayload`] from
+///    `<script id="__APPFRONT_STATE__">`.
+/// 2. Restores signal hydration state so that `Signal::hydrated("name", def)`
+///    calls pick up the server-side values.
+/// 3. Walks the deserialised `UITree` and attaches event listeners to
+///    existing DOM elements matched by `data-appfront-id`.
+///
+/// No DOM nodes are created or moved — only event handlers are attached.
+pub fn hydrate<Msg>(
+    container: &Element,
+    dispatch: Rc<dyn Fn(Msg)>,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + serde::de::DeserializeOwned + 'static,
+{
+    let Some(payload) = read_state_payload::<Msg>()? else {
+        // No hydration state found — nothing to resume.
+        return Ok(());
+    };
+
+    // Restore signal values so Signal::hydrated(...) picks them up.
+    appfront_core::set_hydration_state(payload.signals);
+
+    let id_map = build_id_map(container)?;
+    hydrate_node(&payload.tree, &dispatch, &id_map)?;
+
+    Ok(())
+}
+
+/// Read and deserialise `<script id="__APPFRONT_STATE__">` if it exists.
+fn read_state_payload<Msg>() -> Result<Option<HydrationPayload<Msg>>, wasm_bindgen::JsValue>
+where
+    Msg: serde::de::DeserializeOwned,
+{
+    let document = web_sys::window()
+        .expect("no window")
+        .document()
+        .expect("no document");
+
+    let Some(script_el) = document.get_element_by_id("__APPFRONT_STATE__") else {
+        return Ok(None);
+    };
+
+    let json = script_el.text_content().unwrap_or_default();
+    let payload: HydrationPayload<Msg> = serde_json::from_str(&json).map_err(|e| {
+        wasm_bindgen::JsValue::from_str(&format!("failed to parse __APPFRONT_STATE__: {e}"))
+    })?;
+
+    Ok(Some(payload))
+}
+
+/// Collect every element with a `data-appfront-id` attribute into a
+/// `u64 -> Element` map for O(1) lookups during hydration.
+fn build_id_map(container: &Element) -> Result<HashMap<u64, Element>, wasm_bindgen::JsValue> {
+    let list = container.query_selector_all("[data-appfront-id]")?;
+    let mut map = HashMap::new();
+    for i in 0..list.length() {
+        let node = list.item(i);
+        if let Some(el) = node.and_then(|n| n.dyn_into::<Element>().ok()) {
+            if let Some(id_str) = el.get_attribute("data-appfront-id") {
+                if let Ok(id) = id_str.parse::<u64>() {
+                    map.insert(id, el.clone());
+                }
+            }
+        }
+    }
+    Ok(map)
+}
+
+/// Recursively walk the `UITree` and attach listeners to pre-existing DOM
+/// elements whose `data-appfront-id` matches.
+fn hydrate_node<Msg>(
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+    id_map: &HashMap<u64, Element>,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    if let Some(id) = ui.meta.data_appfront_id {
+        if let Some(el) = id_map.get(&id) {
+            attach_listeners(ui, dispatch, el)?;
+        }
+    }
+
+    match &ui.kind {
+        NodeKind::Container { children } => {
+            for child in children {
+                hydrate_node(child, dispatch, id_map)?;
+            }
+        }
+        NodeKind::List { items } => {
+            for item in items {
+                hydrate_node(item, dispatch, id_map)?;
+            }
+        }
+        NodeKind::DataGrid { .. }
+        | NodeKind::Heading { .. }
+        | NodeKind::Text { .. }
+        | NodeKind::Button { .. }
+        | NodeKind::Input { .. } => {}
+    }
+
+    Ok(())
+}
+
+/// Attach event listeners (and AI attributes) to a single existing element.
+fn attach_listeners<Msg>(
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+    el: &Element,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    if let Some(msg) = ui.meta.on_click.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
+        let html_el: &web_sys::HtmlElement = el.dyn_ref::<web_sys::HtmlElement>().ok_or_else(|| {
+            wasm_bindgen::JsValue::from_str("element is not an HtmlElement")
+        })?;
+        html_el.set_onclick(Some(closure.as_ref().unchecked_ref()));
+        closure.forget();
+    }
+
+    if let Some(action) = &ui.meta.ai.action {
+        el.set_attribute("data-ai-action", action)?;
+        if !ui.meta.ai.params.is_empty() {
+            let params_json = serde_json::to_string(&json_obj(&ui.meta.ai.params))
+                .unwrap_or_default();
+            el.set_attribute("data-ai-params", &params_json)?;
+        }
+    }
+
+    Ok(())
 }

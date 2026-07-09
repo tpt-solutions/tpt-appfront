@@ -28,29 +28,32 @@ impl<Msg: Clone + 'static> CanvasApp<Msg> {
 }
 
 impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ui_tree = (self.build_ui)();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let mut tree: TaffyTree<()> = TaffyTree::new();
-            let root = layout::build(&mut tree, &mut self.measurer, &ui_tree);
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let root = layout::build(&mut tree, &mut self.measurer, &ui_tree);
 
-            let available = ui.available_size();
-            tree.compute_layout(
-                root.taffy_id,
-                taffy::Size {
-                    width: taffy::AvailableSpace::Definite(available.x),
-                    height: taffy::AvailableSpace::Definite(available.y),
-                },
-            )
-            .expect("taffy compute_layout");
+        let available = ui.available_size();
+        tree.compute_layout(
+            root.taffy_id,
+            taffy::Size {
+                width: taffy::AvailableSpace::Definite(available.x),
+                height: taffy::AvailableSpace::Definite(available.y),
+            },
+        )
+        .expect("taffy compute_layout");
 
-            let origin = ui.min_rect().min;
-            let mut id_seed = 0u64;
-            paint::paint(ui, &tree, &root, origin, &self.dispatch, &mut id_seed);
+        let origin = ui.min_rect().min;
+        let mut id_seed = 0u64;
+        paint::paint(ui, &tree, &root, origin, &self.dispatch, &mut id_seed);
 
-            let root_layout = tree.layout(root.taffy_id).expect("root layout");
-            ui.allocate_space(egui::vec2(root_layout.size.width, root_layout.size.height));
-        });
+        let root_layout = tree.layout(root.taffy_id).expect("root layout");
+        ui.allocate_space(egui::vec2(root_layout.size.width, root_layout.size.height));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(&mut *self)
     }
 }
