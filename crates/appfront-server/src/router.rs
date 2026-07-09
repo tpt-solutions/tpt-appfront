@@ -97,28 +97,26 @@ impl<Msg> SmartRouterBuilder<Msg> {
     }
 
     pub fn build(self) -> SmartRouter<Msg> {
-        let wasm_shell_template = format!(
-            r#"<!DOCTYPE html>
+        let wasm_shell_template = r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{0}</title>
-<meta property="og:title" content="{0}">
-<meta property="og:description" content="{1}">
+<title>{TITLE}</title>
+<meta property="og:title" content="{TITLE}">
+<meta property="og:description" content="{DESC}">
 <meta property="og:type" content="website">
 </head>
 <body>
 <div id="appfront-root"></div>
 <script type="module">
-import init from '{2}';
+import init from '{WASM}';
 init().catch(e => console.error('appfront init failed', e));
 </script>
 </body>
 </html>
-"#,
-            "{}", "{}", "{}"
-        );
+"#
+        .to_string();
 
         SmartRouter {
             ui: self.ui,
@@ -217,9 +215,9 @@ where
         // Legacy bare-WASM shell.
         let shell = state
             .wasm_shell_template
-            .replacen("{}", &appfront_html::esc_attr(&state.title), 1)
-            .replacen("{}", &appfront_html::esc_attr(&state.description), 1)
-            .replacen("{}", &state.wasm_path, 1);
+            .replace("{TITLE}", &appfront_html::esc_attr(&state.title))
+            .replace("{DESC}", &appfront_html::esc_attr(&state.description))
+            .replace("{WASM}", &state.wasm_path);
         return Html(shell);
     }
 
@@ -318,6 +316,7 @@ mod tests {
         let state = std::sync::Arc::new(test_router());
         let resp = human_shell(&state).await;
         assert!(resp.0.contains("<title>Test App</title>"));
+        assert!(resp.0.contains("import init from '/app.wasm'"));
         assert!(!resp.0.contains("data-appfront-id"));
     }
 
