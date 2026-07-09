@@ -6,3 +6,15 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+appfront-core = { path = "../appfront-core" }
+eframe = "0.35"
+taffy = "0.12"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cosmic-text = "0.19"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }
+console_error_panic_hook = "0.1"
