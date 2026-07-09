@@ -60,7 +60,9 @@ Architecture: one `UITree` + signal core, with DOM, Canvas, HTML(SSR), and AI-Sc
 - [x] Client (WASM) resumes: attaches listeners to existing DOM nodes instead of re-rendering
 
 ## Phase 10 — Programmatic AI Agent API
-- [ ] `appfront::query_state()`, `appfront::navigate_to()`, `appfront::trigger_event()` headless API
+- [x] `appfront::query_state()`, `appfront::navigate_to()`, `appfront::trigger_event()` headless API
+- [x] Reactive route signal (`route_signal()`, `current_route()`) for effects to subscribe to
+- [x] `AgentState` / `ElementSummary` structs serializable as JSON for LLM consumption
 
 ## Phase 11 — Stretch / Optional
 - [ ] GPU-accelerated layout via WebGPU compute shaders (feature-flagged; `taffy` remains default)

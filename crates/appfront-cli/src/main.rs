@@ -83,6 +83,13 @@ fn dep_path(crate_name: &str) -> String {
 }
 
 fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
+    if name.is_empty()
+        || name.contains(['/', '\\'])
+        || name == ".."
+        || Path::new(name).is_absolute()
+    {
+        bail!("invalid project name `{name}`: must be a plain directory name, not a path");
+    }
     let root = PathBuf::from(name);
     if root.exists() {
         bail!("directory `{name}` already exists");

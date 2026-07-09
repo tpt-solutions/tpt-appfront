@@ -205,7 +205,8 @@ fn esc_text(s: &str) -> String {
     out
 }
 
-fn esc_attr(s: &str) -> String {
+/// Escapes a string for safe use inside a double-quoted HTML attribute value.
+pub fn esc_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
@@ -214,6 +215,25 @@ fn esc_attr(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#x27;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Escapes a JSON-encoded string for safe embedding inside an inline
+/// `<script>` element. `serde_json` does not escape `<`, so a value
+/// containing the literal text `</script>` would otherwise terminate the
+/// element early and inject attacker-controlled markup; this replaces the
+/// HTML-sensitive characters with their `\uXXXX` JSON escapes, which are
+/// semantically identical JSON but inert as HTML.
+pub fn esc_script_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for ch in json.chars() {
+        match ch {
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
             c => out.push(c),
         }
     }

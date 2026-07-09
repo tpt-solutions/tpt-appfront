@@ -217,8 +217,8 @@ where
         // Legacy bare-WASM shell.
         let shell = state
             .wasm_shell_template
-            .replacen("{}", &state.title, 1)
-            .replacen("{}", &state.description, 1)
+            .replacen("{}", &appfront_html::esc_attr(&state.title), 1)
+            .replacen("{}", &appfront_html::esc_attr(&state.description), 1)
             .replacen("{}", &state.wasm_path, 1);
         return Html(shell);
     }
@@ -258,10 +258,10 @@ init().catch(e => console.error('appfront init failed', e));
 </body>
 </html>
 "#,
-        title = state.title,
-        desc = state.description,
+        title = appfront_html::esc_attr(&state.title),
+        desc = appfront_html::esc_attr(&state.description),
         body = body,
-        state_json = state_json,
+        state_json = appfront_html::esc_script_json(&state_json),
         wasm_path = wasm_path,
     );
 
@@ -319,6 +319,52 @@ mod tests {
         let resp = human_shell(&state).await;
         assert!(resp.0.contains("<title>Test App</title>"));
         assert!(!resp.0.contains("data-appfront-id"));
+    }
+
+    #[tokio::test]
+    async fn legacy_shell_escapes_title_and_description() {
+        let ui = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.heading(1, "Hello");
+        });
+        let router = SmartRouterBuilder::new(ui)
+            .title("</title><script>alert(1)</script>")
+            .description("<img src=x onerror=alert(1)>")
+            .static_dir("dist")
+            .build();
+        let state = std::sync::Arc::new(router);
+
+        let resp = human_shell(&state).await;
+        assert!(!resp.0.contains("<script>alert(1)</script>"));
+        assert!(!resp.0.contains("<img src=x onerror=alert(1)>"));
+    }
+
+    #[tokio::test]
+    async fn hydration_page_escapes_title_description_and_state() {
+        let mut signals = HashMap::new();
+        signals.insert(
+            "evil".to_string(),
+            serde_json::json!("</script><script>alert(1)</script>"),
+        );
+
+        let ui = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.heading(1, "Hello");
+        });
+        let router = SmartRouterBuilder::new(ui)
+            .title("</title><script>alert(2)</script>")
+            .description("<img src=x onerror=alert(2)>")
+            .enable_hydration(true)
+            .signals(signals)
+            .build();
+        let state = std::sync::Arc::new(router);
+
+        let resp = human_shell(&state).await;
+        let html = &resp.0;
+
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(!html.contains("<script>alert(2)</script>"));
+        assert!(!html.contains("<img src=x onerror=alert(2)>"));
+        // The script tag housing the state must not be terminated early.
+        assert!(!html.contains("</script><script>alert(1)</script>"));
     }
 
     #[tokio::test]

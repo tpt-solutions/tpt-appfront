@@ -282,6 +282,7 @@ dependencies = [
 name = "appfront-core"
 version = "0.1.0"
 dependencies = [
+ "appfront-macros",
  "serde",
  "serde_json",
 ]
@@ -307,6 +308,11 @@ dependencies = [
 [[package]]
 name = "appfront-macros"
 version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "appfront-server"
