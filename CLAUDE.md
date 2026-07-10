@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-TPT AppFront: write a UI once in Rust as an abstract `UITree<Msg>`, render it to multiple backends (native/WASM canvas via egui/wgpu, reactive DOM via web-sys, semantic HTML, AI/JSON-LD schema) from one codebase. Full design doc in [spec.txt](spec.txt); build checklist/phase status in [todo.md](todo.md) — check `todo.md` before assuming a feature exists, most backends are still stubs.
+TPT AppFront: write a UI once in Rust as an abstract `UITree<Msg>`, render it to multiple backends (native/WASM canvas via egui/wgpu, reactive DOM via web-sys, semantic HTML, AI/JSON-LD schema) from one codebase, and serve the right one per client via a smart router. Full design doc in [spec.txt](spec.txt); build checklist/phase status in [todo.md](todo.md) — check `todo.md` before assuming a feature exists, some phases (islands/partial hydration, webview desktop shell, GPU-compute layout) are still planned/stretch work.
 
 ## Commands
 
@@ -33,10 +33,11 @@ Everything flows through one abstract tree, defined once in `appfront-core`, con
 appfront-core (UITree<Msg> AST + Signal<T> reactive system)
    ├── appfront-dom     — wasm32-only; UITree -> real DOM via web-sys, no vdom
    ├── appfront-canvas  — native + wasm32; UITree -> egui via eframe, taffy layout
-   ├── appfront-html    — stub; UITree -> semantic HTML string (SSR/SSG)
-   └── appfront-ai-schema — stub; UITree -> JSON-LD / AI-agent schema
-appfront-macros — stub; future #[appfront::component] compile-time optimizer
-appfront-cli    — stub; future `appfront` CLI (init/dev/build)
+   ├── appfront-html    — UITree -> semantic HTML string (SSR/SSG), data-ai-*/OpenGraph tags
+   ├── appfront-ai-schema — UITree -> JSON-LD (schema.org) + custom AI Schema (interactive elements/actions/params)
+   └── appfront-server  — Axum "smart router": detects ClientKind (browser/crawler/AI agent/social bot) and serves the matching backend
+appfront-macros — #[appfront::component] proc macro (auto-fills meta.class/meta.ai.description); no static/dynamic codegen yet
+appfront-cli    — `appfront` CLI: init/dev/build, scaffolds canvas/dom projects with path deps back into this checkout
 ```
 
 - **`appfront-core`** (`crates/appfront-core/src`): `ui_tree.rs` defines `UITree<Msg>` (`kind: NodeKind<Msg>` + `meta: NodeMeta<Msg>` for `class`/`on_click`) and `ContainerBuilder`/`NodeRef`, the chainable builder API (`UITree::container(|c| { c.button("x").on_click(Msg::X); })`). The crate is generic over the app's own `Msg` enum — it has no opinion on what events exist. `signal.rs` is a from-scratch SolidJS-style reactive system: `Signal<T>::get()` subscribes the currently-running effect (tracked via a thread-local stack in `EFFECT_STACK`), `set()` re-runs only those effects, and dependencies are recomputed from scratch on every effect run so conditional branches re-subscribe correctly. `EffectHandle` must be kept alive (or `mem::forget`'d) or the effect stops firing when dropped.
@@ -45,9 +46,17 @@ appfront-cli    — stub; future `appfront` CLI (init/dev/build)
 
 - **`appfront-canvas`** (`crates/appfront-canvas/src`): `CanvasApp` (`app.rs`) implements `eframe::App`; each frame it calls the app's `build_ui` closure to get a fresh `UITree` (immediate-mode, matching egui's own paradigm), builds a `taffy::TaffyTree` for layout (`layout.rs`), then paints (`paint.rs`) and dispatches any clicked `on_click` `Msg` through the `dispatch` callback. `run_native` (desktop) and `run_web` (mounts onto a `<canvas id="...">`, wasm32 only) are the two entry points exported from `lib.rs`. Text measurement is abstracted via `TextMeasurer` in `text.rs`.
 
-- **`appfront-html`, `appfront-ai-schema`, `appfront-macros`, `appfront-cli`**: currently placeholder crates (default `cargo new` contents) — check `todo.md` Phases 5–8 before assuming any functionality exists here.
+- **`appfront-html`** (`crates/appfront-html/src/lib.rs`): `UITree` → semantic HTML string for SSR/SSG, including `data-ai-action` attributes and OpenGraph tags for social-bot crawls.
 
-- **`examples/`**: excluded from the workspace (`Cargo.toml` `exclude = ["examples"]`) since they need their own dependency resolution (wasm-bindgen versions, `cdylib` crate-type for trunk). `counter-dom` builds with `trunk`; `counter-canvas` is a plain native `cargo run`. Both are built in CI's `examples` job.
+- **`appfront-ai-schema`** (`crates/appfront-ai-schema/src`): `json_ld.rs` renders `UITree` → JSON-LD (schema.org rich snippets); `ai_schema.rs` renders a custom AI-agent schema describing interactive elements/actions/params. Format frozen in [docs/ai-schema.md](docs/ai-schema.md).
+
+- **`appfront-server`** (`crates/appfront-server/src`): `client_kind.rs` classifies a request (User-Agent/query param) into human/crawler/AI-agent/social-bot; `router.rs`'s `SmartRouter`/`SmartRouterBuilder` wires that classification to the right backend (WASM shell for humans, `appfront-html` for crawlers/social bots, `appfront-ai-schema` for AI agents) and exports `build_router` for standalone `axum::serve` use.
+
+- **`appfront-macros`** (`crates/appfront-macros/src/lib.rs`): `#[appfront::component]` proc macro (re-exported as `appfront_core::component`) wraps a `UITree`-returning fn and auto-fills `meta.class` (kebab-cased fn name) and `meta.ai.description` (from the doc comment) on the root node if unset. Static/dynamic content analysis and codegen are not implemented yet (Phase 5).
+
+- **`appfront-cli`** (`crates/appfront-cli/src`): `clap`-based `appfront init/dev/build`. `init` scaffolds a canvas/dom project with path deps back into this checkout; `dev --desktop`/`dev --web` shell out to `cargo run`/`trunk serve`; `build --target <canvas|dom|html|ai-schema>` shells out to `cargo build --release`/`trunk build --release` (or prints embedding guidance for the library-only `html`/`ai-schema` targets). See [docs/quickstart.md](docs/quickstart.md).
+
+- **`examples/`**: excluded from the workspace (`Cargo.toml` `exclude = ["examples"]`) since they need their own dependency resolution (wasm-bindgen versions, `cdylib` crate-type for trunk). `counter-dom` builds with `trunk`; `counter-canvas` is a plain native `cargo run`. Both are built in CI's `examples` job. As of this writing the directory is empty in a fresh checkout — scaffold it locally with `appfront init` (see [docs/quickstart.md](docs/quickstart.md)) or restore the committed examples if/when they're added to the repo.
 
 ## Working in this repo
 

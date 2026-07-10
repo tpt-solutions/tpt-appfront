@@ -1,7 +1,6 @@
 /target
 /dist
 **/dist
-/examples
 .trunk
 *.pdb
 .DS_Store
