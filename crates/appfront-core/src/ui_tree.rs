@@ -56,6 +56,12 @@ pub struct NodeMeta<Msg> {
     /// (see Phase 9 islands hydration).
     #[serde(default)]
     pub is_dynamic: bool,
+    /// Stable identity for reconciliation, e.g. a row/entity id. Set via
+    /// [`NodeRef::key`] on items inside a [`NodeKind::List`]/[`NodeKind::DataGrid`]
+    /// so backends can diff add/remove/reorder against a previous render
+    /// instead of rebuilding every child from scratch.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 impl<Msg> Default for NodeMeta<Msg> {
@@ -66,6 +72,7 @@ impl<Msg> Default for NodeMeta<Msg> {
             ai: AiMeta::default(),
             data_appfront_id: None,
             is_dynamic: false,
+            key: None,
         }
     }
 }
@@ -240,6 +247,13 @@ impl<'a, Msg> NodeRef<'a, Msg> {
 
     pub fn ai_description(mut self, desc: impl Into<String>) -> Self {
         self.meta_mut().ai.description = Some(desc.into());
+        self
+    }
+
+    /// Stable identity for reconciliation (e.g. a row/entity id) — see
+    /// [`NodeMeta::key`].
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.meta_mut().key = Some(key.into());
         self
     }
 }

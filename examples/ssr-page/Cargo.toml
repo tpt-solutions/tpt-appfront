@@ -1,0 +1,11 @@
+[package]
+name = "ssr-page"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+appfront-core = { path = "../../crates/appfront-core" }
+appfront-server = { path = "../../crates/appfront-server" }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }

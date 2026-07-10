@@ -62,8 +62,9 @@ where
         }
         NodeKind::List { items } => {
             let el = document.create_element("ul")?;
-            for item in items {
+            for (i, item) in items.iter().enumerate() {
                 let li = document.create_element("li")?;
+                li.set_attribute("data-key", &item_key(item, i))?;
                 let item_node = render_node(document, item, dispatch)?;
                 li.append_child(&item_node)?;
                 el.append_child(&li)?;
@@ -145,6 +146,81 @@ where
     }
 
     Ok(node)
+}
+
+/// Identity used to match a `List` item across renders: the explicit
+/// [`appfront_core::NodeMeta::key`] if set, otherwise the item's position.
+/// Falling back to position means unkeyed lists still diff correctly for
+/// pure appends/truncations, but a reorder of unkeyed items is indistinguishable
+/// from in-place content changes — callers that reorder should set `.key(..)`.
+fn item_key<Msg>(item: &UITree<Msg>, index: usize) -> String {
+    item.meta.key.clone().unwrap_or_else(|| index.to_string())
+}
+
+/// Reconciles a rendered `<ul>` against a new `List`'s items, reusing
+/// existing `<li>` DOM nodes for keys present in both `old_items` and
+/// `new_items` instead of rebuilding the whole list. New keys get fresh
+/// `<li>` elements, removed keys are deleted, and surviving elements are
+/// moved into their new position via `insertBefore` (a no-op if already
+/// there). `ul` must be the `<ul>` element previously produced by
+/// [`render_node`]'s `List` branch (i.e. via [`mount`]) for `old_items`.
+pub fn update_list<Msg>(
+    document: &Document,
+    ul: &Element,
+    old_items: &[UITree<Msg>],
+    new_items: &[UITree<Msg>],
+    dispatch: &Rc<dyn Fn(Msg)>,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    let children = ul.children();
+    let mut old_key_to_li: HashMap<String, Element> = HashMap::new();
+    for (i, old_item) in old_items.iter().enumerate() {
+        if let Some(li) = children.item(i as u32) {
+            old_key_to_li.insert(item_key(old_item, i), li);
+        }
+    }
+
+    let mut used_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (i, new_item) in new_items.iter().enumerate() {
+        let key = item_key(new_item, i);
+        let li = if let Some(existing) = old_key_to_li.get(&key) {
+            used_keys.insert(key.clone());
+            existing.set_inner_html("");
+            let item_node = render_node(document, new_item, dispatch)?;
+            existing.append_child(&item_node)?;
+            existing.clone()
+        } else {
+            let li = document.create_element("li")?;
+            li.set_attribute("data-key", &key)?;
+            let item_node = render_node(document, new_item, dispatch)?;
+            li.append_child(&item_node)?;
+            li
+        };
+
+        // Snapshot of whatever currently occupies position `i` in the live
+        // DOM, taken *before* touching `li`. `insertBefore` is a no-op when
+        // `li` already is that node, and otherwise moves/inserts it there,
+        // shifting the reference node (and everything after it) down by one.
+        let reference: Option<Element> = ul.children().item(i as u32);
+        let already_in_place = match reference.as_deref() {
+            Some(r) => li.is_same_node(Some(r)),
+            None => false,
+        };
+        if !already_in_place {
+            ul.insert_before(&li, reference.as_deref())?;
+        }
+    }
+
+    for (old_key, li) in old_key_to_li.iter() {
+        if !used_keys.contains(old_key) {
+            ul.remove_child(li)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Converts `Vec<(String, String)>` to a JSON object for `data-ai-params`.
