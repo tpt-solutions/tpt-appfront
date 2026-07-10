@@ -3,20 +3,22 @@
 //! text run, not glyph painting — `egui`'s own text painter draws the
 //! characters once `taffy` has decided how much space to give them.
 //!
-//! On native targets, `cosmic-text` performs real shaping against system
-//! fonts. On `wasm32`, loading system fonts through `cosmic-text`/`fontdb`
-//! is not yet wired up (no bundled fallback font), so measurement falls
-//! back to a monospace-ish heuristic — TODO: embed a font for wasm shaping.
+//! Real shaping via `cosmic-text` is opt-in behind the `full-text-shaping`
+//! feature (native only) for apps that need CJK/Arabic/ligature-accurate
+//! measurement. It's off by default: the heuristic width estimator below
+//! covers the common Latin-text case without pulling in a font-shaping
+//! stack, and is the only option on `wasm32` today (no bundled fallback
+//! font wired up for `fontdb` on web yet — TODO).
 
 pub struct TextMeasurer {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "full-text-shaping"))]
     font_system: cosmic_text::FontSystem,
 }
 
 impl TextMeasurer {
     pub fn new() -> Self {
         TextMeasurer {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), feature = "full-text-shaping"))]
             font_system: cosmic_text::FontSystem::new(),
         }
     }
@@ -24,17 +26,17 @@ impl TextMeasurer {
     /// Returns the `(width, height)` in logical pixels that `text` occupies
     /// when shaped at `font_size`, unconstrained by wrapping.
     pub fn measure(&mut self, text: &str, font_size: f32) -> (f32, f32) {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "full-text-shaping"))]
         {
             self.measure_shaped(text, font_size)
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "full-text-shaping")))]
         {
             self.measure_heuristic(text, font_size)
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "full-text-shaping"))]
     fn measure_shaped(&mut self, text: &str, font_size: f32) -> (f32, f32) {
         use cosmic_text::{Attrs, Buffer, Metrics, Shaping};
 
@@ -55,9 +57,15 @@ impl TextMeasurer {
         (width, height)
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "full-text-shaping")))]
     fn measure_heuristic(&mut self, text: &str, font_size: f32) -> (f32, f32) {
         let char_count = text.chars().count().max(1) as f32;
         (char_count * font_size * 0.55, font_size * 1.2)
+    }
+}
+
+impl Default for TextMeasurer {
+    fn default() -> Self {
+        Self::new()
     }
 }

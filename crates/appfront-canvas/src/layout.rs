@@ -115,7 +115,7 @@ fn build_flex_container<'a, Msg>(
                     bottom: length(CONTAINER_PADDING),
                 },
                 size: Size {
-                    width: percent(1.0),
+                    width: percent(1.0_f32),
                     height: auto(),
                 },
                 ..Default::default()

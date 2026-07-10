@@ -80,6 +80,7 @@ where
         NodeKind::Button { label } => {
             let el = document.create_element("button")?;
             el.set_text_content(Some(label));
+            el.set_attribute("type", "button")?;
             el.into()
         }
         NodeKind::Input { value } => {
@@ -160,20 +161,22 @@ fn json_obj(pairs: &[(String, String)]) -> serde_json::Value {
 /// signal updates, only this text node's `data` is mutated — no re-render,
 /// no diffing. This is the "fine-grained reactivity" primitive from the
 /// spec's counter example, usable for any dynamic leaf text.
+///
+/// Returns the text node along with the [`appfront_core::EffectHandle`]
+/// backing the subscription. The caller owns the handle's lifetime: keep it
+/// alive for as long as the node should keep updating, or `mem::forget` it
+/// (as a whole-process root mount does) to make the leak an explicit choice
+/// rather than the library's default.
 pub fn reactive_text(
     document: &Document,
     signal: appfront_core::Signal<String>,
-) -> Result<Node, wasm_bindgen::JsValue> {
+) -> Result<(Node, appfront_core::EffectHandle), wasm_bindgen::JsValue> {
     let text_node = document.create_text_node(&signal.get());
     let node_for_effect = text_node.clone();
     let handle = appfront_core::create_effect(move || {
         node_for_effect.set_data(&signal.get());
     });
-    // Leak the effect handle so the subscription outlives this call; the
-    // text node is the thing that should keep it alive in a full
-    // component-lifecycle system (tracked as future work).
-    std::mem::forget(handle);
-    Ok(text_node.into())
+    Ok((text_node.into(), handle))
 }
 
 // ---------------------------------------------------------------------------

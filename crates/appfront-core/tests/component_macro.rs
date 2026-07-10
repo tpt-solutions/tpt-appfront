@@ -1,4 +1,4 @@
-use appfront_core::{component, ContainerBuilder, UITree};
+use appfront_core::{component, ContainerBuilder, Signal, UITree};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Msg {
@@ -22,6 +22,13 @@ fn tagged_row() -> UITree<Msg> {
     ui
 }
 
+#[component]
+fn live_counter(count: Signal<i32>) -> UITree<Msg> {
+    UITree::container(|c: &mut ContainerBuilder<Msg>| {
+        c.text(count.get().to_string());
+    })
+}
+
 #[test]
 fn component_defaults_class_to_kebab_case_fn_name() {
     let ui = counter_row("+1");
@@ -41,4 +48,16 @@ fn component_pulls_doc_comment_into_ai_description() {
 fn component_does_not_override_explicit_class() {
     let ui = tagged_row();
     assert_eq!(ui.meta.class.as_deref(), Some("custom-class"));
+}
+
+#[test]
+fn component_with_no_signal_reads_is_marked_static() {
+    let ui = counter_row("+1");
+    assert!(!ui.meta.is_dynamic);
+}
+
+#[test]
+fn component_reading_a_signal_is_marked_dynamic() {
+    let ui = live_counter(Signal::new(0));
+    assert!(ui.meta.is_dynamic);
 }

@@ -8,8 +8,8 @@
 //! only stays subscribed to whichever branch it last took.
 
 use serde::de::DeserializeOwned;
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 type EffectFn = dyn FnMut();
@@ -34,10 +34,96 @@ struct EffectNode {
     /// Signals read during the most recent run, kept so they can be
     /// unsubscribed before the next run recomputes dependencies from scratch.
     deps: RefCell<Vec<Rc<dyn Trackable>>>,
+    /// Scheduling order for batched flushes: 0 for an effect that only reads
+    /// plain signals, or `1 + max(rank of any dependency's producing effect)`
+    /// for an effect (e.g. a memo) downstream of other memos. Reset to 0 at
+    /// the start of every run and recomputed as `get()` is called, so it
+    /// self-corrects when an effect's dependencies change between runs.
+    rank: Cell<u32>,
 }
 
 thread_local! {
     static EFFECT_STACK: RefCell<Vec<Rc<EffectNode>>> = const { RefCell::new(Vec::new()) };
+}
+
+// ---------------------------------------------------------------------------
+// Batched/topological flush scheduling.
+//
+// `notify()` always enqueues affected effects here instead of running them
+// directly. Outside an explicit `batch()` call the queue is flushed inline
+// (so `set()` remains synchronous by default, matching prior behavior);
+// inside `batch()`, flushing is deferred until the outermost call returns.
+// Flushing drains the queue in ascending `rank` order so producers (e.g. a
+// memo `B`) run before their consumers (e.g. a memo `D` reading `B`), and
+// loops until the queue is empty so second-order fan-in (an effect enqueued
+// by another effect's own run, e.g. `D` becoming pending only once both `B`
+// and `C` have notified) is still picked up in the same flush.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static BATCH_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static PENDING: RefCell<Vec<Weak<EffectNode>>> = const { RefCell::new(Vec::new()) };
+    static PENDING_PTRS: RefCell<HashSet<*const EffectNode>> = RefCell::new(HashSet::new());
+}
+
+fn enqueue(effects: impl IntoIterator<Item = Rc<EffectNode>>) {
+    PENDING_PTRS.with(|ptrs| {
+        PENDING.with(|pending| {
+            let mut ptrs = ptrs.borrow_mut();
+            let mut pending = pending.borrow_mut();
+            for effect in effects {
+                let ptr: *const EffectNode = Rc::as_ptr(&effect);
+                if ptrs.insert(ptr) {
+                    pending.push(Rc::downgrade(&effect));
+                }
+            }
+        });
+    });
+}
+
+fn flush() {
+    loop {
+        let batch: Vec<Rc<EffectNode>> = PENDING.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            let mut batch: Vec<Rc<EffectNode>> =
+                std::mem::take(&mut *pending).into_iter().filter_map(|w| w.upgrade()).collect();
+            batch.sort_by_key(|e| e.rank.get());
+            batch
+        });
+        PENDING_PTRS.with(|ptrs| ptrs.borrow_mut().clear());
+        if batch.is_empty() {
+            break;
+        }
+        // Guard against reentrancy: running an effect in this pass may itself
+        // call `notify()` (e.g. a memo recomputing and writing its signal).
+        // Without this, that nested `notify()` would see `BATCH_DEPTH == 0`
+        // and immediately recurse into `flush()`, running a downstream
+        // consumer (e.g. `D`) before a sibling producer in *this* pass (e.g.
+        // `C`) has had a chance to run. Bumping the depth makes nested
+        // `notify()` calls just enqueue; the outer `loop` picks up whatever
+        // they enqueued as the next pass, once this whole pass has settled.
+        BATCH_DEPTH.with(|d| d.set(d.get() + 1));
+        for effect in batch {
+            run_effect(&effect);
+        }
+        BATCH_DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
+/// Defers effect execution during `f` and, once the outermost `batch()` call
+/// returns, runs every affected effect at most once, in dependency order.
+/// Nested `batch()` calls only flush when the outermost one exits.
+pub fn batch(f: impl FnOnce()) {
+    BATCH_DEPTH.with(|d| d.set(d.get() + 1));
+    f();
+    let depth = BATCH_DEPTH.with(|d| {
+        let new_depth = d.get() - 1;
+        d.set(new_depth);
+        new_depth
+    });
+    if depth == 0 {
+        flush();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +156,11 @@ pub struct Signal<T> {
 struct SignalInner<T> {
     value: T,
     subscribers: Vec<Weak<EffectNode>>,
+    /// Set only for signals created by `create_memo`: the internal effect
+    /// that recomputes `value`. Kept alive here so it keeps reacting for as
+    /// long as the returned `Signal` handle (or a clone of it) is alive, and
+    /// consulted by `get()` to rank downstream consumers correctly.
+    memo_effect: Option<Rc<EffectNode>>,
 }
 
 impl<T> Clone for Signal<T> {
@@ -86,6 +177,7 @@ impl<T: Clone + 'static> Signal<T> {
             inner: Rc::new(RefCell::new(SignalInner {
                 value,
                 subscribers: Vec::new(),
+                memo_effect: None,
             })),
         }
     }
@@ -108,11 +200,25 @@ impl<T: Clone + 'static> Signal<T> {
         Signal::new(value)
     }
 
-    /// Reads the current value, subscribing the currently-running effect
-    /// (if any) to future updates of this signal.
-    pub fn get(&self) -> T {
+    /// Subscribes the currently-running effect (if any) to this signal:
+    /// updates its rank so downstream memos flush in the right order, and
+    /// registers it as a subscriber if not already. Shared by `get`/`with`.
+    fn track(&self) {
         EFFECT_STACK.with(|stack| {
             if let Some(node) = stack.borrow().last() {
+                // A signal backed by a memo ranks its consumers above itself
+                // so a downstream memo always flushes after this one.
+                let producing_rank = self
+                    .inner
+                    .borrow()
+                    .memo_effect
+                    .as_ref()
+                    .map(|e| e.rank.get() + 1)
+                    .unwrap_or(0);
+                if producing_rank > node.rank.get() {
+                    node.rank.set(producing_rank);
+                }
+
                 let already_subscribed = self
                     .inner
                     .borrow()
@@ -130,11 +236,28 @@ impl<T: Clone + 'static> Signal<T> {
                 }
             }
         });
+    }
+
+    /// Reads the current value, subscribing the currently-running effect
+    /// (if any) to future updates of this signal.
+    pub fn get(&self) -> T {
+        self.track();
         self.inner.borrow().value.clone()
     }
 
-    /// Updates the value and synchronously re-runs every effect that has
-    /// read this signal (and is still alive).
+    /// Reads the current value via a borrow instead of cloning it, still
+    /// subscribing the currently-running effect. Prefer this over `get()`
+    /// for large values (e.g. a `DataGrid`'s row vector) where the mandatory
+    /// clone on every read would be wasteful.
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.track();
+        f(&self.inner.borrow().value)
+    }
+
+    /// Updates the value and, by default (outside a `batch()` call),
+    /// synchronously re-runs every effect that has read this signal (and is
+    /// still alive) before returning. Inside `batch()`, affected effects are
+    /// deferred and deduped until the outermost `batch()` call exits.
     pub fn set(&self, value: T) {
         self.inner.borrow_mut().value = value;
         self.notify();
@@ -146,10 +269,66 @@ impl<T: Clone + 'static> Signal<T> {
             inner.subscribers.retain(|weak| weak.strong_count() > 0);
             inner.subscribers.iter().filter_map(Weak::upgrade).collect()
         };
-        for effect in effects {
-            run_effect(&effect);
+        enqueue(effects);
+        if BATCH_DEPTH.with(Cell::get) == 0 {
+            flush();
         }
     }
+}
+
+impl<T: Clone + PartialEq + 'static> Signal<T> {
+    /// Like `set`, but skips the write and notification entirely when
+    /// `value` equals the current one. Used internally by `create_memo` so
+    /// a memo whose recomputed value hasn't actually changed doesn't wake
+    /// its own downstream subscribers.
+    fn set_if_changed(&self, value: T) {
+        let changed = self.inner.borrow().value != value;
+        if changed {
+            self.set(value);
+        }
+    }
+}
+
+/// Creates a read-derived `Signal` that recomputes `compute` whenever one of
+/// the signals it reads changes, and only notifies its own subscribers when
+/// the freshly computed value actually differs from the cached one. This
+/// gives both caching (skip recompute-driven notifications for unchanged
+/// output) and correct diamond-dependency ordering: a memo's internal effect
+/// is ranked above the effects of any memo it depends on, so `flush()`
+/// always settles producers before consumers.
+pub fn create_memo<T: Clone + PartialEq + 'static>(compute: impl Fn() -> T + 'static) -> Signal<T> {
+    // The memo's `Signal` can't exist until we know its initial value, but
+    // computing that value (to track dependencies correctly) requires
+    // running the effect. Bridge the two with a cell the closure writes its
+    // very first result into, before the real signal exists.
+    let first_value: Rc<RefCell<Option<T>>> = Rc::new(RefCell::new(None));
+    let first_value_for_effect = Rc::clone(&first_value);
+    let memo_signal_cell: Rc<RefCell<Option<Signal<T>>>> = Rc::new(RefCell::new(None));
+    let memo_signal_for_effect = Rc::clone(&memo_signal_cell);
+
+    let node = Rc::new(EffectNode {
+        f: RefCell::new(Box::new(move || {
+            let value = compute();
+            match memo_signal_for_effect.borrow().as_ref() {
+                Some(signal) => signal.set_if_changed(value),
+                None => *first_value_for_effect.borrow_mut() = Some(value),
+            }
+        })),
+        deps: RefCell::new(Vec::new()),
+        rank: Cell::new(0),
+    });
+
+    // First run: computes exactly once and tracks dependencies via `get()`.
+    run_effect(&node);
+    let initial = first_value
+        .borrow_mut()
+        .take()
+        .expect("create_memo's compute closure must run synchronously");
+
+    let memo_signal = Signal::new(initial);
+    memo_signal.inner.borrow_mut().memo_effect = Some(Rc::clone(&node));
+    *memo_signal_cell.borrow_mut() = Some(memo_signal.clone());
+    memo_signal
 }
 
 /// A handle to a running effect. Dropping it unsubscribes the effect from
@@ -166,12 +345,14 @@ pub fn create_effect(f: impl FnMut() + 'static) -> EffectHandle {
     let node = Rc::new(EffectNode {
         f: RefCell::new(Box::new(f)),
         deps: RefCell::new(Vec::new()),
+        rank: Cell::new(0),
     });
     run_effect(&node);
     EffectHandle { _inner: node }
 }
 
 fn run_effect(node: &Rc<EffectNode>) {
+    node.rank.set(0);
     let stale_deps = node.deps.replace(Vec::new());
     let effect_ptr: *const EffectNode = Rc::as_ptr(node);
     for dep in &stale_deps {
@@ -303,5 +484,215 @@ mod tests {
     fn hydrated_falls_back_to_default_without_hydration_state() {
         let s: Signal<i32> = Signal::hydrated("missing", 99);
         assert_eq!(s.get(), 99);
+    }
+
+    #[test]
+    fn with_reads_without_cloning_and_still_tracks() {
+        let s = Signal::new(vec![1, 2, 3]);
+        assert_eq!(s.with(|v| v.len()), 3);
+
+        let runs = Rc::new(Cell::new(0));
+        let runs_clone = Rc::clone(&runs);
+        let s_for_effect = s.clone();
+        let _handle = create_effect(move || {
+            s_for_effect.with(|v| v.len());
+            runs_clone.set(runs_clone.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+
+        s.set(vec![1, 2, 3, 4]);
+        assert_eq!(runs.get(), 2, "with() must subscribe like get() does");
+    }
+
+    #[test]
+    fn memo_recomputes_only_when_dependency_changes() {
+        let a = Signal::new(1);
+        let b = Signal::new(10);
+
+        let computes = Rc::new(Cell::new(0));
+        let computes_clone = Rc::clone(&computes);
+        let a_for_memo = a.clone();
+        let m = create_memo(move || {
+            computes_clone.set(computes_clone.get() + 1);
+            a_for_memo.get() * 2
+        });
+
+        assert_eq!(computes.get(), 1, "compute runs once on creation");
+        assert_eq!(m.get(), 2);
+
+        b.set(20);
+        assert_eq!(computes.get(), 1, "unrelated signal must not trigger recompute");
+
+        a.set(5);
+        assert_eq!(computes.get(), 2, "dependency update must trigger recompute");
+        assert_eq!(m.get(), 10);
+    }
+
+    #[test]
+    fn memo_skips_notify_when_value_unchanged() {
+        let a = Signal::new(1i32);
+        let a_for_memo = a.clone();
+        let m = create_memo(move || a_for_memo.get().abs());
+
+        let downstream_runs = Rc::new(Cell::new(0));
+        let downstream_runs_clone = Rc::clone(&downstream_runs);
+        let m_for_effect = m.clone();
+        let _handle = create_effect(move || {
+            m_for_effect.get();
+            downstream_runs_clone.set(downstream_runs_clone.get() + 1);
+        });
+
+        assert_eq!(downstream_runs.get(), 1, "effect runs once immediately");
+
+        a.set(-1);
+        assert_eq!(
+            downstream_runs.get(),
+            1,
+            "memo's abs() value is unchanged (1 -> 1), downstream must not rerun"
+        );
+
+        a.set(-2);
+        assert_eq!(
+            downstream_runs.get(),
+            2,
+            "memo's value actually changed (1 -> 2), downstream must rerun"
+        );
+    }
+
+    #[test]
+    fn diamond_d_runs_exactly_once() {
+        let a = Signal::new(1);
+
+        let a_for_b = a.clone();
+        let b = create_memo(move || a_for_b.get() * 2);
+
+        let a_for_c = a.clone();
+        let c = create_memo(move || a_for_c.get() + 1);
+
+        let d_computes = Rc::new(Cell::new(0));
+        let d_computes_clone = Rc::clone(&d_computes);
+        let b_for_d = b.clone();
+        let c_for_d = c.clone();
+        let d = create_memo(move || {
+            d_computes_clone.set(d_computes_clone.get() + 1);
+            b_for_d.get() + c_for_d.get()
+        });
+
+        assert_eq!(d_computes.get(), 1, "D computes once on creation");
+        assert_eq!(d.get(), 4, "initial: b=2, c=2, d=4");
+
+        a.set(10);
+
+        assert_eq!(
+            d_computes.get(),
+            2,
+            "D must recompute exactly once after A settles B and C, not zero or twice"
+        );
+        assert_eq!(d.get(), 31, "D must reflect both updated B (20) and C (11)");
+    }
+
+    #[test]
+    fn batch_defers_and_dedupes_across_multiple_sets() {
+        let x = Signal::new(1);
+        let y = Signal::new(2);
+
+        let runs = Rc::new(Cell::new(0));
+        let runs_clone = Rc::clone(&runs);
+        let x_for_effect = x.clone();
+        let y_for_effect = y.clone();
+        let _handle = create_effect(move || {
+            x_for_effect.get();
+            y_for_effect.get();
+            runs_clone.set(runs_clone.get() + 1);
+        });
+
+        assert_eq!(runs.get(), 1, "effect runs once immediately");
+
+        batch(|| {
+            x.set(10);
+            y.set(20);
+        });
+        assert_eq!(
+            runs.get(),
+            2,
+            "batched writes to two deps the effect reads must cause exactly one rerun"
+        );
+
+        x.set(100);
+        y.set(200);
+        assert_eq!(
+            runs.get(),
+            4,
+            "outside batch(), sequential sets still cause one rerun each"
+        );
+    }
+
+    #[test]
+    fn nested_batch_flushes_only_at_outermost_exit() {
+        let s = Signal::new(1);
+        let runs = Rc::new(Cell::new(0));
+        let runs_clone = Rc::clone(&runs);
+        let s_for_effect = s.clone();
+        let _handle = create_effect(move || {
+            s_for_effect.get();
+            runs_clone.set(runs_clone.get() + 1);
+        });
+
+        assert_eq!(runs.get(), 1);
+
+        batch(|| {
+            batch(|| {
+                s.set(2);
+            });
+            assert_eq!(runs.get(), 1, "inner batch exit must not flush yet");
+            s.set(3);
+        });
+
+        assert_eq!(runs.get(), 2, "outer batch exit flushes exactly once total");
+    }
+
+    #[test]
+    fn memo_rank_updates_after_dependency_change() {
+        let cond = Signal::new(true);
+        let a = Signal::new(1);
+        let b = Signal::new(100);
+
+        let cond_for_shallow = cond.clone();
+        let a_for_shallow = a.clone();
+        let b_for_shallow = b.clone();
+        let shallow = create_memo(move || {
+            if cond_for_shallow.get() {
+                a_for_shallow.get()
+            } else {
+                b_for_shallow.get()
+            }
+        });
+
+        let a_for_deep = a.clone();
+        let deep_of_a = create_memo(move || a_for_deep.get() * 10);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let seen_clone = Rc::clone(&seen);
+        let shallow_for_top = shallow.clone();
+        let deep_for_top = deep_of_a.clone();
+        let _handle = create_effect(move || {
+            seen_clone
+                .borrow_mut()
+                .push(shallow_for_top.get() + deep_for_top.get());
+        });
+
+        assert_eq!(*seen.borrow(), vec![11], "1 + 1*10");
+
+        // Switch off the `a` branch; `shallow` no longer depends on `a`, only
+        // `deep_of_a` does. The top effect must still settle correctly.
+        cond.set(false);
+        assert_eq!(*seen.borrow(), vec![11, 110], "100 + 1*10");
+
+        a.set(5);
+        assert_eq!(
+            *seen.borrow(),
+            vec![11, 110, 150],
+            "shallow no longer reacts to a; only deep_of_a updates (100 + 5*10)"
+        );
     }
 }

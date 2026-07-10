@@ -4,16 +4,63 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use appfront_core::{HydrationPayload, UITree};
-use axum::extract::Query;
-use axum::http::HeaderMap;
+use axum::extract::{DefaultBodyLimit, Query};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
+use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 
 use crate::client_kind::{self, ClientKind};
+
+/// Maximum accepted body size for `POST /command`, applied before the
+/// request reaches the handler — closes the gap noted in Phase 12: no
+/// write route should ship without a body-size limit from day one.
+const COMMAND_BODY_LIMIT_BYTES: usize = 16 * 1024;
+
+/// An inbound instruction from an AI agent or other automated client,
+/// deserialized from the `POST /command` request body.
+///
+/// `action` must match a node's `AiMeta::action` (the same name
+/// [`appfront_core::trigger_event`] matches against) and, if the router was
+/// configured with [`SmartRouterBuilder::allowed_actions`], must appear in
+/// that allowlist.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Command {
+    pub action: String,
+    #[serde(default)]
+    pub params: HashMap<String, serde_json::Value>,
+}
+
+/// Result of executing a [`Command`], returned as the `POST /command`
+/// response body.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CommandResponse {
+    pub ok: bool,
+    pub message: String,
+}
+
+impl CommandResponse {
+    pub fn ok(message: impl Into<String>) -> Self {
+        CommandResponse { ok: true, message: message.into() }
+    }
+
+    pub fn err(message: impl Into<String>) -> Self {
+        CommandResponse { ok: false, message: message.into() }
+    }
+}
+
+/// App-supplied callback that executes a [`Command`] — typically by calling
+/// [`appfront_core::trigger_event`] or [`appfront_core::navigate_to`] against
+/// the app's own reactive state and `Msg` dispatch.
+pub type CommandHandler = dyn Fn(Command) -> CommandResponse + Send + Sync;
 
 /// Configuration for the smart router.
 pub struct SmartRouter<Msg> {
@@ -39,6 +86,13 @@ pub struct SmartRouter<Msg> {
     /// `Signal::hydrated("name", default)` on the client can restore
     /// the server-side state.
     pub signals: HashMap<String, serde_json::Value>,
+    /// App-supplied handler for `POST /command`. `None` means the route
+    /// responds `501 Not Implemented` — the endpoint exists but is inert
+    /// until the app wires up a handler.
+    pub command_handler: Option<std::sync::Arc<CommandHandler>>,
+    /// If set, `POST /command` rejects any `action` not in this list with
+    /// `403 Forbidden` before invoking `command_handler`.
+    pub allowed_actions: Option<Vec<String>>,
 }
 
 /// Builder-pattern helper for constructing a [`SmartRouter`] with sensible
@@ -51,6 +105,8 @@ pub struct SmartRouterBuilder<Msg> {
     wasm_path: String,
     enable_hydration: bool,
     signals: HashMap<String, serde_json::Value>,
+    command_handler: Option<std::sync::Arc<CommandHandler>>,
+    allowed_actions: Option<Vec<String>>,
 }
 
 impl<Msg> SmartRouterBuilder<Msg> {
@@ -63,6 +119,8 @@ impl<Msg> SmartRouterBuilder<Msg> {
             wasm_path: "/app.wasm".to_string(),
             enable_hydration: false,
             signals: HashMap::new(),
+            command_handler: None,
+            allowed_actions: None,
         }
     }
 
@@ -93,6 +151,24 @@ impl<Msg> SmartRouterBuilder<Msg> {
 
     pub fn signals(mut self, signals: HashMap<String, serde_json::Value>) -> Self {
         self.signals = signals;
+        self
+    }
+
+    /// Wire up `POST /command` to execute inbound agent commands. Typically
+    /// the closure calls [`appfront_core::trigger_event`]/
+    /// [`appfront_core::navigate_to`] against the app's own state.
+    pub fn on_command(
+        mut self,
+        handler: impl Fn(Command) -> CommandResponse + Send + Sync + 'static,
+    ) -> Self {
+        self.command_handler = Some(std::sync::Arc::new(handler));
+        self
+    }
+
+    /// Restrict `POST /command` to only these `action` names. Any other
+    /// action is rejected with `403` before `command_handler` runs.
+    pub fn allowed_actions(mut self, actions: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.allowed_actions = Some(actions.into_iter().map(Into::into).collect());
         self
     }
 
@@ -127,6 +203,8 @@ init().catch(e => console.error('appfront init failed', e));
             wasm_path: self.wasm_path,
             enable_hydration: self.enable_hydration,
             signals: self.signals,
+            command_handler: self.command_handler,
+            allowed_actions: self.allowed_actions,
         }
     }
 }
@@ -162,12 +240,37 @@ where
     let serve_dir = ServeDir::new(&router.static_dir);
     let state = std::sync::Arc::new(router);
 
+    // Baseline security headers applied to every response — explicit rather
+    // than absent. `X-Content-Type-Options` stops MIME-sniffing,
+    // `X-Frame-Options` blocks clickjacking via iframes, and a conservative
+    // default CSP restricts loaded resources to same-origin. Apps that need
+    // a looser policy (e.g. embedding third-party fonts) can layer their own
+    // `SetResponseHeaderLayer` on top of `build_router`'s output.
     Router::new()
         .route("/", get(root_handler::<Msg>))
         .route("/ai-schema.json", get(ai_schema_handler::<Msg>))
         .route("/opengraph", get(opengraph_handler::<Msg>))
+        .route(
+            "/command",
+            post(command_handler::<Msg>).route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES)),
+        )
         .fallback_service(serve_dir)
         .with_state(state)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'"),
+        ))
+        .layer(TimeoutLayer::new(Duration::from_secs(10)))
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
 }
 
 async fn root_handler<Msg>(
@@ -196,6 +299,43 @@ where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     ai_agent_json(&state).await.into_response()
+}
+
+async fn command_handler<Msg>(
+    state: axum::extract::State<std::sync::Arc<SmartRouter<Msg>>>,
+    Json(command): Json<Command>,
+) -> Response {
+    if command.action.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(CommandResponse::err("`action` must not be empty")),
+        )
+            .into_response();
+    }
+
+    if let Some(allowed) = &state.allowed_actions {
+        if !allowed.iter().any(|a| a == &command.action) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(CommandResponse::err(format!(
+                    "action `{}` is not in the configured allowlist",
+                    command.action
+                ))),
+            )
+                .into_response();
+        }
+    }
+
+    match &state.command_handler {
+        Some(handler) => Json(handler(command)).into_response(),
+        None => (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(CommandResponse::err(
+                "this router has no `on_command` handler configured",
+            )),
+        )
+            .into_response(),
+    }
 }
 
 async fn opengraph_handler<Msg>(
@@ -418,6 +558,124 @@ mod tests {
         let state = std::sync::Arc::new(test_router());
         let resp = social_opengraph(&state).await;
         assert!(resp.0.contains("og:title"));
+    }
+
+    #[tokio::test]
+    async fn command_without_handler_returns_501() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let app = build_router(test_router());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/command")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"greet"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[tokio::test]
+    async fn command_rejects_empty_action() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .on_command(|_cmd| CommandResponse::ok("should not run"))
+            .build();
+        let app = build_router(router);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/command")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":""}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn command_rejects_action_outside_allowlist() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .on_command(|_cmd| CommandResponse::ok("should not run"))
+            .allowed_actions(["greet"])
+            .build();
+        let app = build_router(router);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/command")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"delete_everything"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn command_invokes_handler_and_returns_response() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .on_command(|cmd| {
+                assert_eq!(cmd.action, "greet");
+                assert_eq!(
+                    cmd.params.get("name").and_then(|v| v.as_str()),
+                    Some("Ada")
+                );
+                CommandResponse::ok("greeted Ada")
+            })
+            .allowed_actions(["greet"])
+            .build();
+        let app = build_router(router);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/command")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"greet","params":{"name":"Ada"}}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["message"], "greeted Ada");
+    }
+
+    #[tokio::test]
+    async fn command_rejects_oversized_body() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .on_command(|_cmd| CommandResponse::ok("should not run"))
+            .build();
+        let app = build_router(router);
+
+        let oversized = format!(
+            r#"{{"action":"{}"}}"#,
+            "a".repeat(COMMAND_BODY_LIMIT_BYTES + 1)
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri("/command")
+            .header("content-type", "application/json")
+            .body(Body::from(oversized))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]

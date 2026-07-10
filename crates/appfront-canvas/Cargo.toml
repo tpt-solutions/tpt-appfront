@@ -7,12 +7,28 @@ repository.workspace = true
 
 [dependencies]
 appfront-core = { path = "../appfront-core" }
-eframe = "0.35"
+# glow (raw GL/GLES) instead of the default wgpu renderer: layout is CPU-side
+# via taffy, so wgpu's GPU-compute capability isn't in use yet (Phase 11
+# stretch), and glow avoids shader-pipeline compilation at startup, links
+# smaller, and works on software rasterizers (Mesa llvmpipe, RDP, CI, older
+# GPUs) where wgpu adapter enumeration can fail.
+eframe = { version = "0.35", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
 egui = "0.35"
 taffy = "0.12"
 
+[features]
+# Opt into cosmic-text for real text shaping (CJK/Arabic/ligatures). Off by
+# default: the heuristic width estimator in text.rs covers the common
+# Latin-text case without pulling in a font-shaping stack.
+full-text-shaping = ["dep:cosmic-text"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cosmic-text = "0.19"
+cosmic-text = { version = "0.19", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

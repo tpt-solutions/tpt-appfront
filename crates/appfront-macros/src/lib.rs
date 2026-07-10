@@ -19,9 +19,20 @@
 //!   automatically pick up a human-readable description of the component
 //!   for LLM consumption without duplicating the doc comment as a
 //!   `.ai_description(..)` call.
+//!
+//! It also does one piece of static analysis: scanning the function body's
+//! token stream for signs it reads reactive state (`Signal`, `.get()`,
+//! `create_effect`, `route_signal`/`current_route`). If none are found, the
+//! component is assumed to render the same tree every time and
+//! `meta.is_dynamic` is left `false`; the macro has no type information at
+//! expansion time, so this is a token-level heuristic, not a real
+//! dataflow analysis — it can't see through helper functions that read a
+//! signal internally, and a coincidental method also named `get` will read
+//! as dynamic. Treat it as a best-effort hint (e.g. for skipping hydration
+//! work on subtrees that never change), not a soundness guarantee.
 
 use proc_macro::TokenStream;
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type};
@@ -72,6 +83,7 @@ fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
 
     let description = doc_description(&attrs);
     let component_name = kebab_case(&sig.ident.to_string());
+    let is_dynamic = body_reads_signal(&quote!(#block));
 
     let inner_ident = format_ident!("__appfront_component_inner_{}", sig.ident, span = Span::call_site());
     let mut inner_sig = sig.clone();
@@ -96,9 +108,45 @@ fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
             if __appfront_ui.meta.ai.description.is_none() {
                 __appfront_ui.meta.ai.description = #description_tokens;
             }
+            __appfront_ui.meta.is_dynamic = #is_dynamic;
             __appfront_ui
         }
     })
+}
+
+/// Token-level heuristic: does this function body mention any of the
+/// reactive-system entry points? See the module doc comment for caveats.
+fn body_reads_signal(tokens: &TokenStream2) -> bool {
+    const MARKERS: &[&str] = &[
+        "Signal",
+        "get",
+        "get_untracked",
+        "create_effect",
+        "route_signal",
+        "current_route",
+    ];
+    fn walk(tokens: TokenStream2, found: &mut bool) {
+        if *found {
+            return;
+        }
+        for tt in tokens {
+            match tt {
+                TokenTree::Ident(ident) => {
+                    if MARKERS.contains(&ident.to_string().as_str()) {
+                        *found = true;
+                        return;
+                    }
+                }
+                TokenTree::Group(group) => {
+                    walk(group.stream(), found);
+                }
+                TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+            }
+        }
+    }
+    let mut found = false;
+    walk(tokens.clone(), &mut found);
+    found
 }
 
 fn returns_ui_tree(output: &ReturnType) -> bool {

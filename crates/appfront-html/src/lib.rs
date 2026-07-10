@@ -74,7 +74,9 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             }
         }
         NodeKind::Button { label } => {
-            open_tag(buf, "button", ui);
+            buf.push_str("<button type=\"button\"");
+            attrs(buf, ui);
+            buf.push('>');
             buf.push_str(&esc_text(label));
             close_tag(buf, "button");
         }

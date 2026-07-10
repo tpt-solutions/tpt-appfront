@@ -47,6 +47,15 @@ pub struct NodeMeta<Msg> {
     /// Stable identifier assigned before SSR so the client hydrator can match
     /// server-rendered DOM nodes back to their `UITree` counterpart.
     pub data_appfront_id: Option<u64>,
+    /// Whether the subtree this node roots was produced by a
+    /// `#[appfront_core::component]` function whose body reads any
+    /// `Signal`. `false` (the default) means either the node wasn't
+    /// produced by the macro, or the macro's static analysis found no
+    /// signal reads in the function body. Backends can use this as a hint
+    /// to skip hydration/listener work for subtrees that never change
+    /// (see Phase 9 islands hydration).
+    #[serde(default)]
+    pub is_dynamic: bool,
 }
 
 impl<Msg> Default for NodeMeta<Msg> {
@@ -56,6 +65,7 @@ impl<Msg> Default for NodeMeta<Msg> {
             on_click: None,
             ai: AiMeta::default(),
             data_appfront_id: None,
+            is_dynamic: false,
         }
     }
 }

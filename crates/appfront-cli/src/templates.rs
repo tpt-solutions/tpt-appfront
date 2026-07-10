@@ -68,6 +68,13 @@ appfront-dom = {{ path = "{dom_path}" }}
 wasm-bindgen = "0.2"
 web-sys = {{ version = "0.3", features = ["Document", "Window", "Element"] }}
 console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 "#
     )
 }
@@ -116,8 +123,11 @@ pub fn start() -> Result<(), JsValue> {{
 
     appfront_dom::mount(&container, &ui, dispatch)?;
 
-    let text_node = appfront_dom::reactive_text(&document, display)?;
+    let (text_node, text_handle) = appfront_dom::reactive_text(&document, display)?;
     container.append_child(&text_node)?;
+    // Whole-process root mount: forgetting is an explicit choice here, not
+    // reactive_text's default behavior.
+    std::mem::forget(text_handle);
 
     Ok(())
 }}
@@ -132,7 +142,8 @@ pub fn index_html(app_title: &str) -> String {
   <head>
     <meta charset="utf-8" />
     <title>{app_title}</title>
-    <link data-trunk rel="rust" href="Cargo.toml" />
+    <!-- data-wasm-opt runs Binaryen wasm-opt (-Oz) on the built wasm during `trunk build --release` to trim payload size -->
+    <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
   </head>
   <body></body>
 </html>

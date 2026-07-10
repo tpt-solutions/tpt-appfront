@@ -57,10 +57,13 @@ pub fn to_ai_schema<Msg>(ui: &UITree<Msg>) -> AiSchemaOutput {
     }
 }
 
-/// Serialises the schema directly to a JSON `Value`.
-pub fn to_ai_schema_value<Msg>(ui: &UITree<Msg>) -> Value {
+/// Serialises the schema directly to a JSON `Value`. Returns an error
+/// instead of panicking if serialisation ever fails (e.g. a future `Msg`
+/// type whose `Serialize` impl can fail), since this runs on every
+/// AI-agent request.
+pub fn to_ai_schema_value<Msg>(ui: &UITree<Msg>) -> Result<Value, serde_json::Error> {
     let schema = to_ai_schema(ui);
-    serde_json::to_value(schema).expect("AiSchemaOutput is always serialisable")
+    serde_json::to_value(schema)
 }
 
 fn collect<Msg>(
