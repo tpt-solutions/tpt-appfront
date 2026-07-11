@@ -3,7 +3,10 @@ mod templates;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command as Process;
+use std::process::{Child, Command as Process};
+use std::sync::Mutex;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand, ValueEnum};
