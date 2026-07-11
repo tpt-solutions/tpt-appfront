@@ -5,3 +5,4 @@ target/
 .trunk
 *.pdb
 .DS_Store
+/.kilo
