@@ -1,12 +1,17 @@
 //! `view!` — a small, HTML-like templating macro for building `UITree`s.
 //!
-//! v1 scope (per `todo.md` Phase 5): `Container` / `Heading` / `Text` /
-//! `Button` / `Input`. The macro is purely additive — it expands to the same
-//! `UITree::container(|c| { ... })` builder calls you'd hand-write, so there's
-//! no hidden runtime cost and the resulting tree is identical to one built
-//! manually. Attribute values are Rust expressions in `{ ... }` (literals are
-//! also accepted as sugar), and text children are either string literals or
-//! `{ expr }` expressions.
+//! Scope (per `todo.md` Phase 5 / Phase 14): `Container` / `Heading` / `Text` /
+//! `Button` / `Input` / `List` / `DataGrid`. The macro is purely additive — it
+//! expands to the same `UITree::container(|c| { ... })` builder calls you'd
+//! hand-write, so there's no hidden runtime cost and the resulting tree is
+//! identical to one built manually. Attribute values are Rust expressions in
+//! `{ ... }` (literals are also accepted as sugar), and text children are
+//! either string literals or `{ expr }` expressions.
+//!
+//! Two-way binding is supported on `<Input>` via the `on_input` attribute,
+//! which takes a `Fn(String) -> Msg` (e.g. `on_input={Msg::Set}` or
+//! `on_input={|s| Msg::Set(s)}`); the closure is invoked with the input's new
+//! value on every change, exactly like `NodeRef::on_input`.
 //!
 //! ```ignore
 //! let ui = appfront_core::view! {
@@ -28,15 +33,25 @@ use proc_macro2::{Delimiter, Ident, Span, TokenStream, TokenTree};
 use quote::{format_ident, quote};
 use syn::{Error, Expr, ExprLit, Lit};
 
-/// Node types the v1 macro understands, with their allowed/required attributes.
-const TAGS: &[&str] = &["Container", "Heading", "Text", "Button", "Input"];
+/// Node types the macro understands, with their allowed/required attributes.
+const TAGS: &[&str] = &["Container", "Heading", "Text", "Button", "Input", "List", "DataGrid"];
 
 const ALLOWED: &[(&str, &[&str], &[&str])] = &[
     ("Container", &["class", "key"], &[]),
     ("Heading", &["level", "class", "key"], &["level"]),
     ("Text", &["class", "key"], &[]),
     ("Button", &["on_click", "class", "key"], &["on_click"]),
-    ("Input", &["value", "class", "key"], &["value"]),
+    (
+        "Input",
+        &["value", "class", "key", "on_input"],
+        &["value"],
+    ),
+    ("List", &["class", "key"], &[]),
+    (
+        "DataGrid",
+        &["columns", "rows", "class", "key"],
+        &["columns", "rows"],
+    ),
 ];
 
 enum Child {
@@ -382,7 +397,7 @@ fn gen_node_stmt(
                     #inner_parent
                         .into_only_child()
                         .expect("static subtree must yield exactly one node")
-                })
+                })#chain
             });
         });
     }
@@ -425,6 +440,34 @@ fn gen_node_stmt(
             }
             Ok(quote! { #parent.input(#value)#chain; })
         }
+        "List" => {
+            // `<List>` children are built onto the inner `ContainerBuilder`
+            // that `c.list(...)` passes in — same as a nested `Container`, but
+            // the node kind becomes `NodeKind::List` (rendered as `<ul>`/`<table>`
+            // rows by backends that support it).
+            let child_param = format_ident!("__c{}", *id);
+            *id += 1;
+            let inner = gen_children(&node.children, &child_param, parent_static, id)?;
+            let body = if inner.is_empty() {
+                quote! { let _ = & #child_param; }
+            } else {
+                quote! { #(#inner)* }
+            };
+            Ok(quote! {
+                #parent.list(|#child_param| { #body })#chain;
+            })
+        }
+        "DataGrid" => {
+            let columns = attr_expr(node, "columns").unwrap();
+            let rows = attr_expr(node, "rows").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<DataGrid>` is self-closing and must not have children — supply `columns` and `rows` as `{ expr }`s",
+                ));
+            }
+            Ok(quote! { #parent.data_grid(#columns, #rows)#chain; })
+        }
         other => Err(Error::new(
             node.tag.span(),
             format!("unknown tag `<{}>`", other),
@@ -432,13 +475,16 @@ fn gen_node_stmt(
     }
 }
 
-/// Emits `.class(..)`/`.key(..)` for any of those attributes present on a node.
+/// Emits `.class(..)`/`.key(..)`/`.on_input(..)` for any of those attributes
+/// present on a node. `.on_input` only appears on `<Input>` (it's not in any
+/// other tag's allowed-attribute list), so it's only ever emitted there.
 fn chain_suffix(attrs: &[(Ident, Expr)]) -> TokenStream {
     let mut out = TokenStream::new();
     for (name, expr) in attrs {
         match name.to_string().as_str() {
             "class" => out.extend(quote! { .class(#expr) }),
             "key" => out.extend(quote! { .key(#expr) }),
+            "on_input" => out.extend(quote! { .on_input(#expr) }),
             _ => {}
         }
     }

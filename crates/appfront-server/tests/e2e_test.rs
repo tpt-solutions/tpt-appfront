@@ -48,16 +48,23 @@ impl ServerGuard {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
                 let app = appfront_server::build_router(router);
+                listener.set_nonblocking(true).expect("set_nonblocking");
                 let listener = tokio::net::TcpListener::from_std(listener).expect("tokio listener");
                 // We use axum::serve with graceful shutdown via the atomic flag.
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(async move {
-                        while !shutdown_clone.load(Ordering::SeqCst) {
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    })
-                    .await
-                    .ok();
+                // `into_make_service_with_connect_info` is required so the
+                // peer-IP rate limiter on `POST /command` has an address to
+                // key on (see `build_router`'s docs).
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .with_graceful_shutdown(async move {
+                    while !shutdown_clone.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+                .ok();
             });
         });
 

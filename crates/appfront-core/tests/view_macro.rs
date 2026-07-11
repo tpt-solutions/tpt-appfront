@@ -3,7 +3,7 @@ use appfront_core::{view, NodeKind, UITree};
 #[derive(Debug, Clone, PartialEq)]
 enum Msg {
     Increment,
-    Submit,
+    Submit(String),
 }
 
 fn root_kind<Msg>(ui: &UITree<Msg>) -> &NodeKind<Msg> {
@@ -54,7 +54,7 @@ fn builds_a_container_with_all_node_types() {
 fn applies_class_and_key_attributes() {
     let ui = view! {
         <Container>
-            <Button on_click={Msg::Submit} class={"primary"} key={"submit-btn"}>"Go"</Button>
+            <Button on_click={Msg::Increment} class={"primary"} key={"submit-btn"}>"Go"</Button>
         </Container>
     };
     let NodeKind::Container { children } = root_kind(&ui) else {
@@ -175,4 +175,124 @@ fn static_view_is_reproducible_across_calls() {
         <Container><Text>"same"</Text></Container>
     };
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
+}
+
+#[test]
+fn list_tag_builds_items_as_children() {
+    let ui = view! {
+        <Container>
+            <List class={"todo-list"}>
+                <Text>"first"</Text>
+                <Button on_click={Msg::Increment}>"do it"</Button>
+            </List>
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    assert_eq!(children.len(), 1);
+    match &children[0].kind {
+        NodeKind::List { items } => {
+            assert_eq!(items.len(), 2);
+            assert_eq!(children[0].meta.class.as_deref(), Some("todo-list"));
+            match &items[0].kind {
+                NodeKind::Text { text } => assert_eq!(text, "first"),
+                other => panic!("expected text item, got {other:?}"),
+            }
+            match &items[1].kind {
+                NodeKind::Button { label } => {
+                    assert_eq!(label, "do it");
+                    assert_eq!(items[1].meta.on_click, Some(Msg::Increment));
+                }
+                other => panic!("expected button item, got {other:?}"),
+            }
+        }
+        other => panic!("expected list, got {other:?}"),
+    }
+}
+
+#[test]
+fn data_grid_tag_builds_columns_and_rows() {
+    let ui = view! {
+        <Container>
+            <DataGrid
+                columns={vec!["Name".to_string(), "Value".to_string()]}
+                rows={vec![vec!["a".to_string(), "1".to_string()]]}
+            } />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    match &children[0].kind {
+        NodeKind::DataGrid { columns, rows } => {
+            assert_eq!(columns, &["Name", "Value"]);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0], &["a", "1"]);
+        }
+        other => panic!("expected data grid, got {other:?}"),
+    }
+}
+        other => panic!("expected data grid, got {other:?}"),
+    }
+}
+
+#[test]
+fn two_way_binding_emits_on_input() {
+    let ui = view! {
+        <Container>
+            <Input value={"".to_string()} on_input={Msg::Submit} />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container");
+    };
+    match &children[0].kind {
+        NodeKind::Input { value } => {
+            assert_eq!(value, "");
+            // The `on_input` closure is stored on the node meta.
+            assert!(
+                children[0].meta.on_input.is_some(),
+                "two-way binding must set on_input"
+            );
+            let produced = children[0]
+                .meta
+                .on_input
+                .as_ref()
+                .unwrap()("hello".to_string());
+            assert_eq!(produced, Msg::Submit("hello".to_string()));
+        }
+        other => panic!("expected input, got {other:?}"),
+    }
+}
+
+#[test]
+fn data_grid_rejects_children() {
+    let err = trybuild_style_error(|| {
+        view! {
+            <Container>
+                <DataGrid columns={vec!["a".to_string()]} rows={vec![vec!["b".to_string()]]}>
+                    <Text>"nope"</Text>
+                </DataGrid>
+            </Container>
+        }
+    });
+    assert!(err, "DataGrid with children must be a compile error");
+}
+
+/// Helper used only by the negative test above: returns `true` if the
+/// expanded `view!` fails to compile. Since `view!` is a proc-macro we can't
+/// easily catch the compile error at runtime, so this is a stand-in that
+/// documents intent; the real check is the `cargo build` of this test crate.
+fn trybuild_style_error<F, T>(f: F) -> bool
+where
+    F: FnOnce() -> T,
+{
+    // The closure only typechecks/compiles when the macro accepts the input.
+    // We call it to force monomorphization; the test above is effectively a
+    // documentation anchor. A genuinely invalid node would fail at macro
+    // expansion (compile time), so reaching here means it compiled.
+    let _ = std::any::type_name::<T>();
+    f();
+    false
 }

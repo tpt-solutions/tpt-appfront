@@ -13,7 +13,7 @@ use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::GlobalKeyExtractor;
+use tower_governor::key_extractor::PeerIpKeyExtractor;
 use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -35,6 +35,35 @@ const COMMAND_BODY_LIMIT_BYTES: usize = 16 * 1024;
 /// same precedent as [`COMMAND_BODY_LIMIT_BYTES`].
 const DEFAULT_COMMAND_RATE_PER_SECOND: u64 = 5;
 const DEFAULT_COMMAND_RATE_BURST: u32 = 10;
+
+/// Generates a per-response, unique nonce for the document CSP. Combines a
+/// monotonic counter with the current time so each response gets a distinct
+/// value (good enough to bind inline scripts to their document) without
+/// pulling in a crypto RNG dependency.
+fn next_nonce() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let c = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:016x}{c:016x}")
+}
+
+/// Attaches a per-response `Content-Security-Policy` header (carrying the
+/// document nonce) to an `Html` response. The strict CSP is set per-document
+/// rather than globally so the inline WASM bootstrap / PWA registration
+/// scripts can be allow-listed by their nonce instead of being blocked.
+fn csp_response(mut resp: Response, csp: &str) -> Response {
+    if let Ok(v) = HeaderValue::from_str(csp) {
+        resp.headers_mut()
+            .insert(axum::http::header::CONTENT_SECURITY_POLICY, v);
+    }
+    resp
+}
 
 /// An inbound instruction from an AI agent or other automated client,
 /// deserialized from the `POST /command` request body.
@@ -94,6 +123,39 @@ impl Default for RateLimitConfig {
     }
 }
 
+/// Cross-origin policy applied to the read routes (`/`, `/ai-schema.json`,
+/// `/opengraph`, `/service-worker.js`, `/manifest.webmanifest`). `POST
+/// /command` never gets a `CorsLayer` regardless of this setting, so it can't
+/// be driven cross-site.
+#[derive(Debug, Clone, Default)]
+pub enum CorsPolicy {
+    /// Any origin may read the public routes. This is safe for these routes
+    /// specifically because they're unauthenticated GET-only content (HTML/
+    /// JSON-LD/AI-Schema meant to be crawled/fetched by anyone), but it's
+    /// wider than most deployments need.
+    #[default]
+    Permissive,
+    /// Only the listed origins (e.g. `"https://example.com"`) may read the
+    /// public routes cross-origin. Same-origin requests are always allowed
+    /// regardless of this list.
+    Origins(Vec<String>),
+}
+
+fn cors_layer(policy: &CorsPolicy) -> CorsLayer {
+    match policy {
+        CorsPolicy::Permissive => CorsLayer::permissive(),
+        CorsPolicy::Origins(origins) => {
+            let values: Vec<HeaderValue> = origins
+                .iter()
+                .filter_map(|o| HeaderValue::from_str(o).ok())
+                .collect();
+            CorsLayer::new()
+                .allow_origin(values)
+                .allow_methods([axum::http::Method::GET])
+        }
+    }
+}
+
 /// Configuration for the smart router.
 pub struct SmartRouter<Msg> {
     /// The application's UITree, used for SSR / AI-Schema rendering.
@@ -134,6 +196,10 @@ pub struct SmartRouter<Msg> {
     /// manifest `<link>` + service-worker registration `<script>` into the
     /// HTML shells. Off by default.
     pub pwa: Option<PwaConfig>,
+    /// Cross-origin policy for the read routes. Defaults to
+    /// [`CorsPolicy::Permissive`] (unchanged from prior behavior); override
+    /// via [`SmartRouterBuilder::cors`] to restrict to an origin allowlist.
+    pub cors: CorsPolicy,
 }
 
 /// Builder-pattern helper for constructing a [`SmartRouter`] with sensible
@@ -150,6 +216,7 @@ pub struct SmartRouterBuilder<Msg> {
     allowed_actions: Option<Vec<String>>,
     rate_limit: RateLimitConfig,
     pwa: Option<PwaConfig>,
+    cors: CorsPolicy,
 }
 
 impl<Msg> SmartRouterBuilder<Msg> {
@@ -166,6 +233,7 @@ impl<Msg> SmartRouterBuilder<Msg> {
             allowed_actions: None,
             rate_limit: RateLimitConfig::default(),
             pwa: None,
+            cors: CorsPolicy::default(),
         }
     }
 
@@ -232,6 +300,14 @@ impl<Msg> SmartRouterBuilder<Msg> {
         self
     }
 
+    /// Override the default [`CorsPolicy::Permissive`] applied to the read
+    /// routes. Use [`CorsPolicy::Origins`] to restrict cross-origin reads to
+    /// a specific allowlist.
+    pub fn cors(mut self, policy: CorsPolicy) -> Self {
+        self.cors = policy;
+        self
+    }
+
     pub fn build(self) -> SmartRouter<Msg> {
         let wasm_shell_template = r#"<!DOCTYPE html>
 <html lang="en">
@@ -267,6 +343,7 @@ init().catch(e => console.error('appfront init failed', e));
             allowed_actions: self.allowed_actions,
             rate_limit: self.rate_limit,
             pwa: self.pwa,
+            cors: self.cors,
         }
     }
 }
@@ -282,6 +359,11 @@ struct ClientQuery {
 }
 
 /// Start the Axum server. Blocks forever.
+///
+/// Uses [`Router::into_make_service_with_connect_info`] so the per-client
+/// (peer IP) rate limiter on `POST /command` has a real address to key on;
+/// see [`build_router`]'s docs if you're wiring your own `axum::serve` call
+/// instead of using this function.
 pub async fn serve<Msg>(router: SmartRouter<Msg>, addr: SocketAddr)
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
@@ -290,53 +372,82 @@ where
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("bind address");
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }
 
 /// Build the Axum [`Router`] without starting it (useful for testing or
 /// stacking with other middleware).
+///
+/// `POST /command` is rate-limited per peer IP ([`PeerIpKeyExtractor`]),
+/// which requires an `axum::extract::ConnectInfo<SocketAddr>` request
+/// extension to be present. If you serve this router yourself instead of
+/// calling [`serve`], make sure to do so via
+/// `.into_make_service_with_connect_info::<SocketAddr>()` — otherwise every
+/// request to `/command` will fail key extraction.
 pub fn build_router<Msg>(router: SmartRouter<Msg>) -> Router
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     let serve_dir = ServeDir::new(&router.static_dir);
     let rate_limit = router.rate_limit;
+    let cors = router.cors.clone();
     let state = std::sync::Arc::new(router);
 
-    // Single shared bucket for the whole route rather than per-client: this
-    // router doesn't plumb `ConnectInfo<SocketAddr>` (no
-    // `into_make_service_with_connect_info` wiring), so `tower_governor`'s
-    // per-IP key extractors aren't usable yet. Coarser than per-IP, but still
-    // stops a single misbehaving/compromised client from hammering the one
-    // write route this server exposes. Per-IP limiting is a documented
-    // follow-up (todo.md).
+    // Per-peer-IP bucket rather than one shared bucket for the whole route,
+    // so a single misbehaving/compromised client is throttled without
+    // affecting other clients. Note the `PeerIpKeyExtractor` caveat: behind a
+    // reverse proxy the peer IP is the proxy's IP unless the proxy forwards
+    // the real client IP and the app switches to `SmartIpKeyExtractor` (which
+    // trusts `X-Forwarded-For`/`X-Real-Ip`/`Forwarded` headers — only safe if
+    // those headers are guaranteed to come from a trusted proxy).
     let governor_conf = std::sync::Arc::new(
         GovernorConfigBuilder::default()
             .per_second(rate_limit.per_second)
             .burst_size(rate_limit.burst)
-            .key_extractor(GlobalKeyExtractor)
+            .key_extractor(PeerIpKeyExtractor)
             .finish()
             .expect("valid governor rate-limit config"),
     );
 
-    // Baseline security headers applied to every response — explicit rather
-    // than absent. `X-Content-Type-Options` stops MIME-sniffing,
-    // `X-Frame-Options` blocks clickjacking via iframes, and a conservative
-    // default CSP restricts loaded resources to same-origin. Apps that need
-    // a looser policy (e.g. embedding third-party fonts) can layer their own
-    // `SetResponseHeaderLayer` on top of `build_router`'s output.
-    Router::new()
+    // Read/asset routes may be fetched cross-origin by browsers and AI
+    // agents; the exact policy is configurable via
+    // `SmartRouterBuilder::cors` (defaults to permissive, unchanged from
+    // prior behavior). The state-changing `POST /command` (built separately
+    // below) is deliberately left without CORS so it can't be driven
+    // cross-site.
+    let read_routes = Router::new()
         .route("/", get(root_handler::<Msg>))
         .route("/ai-schema.json", get(ai_schema_handler::<Msg>))
         .route("/opengraph", get(opengraph_handler::<Msg>))
         .route("/service-worker.js", get(pwa_service_worker::<Msg>))
         .route("/manifest.webmanifest", get(pwa_manifest::<Msg>))
-        .route(
-            "/command",
-            post(command_handler::<Msg>)
-                .route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES))
-                .route_layer(GovernorLayer { config: governor_conf }),
-        )
+        .layer(cors_layer(&cors));
+
+    // The single write route: body-size-limited and rate-limited, and NOT
+    // CORS-exposed, so a third-party page can't invoke app commands for the
+    // victim (CSRF-style).
+    let command_routes = Router::new().route(
+        "/command",
+        post(command_handler::<Msg>)
+            .route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES))
+            .route_layer(GovernorLayer { config: governor_conf }),
+    );
+
+    // Baseline security headers applied to every response — explicit rather
+    // than absent. `X-Content-Type-Options` stops MIME-sniffing and
+    // `X-Frame-Options` blocks clickjacking. The strict `Content-Security-Policy`
+    // is set *per document* by `human_shell` (with a fresh nonce) so the app's
+    // own inline WASM bootstrap / PWA registration scripts are allow-listed
+    // while everything else stays same-origin. Apps needing a looser policy
+    // (e.g. third-party fonts) can layer their own `SetResponseHeaderLayer`
+    // on top of `build_router`'s output.
+    read_routes
+        .merge(command_routes)
         .fallback_service(serve_dir)
         .with_state(state)
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -347,12 +458,7 @@ where
             HeaderName::from_static("x-frame-options"),
             HeaderValue::from_static("DENY"),
         ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            HeaderName::from_static("content-security-policy"),
-            HeaderValue::from_static("default-src 'self'"),
-        ))
         .layer(TimeoutLayer::new(Duration::from_secs(10)))
-        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }
 
@@ -464,18 +570,30 @@ where
     }
 }
 
-async fn human_shell<Msg>(state: &std::sync::Arc<SmartRouter<Msg>>) -> Html<String>
+async fn human_shell<Msg>(state: &std::sync::Arc<SmartRouter<Msg>>) -> Response
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
+    // Fresh nonce per response; the same value is threaded into the inline
+    // scripts and the document CSP so the app's own bootstrap/registration
+    // scripts are allow-listed while everything else stays same-origin.
+    let nonce = next_nonce();
+    let csp = format!(
+        "script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'self'"
+    );
+
     if !state.enable_hydration {
         // Legacy bare-WASM shell.
         let shell = state
             .wasm_shell_template
             .replace("{TITLE}", &appfront_html::esc_attr(&state.title))
             .replace("{DESC}", &appfront_html::esc_attr(&state.description))
-            .replace("{WASM}", &state.wasm_path);
-        return Html(inject_pwa(shell, state));
+            .replace("{WASM}", &appfront_html::esc_attr(&state.wasm_path))
+            .replace(
+                "<script type=\"module\">",
+                &format!("<script type=\"module\" nonce=\"{nonce}\">"),
+            );
+        return csp_response(Html(inject_pwa(shell, state, &nonce)).into_response(), &csp);
     }
 
     // Hydration page: SSR HTML + serialised state + WASM bootstrap.
@@ -488,7 +606,6 @@ where
         signals: state.signals.clone(),
     };
     let state_json = serde_json::to_string(&payload).unwrap_or_default();
-    let wasm_path = &state.wasm_path;
 
     let page = format!(
         r#"<!DOCTYPE html>
@@ -506,7 +623,7 @@ where
 {body}
 </div>
 <script id="__APPFRONT_STATE__" type="application/json">{state_json}</script>
-<script type="module">
+<script type="module" nonce="{nonce}">
 import init from '{wasm_path}';
 init().catch(e => console.error('appfront init failed', e));
 </script>
@@ -517,17 +634,23 @@ init().catch(e => console.error('appfront init failed', e));
         desc = appfront_html::esc_attr(&state.description),
         body = body,
         state_json = appfront_html::esc_script_json(&state_json),
-        wasm_path = wasm_path,
+        wasm_path = appfront_html::esc_attr(&state.wasm_path),
+        nonce = nonce,
     );
 
-    Html(inject_pwa(page, state))
+    csp_response(Html(inject_pwa(page, state, &nonce)).into_response(), &csp)
 }
 
 /// Injects the PWA manifest `<link>` + service-worker registration `<script>`
 /// into an HTML shell when [`SmartRouter::pwa`] is configured; returns the
 /// input unchanged otherwise. The replacements are idempotent for the shell
-/// shapes produced above.
-fn inject_pwa<Msg>(mut page: String, state: &std::sync::Arc<SmartRouter<Msg>>) -> String {
+/// shapes produced above. `nonce` is forwarded to the registration script so
+/// its inline `<script>` satisfies the document CSP.
+fn inject_pwa<Msg>(
+    mut page: String,
+    state: &std::sync::Arc<SmartRouter<Msg>>,
+    nonce: &str,
+) -> String {
     if state.pwa.is_none() {
         return page;
     }
@@ -540,7 +663,7 @@ fn inject_pwa<Msg>(mut page: String, state: &std::sync::Arc<SmartRouter<Msg>>) -
     if let Some(body_end) = page.rfind("</body>") {
         page.insert_str(
             body_end,
-            &format!("\n    {}", registration_script()),
+            &format!("\n    {}", registration_script(nonce)),
         );
     }
     page
@@ -591,13 +714,46 @@ mod tests {
             .build()
     }
 
+    /// Extracts the HTML body from a `human_shell` response (now a full
+    /// `Response`, since the document CSP header is set on it).
+    async fn shell_html(state: &std::sync::Arc<SmartRouter<Msg>>) -> String {
+        body_string(human_shell(state).await).await
+    }
+
+    async fn body_string(resp: Response) -> String {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// A `ConnectInfo` extension standing in for the peer address axum would
+    /// normally attach via `into_make_service_with_connect_info` — required
+    /// for `PeerIpKeyExtractor` to find a rate-limit key in `oneshot` tests.
+    fn test_connect_info() -> axum::extract::ConnectInfo<SocketAddr> {
+        connect_info_for([127, 0, 0, 1])
+    }
+
+    fn connect_info_for(ip: [u8; 4]) -> axum::extract::ConnectInfo<SocketAddr> {
+        axum::extract::ConnectInfo(SocketAddr::from((ip, 0)))
+    }
+
     #[tokio::test]
     async fn human_gets_shell() {
         let state = std::sync::Arc::new(test_router());
         let resp = human_shell(&state).await;
-        assert!(resp.0.contains("<title>Test App</title>"));
-        assert!(resp.0.contains("import init from '/app.wasm'"));
-        assert!(!resp.0.contains("data-appfront-id"));
+        let csp = resp
+            .headers()
+            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .expect("CSP header present")
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("nonce-"));
+        assert!(csp.contains("script-src 'self'"));
+        let html = body_string(resp).await;
+        assert!(html.contains("<title>Test App</title>"));
+        assert!(html.contains("import init from '/app.wasm'"));
+        assert!(!html.contains("data-appfront-id"));
     }
 
     #[tokio::test]
@@ -612,9 +768,9 @@ mod tests {
             .build();
         let state = std::sync::Arc::new(router);
 
-        let resp = human_shell(&state).await;
-        assert!(!resp.0.contains("<script>alert(1)</script>"));
-        assert!(!resp.0.contains("<img src=x onerror=alert(1)>"));
+        let html = shell_html(&state).await;
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(!html.contains("<img src=x onerror=alert(1)>"));
     }
 
     #[tokio::test]
@@ -636,8 +792,7 @@ mod tests {
             .build();
         let state = std::sync::Arc::new(router);
 
-        let resp = human_shell(&state).await;
-        let html = &resp.0;
+        let html = shell_html(&state).await;
 
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(!html.contains("<script>alert(2)</script>"));
@@ -663,8 +818,7 @@ mod tests {
             .build();
         let state = std::sync::Arc::new(router);
 
-        let resp = human_shell(&state).await;
-        let html = &resp.0;
+        let html = shell_html(&state).await;
 
         // Should contain SSR content
         assert!(html.contains("<h1 class=\"title\" data-appfront-id=\"2\">Hello</h1>"));
@@ -711,6 +865,7 @@ mod tests {
             .method("POST")
             .uri("/command")
             .header("content-type", "application/json")
+            .extension(test_connect_info())
             .body(Body::from(r#"{"action":"greet"}"#))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -731,6 +886,7 @@ mod tests {
             .method("POST")
             .uri("/command")
             .header("content-type", "application/json")
+            .extension(test_connect_info())
             .body(Body::from(r#"{"action":""}"#))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -752,6 +908,7 @@ mod tests {
             .method("POST")
             .uri("/command")
             .header("content-type", "application/json")
+            .extension(test_connect_info())
             .body(Body::from(r#"{"action":"delete_everything"}"#))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -780,6 +937,7 @@ mod tests {
             .method("POST")
             .uri("/command")
             .header("content-type", "application/json")
+            .extension(test_connect_info())
             .body(Body::from(r#"{"action":"greet","params":{"name":"Ada"}}"#))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -812,6 +970,7 @@ mod tests {
             .method("POST")
             .uri("/command")
             .header("content-type", "application/json")
+            .extension(test_connect_info())
             .body(Body::from(oversized))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -835,6 +994,7 @@ mod tests {
                 .method("POST")
                 .uri("/command")
                 .header("content-type", "application/json")
+                .extension(test_connect_info())
                 .body(Body::from(r#"{"action":"greet"}"#))
                 .unwrap()
         };
@@ -848,6 +1008,39 @@ mod tests {
         // be throttled.
         let resp = app.clone().oneshot(make_req()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn command_rate_limit_is_per_peer_ip() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .on_command(|_cmd| CommandResponse::ok("ok"))
+            .rate_limit(RateLimitConfig { per_second: 1, burst: 1 })
+            .build();
+        let app = build_router(router);
+
+        let make_req = |ip: [u8; 4]| {
+            Request::builder()
+                .method("POST")
+                .uri("/command")
+                .header("content-type", "application/json")
+                .extension(connect_info_for(ip))
+                .body(Body::from(r#"{"action":"greet"}"#))
+                .unwrap()
+        };
+
+        // Client A exhausts its single-request burst allowance.
+        let resp = app.clone().oneshot(make_req([10, 0, 0, 1])).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = app.clone().oneshot(make_req([10, 0, 0, 1])).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Client B has its own bucket and is unaffected by A's usage.
+        let resp = app.clone().oneshot(make_req([10, 0, 0, 2])).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -917,8 +1110,7 @@ mod tests {
         .pwa(PwaConfig::default())
         .build();
         let state = std::sync::Arc::new(router);
-        let resp = human_shell(&state).await;
-        let html = &resp.0;
+        let html = shell_html(&state).await;
         assert!(html.contains(r#"rel="manifest""#));
         assert!(html.contains("/manifest.webmanifest"));
         assert!(html.contains("/service-worker.js"));
@@ -957,5 +1149,63 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn default_cors_is_permissive() {
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let app = build_router(test_router());
+        let req = Request::builder()
+            .uri("/")
+            .header("origin", "https://evil.example")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_origins_policy_restricts_allowed_origin_header() {
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .cors(CorsPolicy::Origins(vec!["https://trusted.example".to_string()]))
+            .build();
+        let app = build_router(router);
+
+        let allowed = Request::builder()
+            .uri("/")
+            .header("origin", "https://trusted.example")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(allowed).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "https://trusted.example"
+        );
+
+        let disallowed = Request::builder()
+            .uri("/")
+            .header("origin", "https://evil.example")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(disallowed).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp
+            .headers()
+            .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none());
     }
 }

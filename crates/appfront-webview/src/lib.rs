@@ -146,25 +146,46 @@ fn serve(
     let path = request.uri().path();
     let rel = path.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
-    let file_path = dist_dir.join(rel);
 
-    match std::fs::read(&file_path) {
+    // Confine the resolved path to `dist_dir`. Reject any `..` segment up
+    // front, then canonicalize and verify the result is still rooted at
+    // `dist_dir` so a crafted URI like `/../../etc/passwd` can't read files
+    // outside the app's bundle (path-traversal).
+    if rel.split('/').any(|seg| seg == ".." || seg.starts_with("..")) {
+        return Ok(not_found());
+    }
+    let Ok(root) = dist_dir.canonicalize() else {
+        return Ok(not_found());
+    };
+    let Ok(resolved) = dist_dir.join(rel).canonicalize() else {
+        return Ok(not_found());
+    };
+    if !resolved.starts_with(&root) {
+        return Ok(not_found());
+    }
+
+    match std::fs::read(&resolved) {
         Ok(bytes) => {
-            let mime = mime_for(&file_path);
+            let mime = mime_for(&resolved);
             let resp = Response::builder()
                 .status(200)
                 .header(CONTENT_TYPE, mime)
                 .body(Cow::Owned(bytes))?;
             Ok(resp)
         }
-        Err(_) => {
-            let resp = Response::builder()
-                .status(404)
-                .header(CONTENT_TYPE, "text/plain")
-                .body(Cow::Borrowed(b"404 Not Found" as &[u8]))?;
-            Ok(resp)
-        }
+        Err(_) => Ok(not_found()),
     }
+}
+
+/// 404 response for the `app://` custom protocol.
+fn not_found() -> Response<Cow<'static, [u8]>> {
+    Response::builder()
+        .status(404)
+        .header(CONTENT_TYPE, "text/plain")
+        .body(Cow::Borrowed(b"404 Not Found" as &[u8]))
+        .unwrap_or_else(|_| {
+            Response::new(Cow::Borrowed(b"404 Not Found" as &[u8]))
+        })
 }
 
 /// Direct (unkeyed) in-process rate limiter for the IPC bridge — there's no

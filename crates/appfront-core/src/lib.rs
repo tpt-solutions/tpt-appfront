@@ -38,6 +38,7 @@ macro_rules! class {
 
 pub use agent::{current_route, navigate_to, query_state, route_signal, trigger_event, AgentState, ElementSummary};
 pub use appfront_macros::component;
+pub use appfront_macros::rsx;
 pub use appfront_macros::view;
 pub use devtools::{inspect_state, inspect_tree, render, to_html, DevtoolsReport};
 pub use reconcile::{apply_edits, reconcile_keys, KeyedDiff, ListEdit};

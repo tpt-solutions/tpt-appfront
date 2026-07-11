@@ -1,3 +1,4 @@
+mod generate;
 mod templates;
 
 use std::fs;
@@ -85,6 +86,17 @@ enum Command {
         #[arg(long)]
         bundle: bool,
     },
+    /// Generate a `view!` UI scaffold from a text prompt. Offline and
+    /// rule-based (keyword-matched against known patterns) — not a live LLM
+    /// call, so it needs no API key or network access.
+    Generate {
+        /// Description of the UI to scaffold, e.g. "a login form".
+        #[arg(long)]
+        prompt: String,
+        /// Write the generated snippet to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -100,7 +112,24 @@ fn main() -> anyhow::Result<()> {
         Command::Optimize { target, project, auto, bundle } => {
             optimize(&target, &project, auto, bundle)
         }
+        Command::Generate { prompt, out } => generate_ui(&prompt, out.as_deref()),
     }
+}
+
+// ---------------------------------------------------------------------------
+// generate
+// ---------------------------------------------------------------------------
+
+fn generate_ui(prompt: &str, out: Option<&Path>) -> anyhow::Result<()> {
+    let snippet = generate::generate(prompt);
+    match out {
+        Some(path) => {
+            fs::write(path, &snippet).with_context(|| format!("writing {}", path.display()))?;
+            println!("wrote {}", path.display());
+        }
+        None => print!("{snippet}"),
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -263,21 +292,91 @@ fn ui_dir(project: &Path) -> Option<PathBuf> {
 // build
 // ---------------------------------------------------------------------------
 
+/// A single build action produced by [`resolve_build_steps`]. Shared by the
+/// `build` and `optimize` commands so the target→command mapping lives in one
+/// place and can't drift between the two (todo.md Phase 11 review).
+struct BuildStep {
+    program: &'static str,
+    args: &'static [&'static str],
+    /// Only run when an `index.html` (trunk app) exists; otherwise `build`
+    /// bails and `optimize` skips.
+    needs_trunk_index: bool,
+    /// Build the nested `ui/` trunk app first (webview host).
+    builds_ui: bool,
+    /// Report the largest release binary size after building.
+    report_size: bool,
+}
+
+/// Maps a single target alias to its build steps. Library targets (`html`,
+/// `ssr`, `ai-schema`) and the `all` aggregate are handled by the callers.
+fn resolve_build_steps(target: &str) -> anyhow::Result<Vec<BuildStep>> {
+    let steps = match target {
+        "canvas" | "desktop" => vec![BuildStep {
+            program: "cargo",
+            args: &["build", "--release"],
+            needs_trunk_index: false,
+            builds_ui: false,
+            report_size: true,
+        }],
+        "tui" | "terminal" => vec![BuildStep {
+            program: "cargo",
+            args: &["build", "--release"],
+            needs_trunk_index: false,
+            builds_ui: false,
+            report_size: false,
+        }],
+        "dom" | "wasm" => vec![BuildStep {
+            program: "trunk",
+            args: &["build", "--release"],
+            needs_trunk_index: true,
+            builds_ui: false,
+            report_size: false,
+        }],
+        "webview" => vec![BuildStep {
+            program: "cargo",
+            args: &["build", "--release"],
+            needs_trunk_index: false,
+            builds_ui: true,
+            report_size: true,
+        }],
+        other => bail!("unknown target `{other}`; use: dom, canvas, webview, or all"),
+    };
+    Ok(steps)
+}
+
+/// Runs one [`BuildStep`] in `project`. When `strict`, a missing `index.html`
+/// for a `needs_trunk_index` step is an error; otherwise it is skipped.
+fn run_step(project: &Path, step: &BuildStep, strict: bool) -> anyhow::Result<()> {
+    if step.builds_ui {
+        if let Some(ui) = ui_dir(project) {
+            run_in(&ui, "trunk", &["build", "--release"])
+                .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
+        }
+    }
+    if step.needs_trunk_index && !project.join("index.html").exists() {
+        if strict {
+            bail!(
+                "no `index.html` in {} — a dom/wasm target needs a trunk app",
+                project.display()
+            );
+        }
+        println!(
+            "skipping {} target: no `index.html` in {}",
+            step.program,
+            project.display()
+        );
+        return Ok(());
+    }
+    run_in(project, step.program, step.args)?;
+    if step.report_size {
+        report_release_size(project);
+    }
+    Ok(())
+}
+
 fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result<()> {
     let target = target.as_deref().unwrap_or("all");
     match target {
-        "dom" | "wasm" => run_in(project, "trunk", &["build", "--release"])
-            .context("failed to run `trunk build` — install it with `cargo install trunk`"),
-        "canvas" | "desktop" => run_in(project, "cargo", &["build", "--release"]),
-        "tui" | "terminal" => run_in(project, "cargo", &["build", "--release"]),
-        "webview" => {
-            // Build the hosted `ui/` trunk app (if present), then the host.
-            if let Some(ui) = ui_dir(project) {
-                run_in(&ui, "trunk", &["build", "--release"])
-                    .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
-            }
-            run_in(project, "cargo", &["build", "--release"])
-        }
         "html" | "ssr" => {
             println!("`appfront-html`/`appfront-server` are libraries embedded in your own server binary — build your project's server crate directly, e.g. `cargo build --release -p <your-server-crate>`.");
             return Ok(());
@@ -289,13 +388,18 @@ fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result
         "all" => {
             println!("== canvas (native) ==");
             run_in(project, "cargo", &["build", "--release"])?;
+            report_release_size(project);
             if project.join("index.html").exists() {
                 println!("== dom (wasm) ==");
                 run_in(project, "trunk", &["build", "--release"])
                     .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
             }
         }
-        other => bail!("unknown target `{other}`; use: dom, canvas, html, ai-schema, webview, or all"),
+        t => {
+            for step in resolve_build_steps(t)? {
+                run_step(project, &step, true)?;
+            }
+        }
     }
     if bundle {
         run_bundler(project)?;
@@ -317,38 +421,26 @@ fn benchmark(project: &Path) -> anyhow::Result<()> {
 /// `todo.md` Phase 11.
 fn optimize(target: &str, project: &Path, auto: bool, bundle: bool) -> anyhow::Result<()> {
     if auto {
-        println!("Optimizing with the size-optimized profile (opt-level=z, lto, strip).");
+        // The dom/wasm template already ships a size-optimized `[profile.release]`
+        // (opt-level=z, lto, codegen-units=1, strip); native (canvas/webview)
+        // builds use the crate's own `[profile.release]`. We don't silently
+        // claim a size profile the native build doesn't use.
+        println!(
+            "Building release artifacts and reporting sizes. The dom/wasm template is already \
+             size-optimized (opt-level=z, lto, strip); native (canvas/webview) builds use the \
+             crate's [profile.release] — set opt-level = \"z\" there for minimal size."
+        );
     }
-    let resolved = if target == "all" {
+    let targets: Vec<&str> = if target == "all" {
         // Size matters most for the shipped artifacts: native canvas/webview
         // binaries and the wasm bundle. html/ai-schema are libraries.
         vec!["canvas", "dom", "webview"]
     } else {
         vec![target]
     };
-    for t in resolved {
-        match t {
-            "dom" | "wasm" => {
-                if project.join("index.html").exists() {
-                    run_in(project, "trunk", &["build", "--release"])
-                        .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
-                } else {
-                    println!("skipping dom target: no index.html in {project}", project = project.display());
-                }
-            }
-            "canvas" | "desktop" => {
-                run_in(project, "cargo", &["build", "--release"])?;
-                report_release_size(project);
-            }
-            "webview" => {
-                if let Some(ui) = ui_dir(project) {
-                    run_in(&ui, "trunk", &["build", "--release"])
-                        .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
-                }
-                run_in(project, "cargo", &["build", "--release"])?;
-                report_release_size(project);
-            }
-            other => bail!("unknown target `{other}`; use: canvas, dom, webview, or all"),
+    for t in targets {
+        for step in resolve_build_steps(t)? {
+            run_step(project, &step, false)?;
         }
     }
     if bundle {
@@ -370,7 +462,7 @@ fn report_release_size(project: &Path) {
         if path.is_file() {
             if let Ok(meta) = entry.metadata() {
                 let size = meta.len();
-                if largest.as_ref().map_or(true, |(s, _)| size > *s) {
+                if largest.as_ref().is_none_or(|(s, _)| size > *s) {
                     largest = Some((size, path));
                 }
             }
@@ -458,7 +550,7 @@ mod tests {
     #[test]
     fn build_rejects_unknown_target() {
         let dir = PathBuf::from(".");
-        assert!(build(Some("bogus".to_string()), &dir).is_err());
+        assert!(build(Some("bogus".to_string()), &dir, false).is_err());
     }
 
     #[test]
@@ -486,5 +578,15 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["appfront", "optimize", "--target", "bogus"]).is_ok());
+    }
+
+    #[test]
+    fn generate_flags_parse() {
+        assert!(Cli::try_parse_from(["appfront", "generate", "--prompt", "a counter"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "appfront", "generate", "--prompt", "a counter", "--out", "ui.rs"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["appfront", "generate"]).is_err());
     }
 }

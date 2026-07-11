@@ -43,19 +43,23 @@ pub fn paint<Msg: Clone>(
             name_accessible_node(ui, rect, id, text, None);
         }
         NodeKind::Button { label } => {
-            let response = ui.put(rect, egui::Button::new(label.clone()));
+            let response = ui.put(rect, egui::Button::new(label.as_str()));
             clicked = response.clicked();
             #[cfg(feature = "accesskit")]
             {
-                response.set_accessible_name(label.clone());
+                response.set_accessible_name(label.as_str());
                 if let Some(desc) = &node.ui.meta.ai.description {
-                    response.set_accessible_description(desc.clone());
+                    response.set_accessible_description(desc.as_str());
                 }
             }
         }
         NodeKind::Input { value } => {
             let mut value = value.clone();
-            let response = ui.put(rect, egui::TextEdit::singleline(&mut value));
+            // `ui.put` has side effects (places the widget); the returned
+            // `Response` is only needed for the AccessKit name below, so bind
+            // it as `_response` to avoid an unused-variable warning when the
+            // `accesskit` feature is off.
+            let _response = ui.put(rect, egui::TextEdit::singleline(&mut value));
             #[cfg(feature = "accesskit")]
             {
                 // Give the field a name so a screen reader announces it; prefer
@@ -69,7 +73,7 @@ pub fn paint<Msg: Clone>(
                     .clone()
                     .or_else(|| node.ui.meta.class.clone())
                     .unwrap_or_else(|| format!("Text input: {value}"));
-                response.set_accessible_name(name);
+                _response.set_accessible_name(name);
             }
         }
         NodeKind::DataGrid { columns, rows } => {
@@ -117,7 +121,7 @@ fn name_accessible_node(
     role: Option<egui::accesskit::Role>,
 ) {
     let response = ui.interact(rect, id, Sense::hover());
-    response.set_accessible_name(name.to_string());
+    response.set_accessible_name(name);
     if let Some(role) = role {
         response.set_accessible_role(role);
     }
@@ -163,5 +167,150 @@ fn paint_data_grid<Msg>(
                 + Vec2::new(CELL_PADDING, CELL_PADDING / 2.0);
             paint_text(ui, cell_pos, text, TEXT_FONT_SIZE);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text::TextMeasurer;
+    use appfront_core::UITree;
+    use egui::{Event, PointerButton, Pos2 as EguiPos2, RawInput};
+    use std::cell::RefCell;
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Msg {
+        Clicked,
+    }
+
+    /// Lays `ui` out with `taffy` and paints it into a fresh headless
+    /// `egui::Context`, feeding `input` for that single frame. Returns every
+    /// `Msg` the paint pass dispatched, in order.
+    fn run_paint_frame(ctx: &egui::Context, ui: &UITree<Msg>, input: RawInput) -> Vec<Msg> {
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = layout::build(&mut tree, &mut measurer, ui);
+        tree.compute_layout(
+            root.taffy_id,
+            taffy::Size {
+                width: taffy::AvailableSpace::Definite(800.0),
+                height: taffy::AvailableSpace::Definite(600.0),
+            },
+        )
+        .expect("compute_layout");
+
+        let dispatched: Rc<RefCell<Vec<Msg>>> = Rc::new(RefCell::new(Vec::new()));
+        let dispatched_clone = dispatched.clone();
+        let dispatch: Rc<dyn Fn(Msg)> = Rc::new(move |msg| dispatched_clone.borrow_mut().push(msg));
+
+        let _ = ctx.run_ui(input, |ui| {
+            let origin = ui.min_rect().min;
+            let mut id_seed = 0u64;
+            paint(ui, &tree, &root, origin, &dispatch, &mut id_seed);
+        });
+        drop(dispatch);
+
+        Rc::try_unwrap(dispatched).unwrap().into_inner()
+    }
+
+    #[test]
+    fn paint_handles_every_node_kind_without_panicking() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.heading(1, "Title");
+            c.text("Body text");
+            c.button("Go");
+            c.input("value");
+            c.data_grid(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]]);
+            c.list(|l| {
+                l.text("item one");
+                l.text("item two");
+            });
+        });
+        let ctx = egui::Context::default();
+        let dispatched = run_paint_frame(&ctx, &ui, RawInput::default());
+        assert!(dispatched.is_empty());
+    }
+
+    #[test]
+    fn button_without_pointer_input_does_not_dispatch() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go").on_click(Msg::Clicked);
+        });
+        let ctx = egui::Context::default();
+        let dispatched = run_paint_frame(&ctx, &ui, RawInput::default());
+        assert!(dispatched.is_empty());
+    }
+
+    #[test]
+    fn clicking_a_button_dispatches_its_on_click_msg() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go").on_click(Msg::Clicked);
+        });
+        let ctx = egui::Context::default();
+
+        // Button sits at the container's padded top-left corner; well inside
+        // its painted rect regardless of exact text measurement.
+        let pos = EguiPos2::new(10.0, 10.0);
+
+        // Widget hit-testing is based on the *previous* frame's registered
+        // rects, so a warm-up frame is needed before the button's rect is
+        // known to egui's interaction state.
+        run_paint_frame(&ctx, &ui, RawInput::default());
+
+        let click = RawInput {
+            events: vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(run_paint_frame(&ctx, &ui, click), vec![Msg::Clicked]);
+    }
+
+    #[test]
+    fn clicking_a_non_button_node_with_on_click_dispatches_via_interact_fallback() {
+        // `Text`/`Heading`/etc. aren't real egui widgets, so a click on them
+        // goes through the `ui.interact` fallback at the bottom of `paint`
+        // rather than a widget's own `Response::clicked()`.
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.text("click me").on_click(Msg::Clicked);
+        });
+        let ctx = egui::Context::default();
+        let pos = EguiPos2::new(10.0, 10.0);
+
+        run_paint_frame(&ctx, &ui, RawInput::default());
+
+        let click = RawInput {
+            events: vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(run_paint_frame(&ctx, &ui, click), vec![Msg::Clicked]);
     }
 }

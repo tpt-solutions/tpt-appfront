@@ -55,6 +55,16 @@ pub fn view(item: TokenStream) -> TokenStream {
     }
 }
 
+/// Alias of [`view`]; some authors prefer the `rsx!` name (mirroring other
+/// Rust UI frameworks). Both expand to identical codegen.
+#[proc_macro]
+pub fn rsx(item: TokenStream) -> TokenStream {
+    match view::expand(item.into()) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
 fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
     let ItemFn {
         attrs,

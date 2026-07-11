@@ -154,4 +154,15 @@ mod tests {
         assert!(h > 0.0);
         assert_eq!(w1, w2);
     }
+
+    // `with_font_data` is the runtime-font-swap entry point; exercise it with
+    // the bundled bytes so it isn't dead code (todo.md Phase 11 review).
+    #[cfg(all(feature = "full-text-shaping", not(target_arch = "wasm32")))]
+    #[test]
+    fn with_font_data_builds_measurer() {
+        let mut m = TextMeasurer::with_font_data(BUNDLED_FONT.to_vec());
+        let (w, h) = m.measure("Hello, AppFront", 16.0);
+        assert!(w > 0.0);
+        assert!(h > 0.0);
+    }
 }

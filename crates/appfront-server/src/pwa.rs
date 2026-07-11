@@ -74,6 +74,19 @@ self.addEventListener('activate', (event) => {{
 self.addEventListener('fetch', (event) => {{
   const req = event.request;
   if (req.method !== 'GET') return;
+  // Navigations are network-first so a redeploy isn't served stale from the
+  // cache; only when the network is unreachable do we fall back to cached
+  // content (cache_name still bounds asset staleness for non-navigation GETs).
+  if (req.mode === 'navigate') {{
+    event.respondWith(
+      fetch(req).then((resp) => {{
+        const copy = resp.clone();
+        caches.open(CACHE).then((cache) => cache.put(req, copy));
+        return resp;
+      }}).catch(() => caches.match(req).then((c) => c || caches.match({fallback:?})))
+    );
+    return;
+  }}
   event.respondWith(
     caches.match(req).then((cached) =>
       cached ||
@@ -113,16 +126,20 @@ pub fn manifest_link() -> String {
 }
 
 /// `<script>` registering the service worker. Embed once in `<body>`;
-/// registration is a no-op where `serviceWorker` is unavailable.
-pub fn registration_script() -> String {
-    r#"<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+/// registration is a no-op where `serviceWorker` is unavailable. `nonce` must
+/// match the `Content-Security-Policy` `nonce` set on the document so the
+/// inline script is allowed to run.
+pub fn registration_script(nonce: &str) -> String {
+    format!(
+        r#"<script nonce="{nonce}">
+if ('serviceWorker' in navigator) {{
+  window.addEventListener('load', () => {{
     navigator.serviceWorker.register('/service-worker.js').catch((e) => console.error('SW registration failed', e));
-  });
-}
-</script>"#
-        .to_string()
+  }});
+}}
+</script>"#,
+        nonce = nonce,
+    )
 }
 
 #[cfg(test)]
@@ -161,7 +178,8 @@ mod tests {
     fn glue_snippets_are_well_formed() {
         assert!(manifest_link().contains(r#"rel="manifest""#));
         assert!(manifest_link().contains("/manifest.webmanifest"));
-        assert!(registration_script().contains("/service-worker.js"));
-        assert!(registration_script().contains("serviceWorker"));
+        assert!(registration_script("test-nonce").contains("/service-worker.js"));
+        assert!(registration_script("test-nonce").contains("serviceWorker"));
+        assert!(registration_script("test-nonce").contains("nonce=\"test-nonce\""));
     }
 }

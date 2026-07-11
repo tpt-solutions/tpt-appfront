@@ -169,6 +169,18 @@ where
         closure.forget();
     }
 
+    if let Some(on_input) = ui.meta.on_input.clone() {
+        let dispatch = Rc::clone(dispatch);
+        if let Some(input_el) = node.dyn_ref::<web_sys::HtmlInputElement>() {
+            let target = input_el.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                dispatch(on_input(target.value()));
+            });
+            input_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
+            closure.forget();
+        }
+    }
+
     Ok(node)
 }
 
@@ -497,8 +509,10 @@ fn hydrate_node<Msg>(
 where
     Msg: Clone + 'static,
 {
-    let mut needs_hydration =
-        ui.meta.is_dynamic || ui.meta.on_click.is_some() || ui.meta.ai.action.is_some();
+    let mut needs_hydration = ui.meta.is_dynamic
+        || ui.meta.on_click.is_some()
+        || ui.meta.on_input.is_some()
+        || ui.meta.ai.action.is_some();
 
     match &ui.kind {
         NodeKind::Container { children } | NodeKind::List { items: children } => {
@@ -543,6 +557,18 @@ where
         })?;
         html_el.set_onclick(Some(closure.as_ref().unchecked_ref()));
         closure.forget();
+    }
+
+    if let Some(on_input) = ui.meta.on_input.clone() {
+        let dispatch = Rc::clone(dispatch);
+        if let Some(input_el) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+            let target = input_el.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                dispatch(on_input(target.value()));
+            });
+            input_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
+            closure.forget();
+        }
     }
 
     if let Some(action) = &ui.meta.ai.action {

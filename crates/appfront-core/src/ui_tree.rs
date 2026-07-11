@@ -41,10 +41,36 @@ pub struct AiMeta {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Two-way-binding callback for `Input` nodes: takes the input's new string
+/// value (known only once the change event fires) and produces a `Msg` to
+/// dispatch, mirroring `on_click`'s dispatch pattern but parameterized by a
+/// runtime value instead of a value baked in at tree-build time. `Arc<dyn Fn
+/// + Send + Sync>` (not `Rc`) — same reasoning as
+/// `appfront_server::router::CommandHandler`: a `UITree` can end up behind
+/// an `Arc<SmartRouter<Msg>>` shared across an Axum server's worker threads,
+/// which requires every field to be `Send + Sync`.
+pub type OnInput<Msg> = std::sync::Arc<dyn Fn(String) -> Msg + Send + Sync>;
+
+/// `#[serde(default = "...")]` target for [`NodeMeta::on_input`]. Needed
+/// because plain `#[serde(skip)]` makes serde's derive require `Msg:
+/// Default` (it infers the bound from the field's generic parameters, not
+/// realizing `Option<T>: Default` doesn't actually need `T: Default`) —
+/// spelling out the default function sidesteps that overly-strict inference.
+fn on_input_default<Msg>() -> Option<OnInput<Msg>> {
+    None
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NodeMeta<Msg> {
     pub class: Option<String>,
     pub on_click: Option<Msg>,
+    /// See [`OnInput`]. Not serializable — a live closure can't survive
+    /// SSR/hydration JSON, and SSR/AI-schema rendering never needs to *call*
+    /// it, only know an input exists. Currently only `appfront-dom` wires
+    /// this into a real `oninput` listener; `appfront-canvas`/`appfront-tui`
+    /// don't consume it yet.
+    #[serde(skip, default = "on_input_default")]
+    pub on_input: Option<OnInput<Msg>>,
     pub ai: AiMeta,
     /// Stable identifier assigned before SSR so the client hydrator can match
     /// server-rendered DOM nodes back to their `UITree` counterpart.
@@ -75,12 +101,31 @@ impl<Msg> Default for NodeMeta<Msg> {
         NodeMeta {
             class: None,
             on_click: None,
+            on_input: None,
             ai: AiMeta::default(),
             data_appfront_id: None,
             is_dynamic: false,
             key: None,
             virtual_scroll: None,
         }
+    }
+}
+
+/// Manual impl since `on_input`'s `Rc<dyn Fn(String) -> Msg>` can't derive
+/// `Debug` (trait objects for `Fn` don't implement it) — every other field
+/// still prints normally, `on_input` prints as a presence marker.
+impl<Msg: std::fmt::Debug> std::fmt::Debug for NodeMeta<Msg> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeMeta")
+            .field("class", &self.class)
+            .field("on_click", &self.on_click)
+            .field("on_input", &self.on_input.as_ref().map(|_| "<fn>"))
+            .field("ai", &self.ai)
+            .field("data_appfront_id", &self.data_appfront_id)
+            .field("is_dynamic", &self.is_dynamic)
+            .field("key", &self.key)
+            .field("virtual_scroll", &self.virtual_scroll)
+            .finish()
     }
 }
 
@@ -161,14 +206,6 @@ impl<Msg> ContainerBuilder<Msg> {
         ContainerBuilder {
             children: Vec::new(),
         }
-    }
-
-    /// Builds the children described by `build` and returns the resulting list.
-    /// Helper for macro codegen; see [`ContainerBuilder::into_only_child`].
-    pub fn build_children(build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> Vec<UITree<Msg>> {
-        let mut b = ContainerBuilder::new();
-        build(&mut b);
-        b.children
     }
 
     /// Consumes the builder and returns its single child (the result of a
@@ -261,6 +298,12 @@ impl<Msg> ContainerBuilder<Msg> {
     }
 }
 
+impl<Msg> Default for ContainerBuilder<Msg> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A chainable reference to the node most recently pushed onto a
 /// [`ContainerBuilder`], used to set styling/events without needing a
 /// separate variable per node.
@@ -281,6 +324,14 @@ impl<'a, Msg> NodeRef<'a, Msg> {
 
     pub fn on_click(mut self, msg: Msg) -> Self {
         self.meta_mut().on_click = Some(msg);
+        self
+    }
+
+    /// Two-way binding for `Input` nodes: `f` is called with the input's new
+    /// value on every change, producing a `Msg` to dispatch. See
+    /// [`OnInput`]. Currently only wired up by `appfront-dom`.
+    pub fn on_input(mut self, f: impl Fn(String) -> Msg + Send + Sync + 'static) -> Self {
+        self.meta_mut().on_input = Some(std::sync::Arc::new(f));
         self
     }
 
