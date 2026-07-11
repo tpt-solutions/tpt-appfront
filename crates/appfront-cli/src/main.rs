@@ -2,11 +2,12 @@ mod generate;
 mod templates;
 
 use std::fs;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as Process};
-use std::sync::Mutex;
+use std::process::{Child, Command as Process, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -51,6 +52,10 @@ enum Command {
     /// hosting the `ui/` trunk build inside the OS webview.
     #[arg(long)]
     desktop_webview: bool,
+    /// Disable the watch/reload loop for `--desktop` and run a single plain
+    /// `cargo run` (useful when you manage reloading externally).
+    #[arg(long)]
+    no_reload: bool,
     /// Directory of the crate to run (defaults to the current directory).
     #[arg(long, default_value = ".")]
     project: PathBuf,
@@ -107,8 +112,8 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Init { name, target } => init(&name, target),
-        Command::Dev { desktop, web, tui, desktop_webview, project } => {
-            dev(desktop, web, tui, desktop_webview, &project)
+        Command::Dev { desktop, web, tui, desktop_webview, no_reload, project } => {
+            dev(desktop, web, tui, desktop_webview, no_reload, &project)
         }
         Command::Build { target, project, bundle } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
@@ -253,6 +258,7 @@ fn dev(
     web: bool,
     tui: bool,
     desktop_webview: bool,
+    no_reload: bool,
     project: &Path,
 ) -> anyhow::Result<()> {
     match (desktop, web, tui, desktop_webview) {
@@ -260,7 +266,13 @@ fn dev(
         | (true, _, _, true) | (_, true, _, true) => {
             bail!("pass only one of --desktop, --web, --tui, or --desktop-webview")
         }
-        (true, false, false, false) => run_in(project, "cargo", &["run"]),
+        (true, false, false, false) => {
+            if no_reload {
+                run_in(project, "cargo", &["run"])
+            } else {
+                dev_desktop_watch(project)
+            }
+        }
         (false, true, false, false) => run_in(project, "trunk", &["serve"])
             .context("failed to run `trunk serve` — install it with `cargo install trunk`"),
         (false, false, true, false) => run_in(project, "cargo", &["run"]),
@@ -288,6 +300,173 @@ fn ui_dir(project: &Path) -> Option<PathBuf> {
         Some(ui)
     } else {
         None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// dev --desktop watch/reload loop
+// ---------------------------------------------------------------------------
+
+/// Poll-based file watcher over a project's source tree. It re-scans on each
+/// call (cheap for the small trees a dev session has) and reports whether the
+/// watched set changed since the previous snapshot. A kernel-level watcher
+/// (`notify`) would avoid the polling, but a dependency-free poll is enough for
+/// a dev-time restart loop.
+struct Watcher {
+    root: PathBuf,
+}
+
+impl Watcher {
+    fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    /// Collect the files to watch: every `.rs` under `src/`, plus `Cargo.toml`
+    /// at the project root. `Cargo.lock` is deliberately excluded — `cargo run`
+    /// rewrites/updates it on first run and on dependency resolution, which
+    /// would (falsely) look like a source change and trigger a reload loop.
+    /// Returns `(path, content_hash)` pairs, sorted by path for stable compare.
+    fn snapshot(&self) -> Vec<(PathBuf, u64)> {
+        let mut out = Vec::new();
+        collect_rs(&self.root.join("src"), &mut out);
+        let p = self.root.join("Cargo.toml");
+        if let Some(h) = file_hash(&p) {
+            out.push((p, h));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// True if the watched set or any content differs from `prev`. On a change
+    /// it advances `prev` to the latest snapshot so the next call restarts
+    /// from there; an unchanged call leaves `prev` untouched.
+    fn changed(&self, prev: &mut Vec<(PathBuf, u64)>) -> bool {
+        let now = self.snapshot();
+        if now != *prev {
+            *prev = now;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn collect_rs(dir: &Path, out: &mut Vec<(PathBuf, u64)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            if let Some(h) = file_hash(&path) {
+                out.push((path, h));
+            }
+        }
+    }
+}
+
+/// A cheap, non-crypto hash of a file's length + contents. Used to detect
+/// edits reliably across filesystems whose mtime resolution is too coarse to
+/// catch rapid back-to-back saves. A read failure (e.g. a file being rewritten
+/// mid-save) yields `None`, so the file drops out of the snapshot and the next
+/// compare reports it as a change — a safe, idempotent outcome for a dev loop.
+fn file_hash(path: &Path) -> Option<u64> {
+    let data = fs::read(path).ok()?;
+    let mut hasher = DefaultHasher::new();
+    data.len().hash(&mut hasher);
+    data.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// `dev --desktop` watch/reload loop: spawn `cargo run`, watch the project's
+/// source for changes, and restart the child process on a debounced change.
+/// Compile errors don't abort the loop — the failing `cargo run` child exits,
+/// the watcher keeps running, and the next save retries the build.
+fn dev_desktop_watch(project: &Path) -> anyhow::Result<()> {
+    let watcher = Watcher::new(project.to_path_buf());
+    let mut baseline = watcher.snapshot();
+    println!(
+        "watching {} for changes (Ctrl-C to stop)…",
+        project.display()
+    );
+
+    let mut child = spawn_cargo_run(project)?;
+    let poll_interval = Duration::from_millis(400);
+    let debounce = Duration::from_millis(150);
+
+    loop {
+        thread::sleep(poll_interval);
+        if watcher.changed(&mut baseline) {
+            // Wait until changes settle before restarting, so a burst of saves
+            // (or a file being rewritten mid-write) only triggers one rebuild.
+            while watcher.changed(&mut baseline) {
+                thread::sleep(debounce);
+            }
+            println!("↻ change detected — restarting…");
+            kill_child(&mut child);
+            child = spawn_cargo_run(project)?;
+        }
+    }
+}
+
+fn spawn_cargo_run(project: &Path) -> anyhow::Result<Child> {
+    Process::new("cargo")
+        .args(["run"])
+        .current_dir(project)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("failed to spawn `cargo run` in {}", project.display()))
+}
+
+/// Kill the `cargo run` child and its whole process tree. `cargo run` spawns a
+/// child `cargo` which spawns `rustc`; killing only the top process would
+/// orphan the compilers, leaving them holding the `target/` lock and stalling
+/// the next build. The child deliberately stays in the CLI's own process group
+/// (so a Ctrl-C still terminates it), which is why we kill the tree explicitly
+/// here rather than relying on group signalling.
+fn kill_child(child: &mut Child) {
+    let pid = child.id();
+    #[cfg(windows)]
+    {
+        let _ = Process::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .output();
+    }
+    #[cfg(unix)]
+    {
+        kill_tree_unix(pid);
+    }
+    // Reap the direct child regardless of whether the OS tree-kill above ran.
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Walk `/proc` to collect every descendant of `root` (Linux only) and SIGKILL
+/// the whole tree via the `kill` binary. On non-Linux Unix (e.g. macOS, where
+/// `/proc` is absent) this finds no children and the direct-child `kill()` in
+/// `kill_child` remains the fallback.
+#[cfg(unix)]
+fn kill_tree_unix(root: u32) {
+    let mut pids = vec![root];
+    let mut i = 0;
+    while i < pids.len() {
+        let p = pids[i];
+        i += 1;
+        let children = format!("/proc/{p}/task/{p}/children");
+        if let Ok(s) = fs::read_to_string(&children) {
+            for c in s.split_whitespace() {
+                if let Ok(c) = c.parse::<u32>() {
+                    pids.push(c);
+                }
+            }
+        }
+    }
+    for p in pids {
+        let _ = Process::new("kill").args(["-9", &p.to_string()]).output();
     }
 }
 
@@ -536,18 +715,27 @@ mod tests {
     #[test]
     fn dev_rejects_conflicting_flags() {
         let dir = PathBuf::from(".");
-        assert!(dev(true, true, false, false, &dir).is_err());
-        assert!(dev(true, false, true, false, &dir).is_err());
-        assert!(dev(false, true, true, false, &dir).is_err());
-        assert!(dev(true, false, false, true, &dir).is_err());
-        assert!(dev(false, true, false, true, &dir).is_err());
-        assert!(dev(false, false, true, true, &dir).is_err());
+        assert!(dev(true, true, false, false, false, &dir).is_err());
+        assert!(dev(true, false, true, false, false, &dir).is_err());
+        assert!(dev(false, true, true, false, false, &dir).is_err());
+        assert!(dev(true, false, false, true, false, &dir).is_err());
+        assert!(dev(false, true, false, true, false, &dir).is_err());
+        assert!(dev(false, false, true, true, false, &dir).is_err());
     }
 
     #[test]
     fn dev_requires_at_least_one_flag() {
         let dir = PathBuf::from(".");
-        assert!(dev(false, false, false, false, &dir).is_err());
+        assert!(dev(false, false, false, false, false, &dir).is_err());
+    }
+
+    #[test]
+    fn dev_no_reload_flag_parses() {
+        assert!(Cli::try_parse_from([
+            "appfront", "dev", "--desktop", "--no-reload"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["appfront", "dev", "--desktop"]).is_ok());
     }
 
     #[test]
@@ -591,5 +779,37 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["appfront", "generate"]).is_err());
+    }
+
+    #[test]
+    fn watcher_detects_source_change_and_ignores_cargo_lock() {
+        // Content-hash based, so this is reliable even when both writes land in
+        // the same filesystem mtime tick (unlike an mtime-only watcher).
+        let dir = std::env::temp_dir().join(format!("appfront-watch-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let file = dir.join("src").join("main.rs");
+        fs::write(&file, "fn main() {}\n").unwrap();
+
+        let w = Watcher::new(dir.clone());
+        let mut snap = w.snapshot();
+        assert!(!w.changed(&mut snap), "identical snapshot is not a change");
+
+        fs::write(&file, "fn main() { let x = 1; }\n").unwrap();
+        assert!(w.changed(&mut snap), "a source content edit is detected");
+
+        // Adding Cargo.toml is a legit watched change.
+        fs::write(dir.join("Cargo.toml"), "[package]\n").unwrap();
+        assert!(w.changed(&mut snap), "adding Cargo.toml is detected");
+
+        // Cargo.lock is excluded: creating it and then editing it alone must
+        // NOT trigger a reload (the spurious-reload bug from review).
+        let lock = dir.join("Cargo.lock");
+        fs::write(&lock, "version = 3\n").unwrap();
+        assert!(!w.changed(&mut snap), "adding Cargo.lock does not reload");
+        fs::write(&lock, "version = 3\n# cargo rewrote this\n").unwrap();
+        assert!(!w.changed(&mut snap), "editing Cargo.lock alone does not reload");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
