@@ -18,6 +18,7 @@ struct Cli {
 enum InitTarget {
     Dom,
     Canvas,
+    Tui,
     Both,
 }
 
@@ -39,6 +40,9 @@ enum Command {
         /// Run the browser (DOM) build via `trunk serve`.
         #[arg(long)]
         web: bool,
+        /// Run the terminal (TUI) build via `cargo run`.
+        #[arg(long)]
+        tui: bool,
         /// Directory of the crate to run (defaults to the current directory).
         #[arg(long, default_value = ".")]
         project: PathBuf,
@@ -59,7 +63,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Init { name, target } => init(&name, target),
-        Command::Dev { desktop, web, project } => dev(desktop, web, &project),
+        Command::Dev { desktop, web, tui, project } => dev(desktop, web, tui, &project),
         Command::Build { target, project } => build(target, &project),
     }
 }
@@ -105,6 +109,9 @@ fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
         InitTarget::Dom => {
             scaffold_dom_crate(&root, name, &app_title)?;
         }
+        InitTarget::Tui => {
+            scaffold_tui_crate(&root, name, &app_title)?;
+        }
         InitTarget::Both => {
             scaffold_canvas_crate(&root.join("canvas"), &format!("{name}-canvas"), &app_title)?;
             scaffold_dom_crate(&root.join("dom"), &format!("{name}-dom"), &app_title)?;
@@ -125,6 +132,7 @@ fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
         }
         InitTarget::Canvas => println!("  cd {name} && cargo run"),
         InitTarget::Dom => println!("  cd {name} && trunk serve"),
+        InitTarget::Tui => println!("  cd {name} && cargo run"),
     }
     Ok(())
 }
@@ -133,6 +141,7 @@ fn target_label(target: InitTarget) -> &'static str {
     match target {
         InitTarget::Dom => "dom",
         InitTarget::Canvas => "canvas",
+        InitTarget::Tui => "tui",
         InitTarget::Both => "canvas + dom",
     }
 }
@@ -158,17 +167,32 @@ fn scaffold_dom_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     Ok(())
 }
 
+fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Result<()> {
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(
+        dir.join("Cargo.toml"),
+        templates::tui_cargo_toml(pkg_name, &dep_path("appfront-core"), &dep_path("appfront-tui")),
+    )?;
+    fs::write(dir.join("src").join("main.rs"), templates::tui_main_rs(app_title))?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // dev
 // ---------------------------------------------------------------------------
 
-fn dev(desktop: bool, web: bool, project: &Path) -> anyhow::Result<()> {
-    match (desktop, web) {
-        (true, true) => bail!("pass only one of --desktop or --web"),
-        (true, false) => run_in(project, "cargo", &["run"]),
-        (false, true) => run_in(project, "trunk", &["serve"])
+fn dev(desktop: bool, web: bool, tui: bool, project: &Path) -> anyhow::Result<()> {
+    match (desktop, web, tui) {
+        (true, true, _) | (true, _, true) | (_, true, true) => {
+            bail!("pass only one of --desktop, --web, or --tui")
+        }
+        (true, false, false) => run_in(project, "cargo", &["run"]),
+        (false, true, false) => run_in(project, "trunk", &["serve"])
             .context("failed to run `trunk serve` — install it with `cargo install trunk`"),
-        (false, false) => bail!("specify --desktop (native window) or --web (browser dev server)"),
+        (false, false, true) => run_in(project, "cargo", &["run"]),
+        (false, false, false) => {
+            bail!("specify --desktop (native window), --web (browser dev server), or --tui (terminal)")
+        }
     }
 }
 
@@ -182,6 +206,7 @@ fn build(target: Option<String>, project: &Path) -> anyhow::Result<()> {
         "dom" | "wasm" => run_in(project, "trunk", &["build", "--release"])
             .context("failed to run `trunk build` — install it with `cargo install trunk`"),
         "canvas" | "desktop" => run_in(project, "cargo", &["build", "--release"]),
+        "tui" | "terminal" => run_in(project, "cargo", &["build", "--release"]),
         "html" | "ssr" => {
             println!("`appfront-html`/`appfront-server` are libraries embedded in your own server binary — build your project's server crate directly, e.g. `cargo build --release -p <your-server-crate>`.");
             Ok(())
@@ -218,4 +243,55 @@ fn run_in(dir: &Path, program: &str, args: &[&str]) -> anyhow::Result<()> {
         bail!("`{program} {}` exited with {status}", args.join(" "));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_label_covers_every_variant() {
+        assert_eq!(target_label(InitTarget::Dom), "dom");
+        assert_eq!(target_label(InitTarget::Canvas), "canvas");
+        assert_eq!(target_label(InitTarget::Tui), "tui");
+        assert_eq!(target_label(InitTarget::Both), "canvas + dom");
+    }
+
+    #[test]
+    fn dep_path_uses_forward_slashes_and_ends_with_crate_name() {
+        let path = dep_path("appfront-core");
+        assert!(path.ends_with("appfront-core"));
+        assert!(!path.contains('\\'));
+    }
+
+    #[test]
+    fn dev_rejects_conflicting_flags() {
+        let dir = PathBuf::from(".");
+        assert!(dev(true, true, false, &dir).is_err());
+        assert!(dev(true, false, true, &dir).is_err());
+        assert!(dev(false, true, true, &dir).is_err());
+    }
+
+    #[test]
+    fn dev_requires_at_least_one_flag() {
+        let dir = PathBuf::from(".");
+        assert!(dev(false, false, false, &dir).is_err());
+    }
+
+    #[test]
+    fn build_rejects_unknown_target() {
+        let dir = PathBuf::from(".");
+        assert!(build(Some("bogus".to_string()), &dir).is_err());
+    }
+
+    #[test]
+    fn init_rejects_invalid_names_before_touching_disk() {
+        // These names all fail validation and `bail!` before `init` creates
+        // any directory, so no cwd sandboxing is needed to keep this hermetic.
+        assert!(init("", InitTarget::Canvas).is_err());
+        assert!(init("../escape", InitTarget::Canvas).is_err());
+        assert!(init("a/b", InitTarget::Canvas).is_err());
+        assert!(init("a\\b", InitTarget::Canvas).is_err());
+        assert!(init("..", InitTarget::Canvas).is_err());
+    }
 }

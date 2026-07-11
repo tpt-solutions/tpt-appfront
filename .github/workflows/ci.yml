@@ -76,3 +76,12 @@ jobs:
               (cd "$dir" && trunk build)
             fi
           done
+      - name: Build native (non-trunk) examples
+        run: |
+          set -e
+          for dir in examples/*/; do
+            if [ -f "$dir/Cargo.toml" ] && [ ! -f "$dir/index.html" ]; then
+              echo "Building native example $dir"
+              (cd "$dir" && cargo build)
+            fi
+          done

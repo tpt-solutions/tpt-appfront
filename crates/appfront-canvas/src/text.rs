@@ -69,3 +69,42 @@ impl Default for TextMeasurer {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn longer_text_measures_wider() {
+        let mut m = TextMeasurer::new();
+        let (short_w, _) = m.measure("hi", 16.0);
+        let (long_w, _) = m.measure("hello world", 16.0);
+        assert!(long_w > short_w);
+    }
+
+    #[test]
+    fn larger_font_size_measures_wider_and_taller() {
+        let mut m = TextMeasurer::new();
+        let (w_small, h_small) = m.measure("hello", 16.0);
+        let (w_large, h_large) = m.measure("hello", 32.0);
+        assert!(w_large > w_small);
+        assert!(h_large > h_small);
+    }
+
+    #[test]
+    fn empty_text_measures_as_nonzero() {
+        let mut m = TextMeasurer::new();
+        let (w, h) = m.measure("", 16.0);
+        assert!(w > 0.0);
+        assert!(h > 0.0);
+    }
+
+    #[test]
+    fn same_text_and_size_measures_identically() {
+        let mut m = TextMeasurer::new();
+        let (w1, h1) = m.measure("consistent", 16.0);
+        let (w2, h2) = m.measure("consistent", 16.0);
+        assert_eq!(w1, w2);
+        assert_eq!(h1, h2);
+    }
+}

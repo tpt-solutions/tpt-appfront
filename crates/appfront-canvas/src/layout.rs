@@ -247,3 +247,101 @@ fn build_grid_row(
         .expect("taffy row");
     (row_id, cell_ids)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use appfront_core::UITree;
+
+    #[derive(Debug, Clone)]
+    #[allow(dead_code)]
+    enum Msg {
+        Clicked,
+    }
+
+    #[test]
+    fn heading_font_size_shrinks_with_level_and_clamps() {
+        assert_eq!(heading_font_size(1), 28.0);
+        assert!(heading_font_size(2) < heading_font_size(1));
+        // Deeply nested/invalid levels stay readable (clamped at 14.0).
+        assert_eq!(heading_font_size(10), 14.0);
+        assert_eq!(heading_font_size(0), 28.0);
+    }
+
+    #[test]
+    fn container_produces_flex_node_with_one_child_per_ui_child() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.text("one");
+            c.text("two");
+        });
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = build(&mut tree, &mut measurer, &ui);
+        assert_eq!(root.children.len(), 2);
+        assert_eq!(tree.child_count(root.taffy_id), 2);
+    }
+
+    #[test]
+    fn button_leaf_includes_padding_beyond_text_size() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go");
+        });
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = build(&mut tree, &mut measurer, &ui);
+        let button_node = &root.children[0];
+        let style = tree.style(button_node.taffy_id).unwrap();
+        let (text_w, text_h) = measurer.measure("Go", TEXT_FONT_SIZE);
+        let w = style.size.width.value();
+        let h = style.size.height.value();
+        assert_eq!(w, text_w + BUTTON_PAD_X * 2.0);
+        assert_eq!(h, text_h + BUTTON_PAD_Y * 2.0);
+    }
+
+    #[test]
+    fn input_width_respects_minimum() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.input("x");
+        });
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = build(&mut tree, &mut measurer, &ui);
+        let input_node = &root.children[0];
+        let style = tree.style(input_node.taffy_id).unwrap();
+        let w = style.size.width.value();
+        assert!(w >= INPUT_MIN_WIDTH);
+    }
+
+    #[test]
+    fn data_grid_builds_one_row_per_data_row_plus_header() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.data_grid(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]]);
+        });
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = build(&mut tree, &mut measurer, &ui);
+        let grid_node = &root.children[0];
+        let grid_cells = grid_node.grid_cells.as_ref().expect("data grid has cells");
+        // header + 2 data rows
+        assert_eq!(grid_cells.len(), 3);
+        assert_eq!(grid_cells[0].len(), 2);
+        assert_eq!(tree.child_count(grid_node.taffy_id), 3);
+    }
+
+    #[test]
+    fn data_grid_column_width_matches_widest_cell() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.data_grid(["N"], [["short"], ["a much longer cell value"]]);
+        });
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = build(&mut tree, &mut measurer, &ui);
+        let grid_node = &root.children[0];
+        let grid_cells = grid_node.grid_cells.as_ref().unwrap();
+
+        let header_cell_style = tree.style(grid_cells[0][0]).unwrap();
+        let row2_cell_style = tree.style(grid_cells[2][0]).unwrap();
+        // Every cell in a column shares the same (widest-cell) width.
+        assert_eq!(header_cell_style.size.width, row2_cell_style.size.width);
+    }
+}

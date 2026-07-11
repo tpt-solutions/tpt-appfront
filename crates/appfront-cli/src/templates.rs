@@ -151,6 +151,54 @@ pub fn index_html(app_title: &str) -> String {
     )
 }
 
+pub fn tui_cargo_toml(pkg_name: &str, core_path: &str, tui_path: &str) -> String {
+    format!(
+        r#"[package]
+name = "{pkg_name}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+appfront-core = {{ path = "{core_path}" }}
+appfront-tui = {{ path = "{tui_path}" }}
+"#
+    )
+}
+
+pub fn tui_main_rs(app_title: &str) -> String {
+    format!(
+        r#"use appfront_core::{{Signal, UITree}};
+
+#[derive(Debug, Clone)]
+enum Msg {{
+    Increment,
+}}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {{
+    let count = Signal::new(0i32);
+
+    let count_for_ui = count.clone();
+    let build_ui = move || -> UITree<Msg> {{
+        UITree::container(|c| {{
+            c.heading(1, "{app_title}");
+            c.text(format!("Count: {{}}", count_for_ui.get()));
+            c.button("+1").on_click(Msg::Increment);
+        }})
+    }};
+
+    let dispatch = move |msg: Msg| match msg {{
+        Msg::Increment => count.set(count.get() + 1),
+    }};
+
+    // Tab/Arrows move focus, Enter/Space activate, Esc quits.
+    appfront_tui::run(build_ui, dispatch)?;
+    Ok(())
+}}
+"#
+    )
+}
+
 pub fn gitignore() -> &'static str {
     "/target\n/dist\nCargo.lock\n"
 }
@@ -187,5 +235,90 @@ appfront build --target dom --project dom
 Scaffolded by `appfront init`. See `appfront dev --help` / `appfront build --help`.
 "#
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn looks_like_toml(s: &str) -> bool {
+        s.contains("[package]") && s.contains("[dependencies]")
+    }
+
+    #[test]
+    fn canvas_cargo_toml_embeds_paths_and_is_toml_shaped() {
+        let out = canvas_cargo_toml("my-app", "/repo/appfront-core", "/repo/appfront-canvas");
+        assert!(out.contains("/repo/appfront-core"));
+        assert!(out.contains("/repo/appfront-canvas"));
+        assert!(out.contains("name = \"my-app\""));
+        assert!(looks_like_toml(&out));
+    }
+
+    #[test]
+    fn dom_cargo_toml_embeds_paths_and_is_toml_shaped() {
+        let out = dom_cargo_toml("my-app", "/repo/appfront-core", "/repo/appfront-dom");
+        assert!(out.contains("/repo/appfront-core"));
+        assert!(out.contains("/repo/appfront-dom"));
+        assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
+        assert!(looks_like_toml(&out));
+    }
+
+    #[test]
+    fn tui_cargo_toml_embeds_paths_and_is_toml_shaped() {
+        let out = tui_cargo_toml("my-app", "/repo/appfront-core", "/repo/appfront-tui");
+        assert!(out.contains("/repo/appfront-core"));
+        assert!(out.contains("/repo/appfront-tui"));
+        assert!(looks_like_toml(&out));
+    }
+
+    #[test]
+    fn canvas_main_rs_interpolates_title_with_no_leftover_braces() {
+        let out = canvas_main_rs("My App");
+        assert!(out.contains("My App"));
+        assert!(!out.contains("{{"));
+        assert!(!out.contains("}}"));
+    }
+
+    #[test]
+    fn dom_lib_rs_interpolates_title_with_no_leftover_braces() {
+        let out = dom_lib_rs("My App");
+        assert!(out.contains("My App"));
+        assert!(!out.contains("{{"));
+        assert!(!out.contains("}}"));
+    }
+
+    #[test]
+    fn tui_main_rs_interpolates_title_with_no_leftover_braces() {
+        let out = tui_main_rs("My App");
+        assert!(out.contains("My App"));
+        assert!(!out.contains("{{"));
+        assert!(!out.contains("}}"));
+    }
+
+    #[test]
+    fn index_html_interpolates_title() {
+        let out = index_html("My App");
+        assert!(out.contains("<title>My App</title>"));
+    }
+
+    #[test]
+    fn gitignore_has_expected_entries() {
+        assert_eq!(gitignore(), "/target\n/dist\nCargo.lock\n");
+    }
+
+    #[test]
+    fn readme_both_mentions_canvas_and_dom() {
+        let out = readme("my-app", true);
+        assert!(out.contains("# my-app"));
+        assert!(out.contains("canvas/"));
+        assert!(out.contains("dom/"));
+    }
+
+    #[test]
+    fn readme_single_target_is_minimal() {
+        let out = readme("my-app", false);
+        assert!(out.contains("# my-app"));
+        assert!(!out.contains("canvas/"));
     }
 }

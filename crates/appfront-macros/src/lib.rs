@@ -37,12 +37,22 @@ use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type};
 
+mod view;
+
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as ItemFn);
     expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+#[proc_macro]
+pub fn view(item: TokenStream) -> TokenStream {
+    match view::expand(item.into()) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
 }
 
 fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
@@ -185,4 +195,78 @@ fn doc_description(attrs: &[syn::Attribute]) -> Option<String> {
 
 fn kebab_case(ident: &str) -> String {
     ident.replace('_', "-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn kebab_case_replaces_underscores() {
+        assert_eq!(kebab_case("counter_row"), "counter-row");
+        assert_eq!(kebab_case("single"), "single");
+    }
+
+    #[test]
+    fn doc_description_joins_multiple_lines() {
+        let input: ItemFn = syn::parse_quote! {
+            /// Line one.
+            /// Line two.
+            fn f() -> UITree<Msg> { ui }
+        };
+        assert_eq!(
+            doc_description(&input.attrs).as_deref(),
+            Some("Line one. Line two.")
+        );
+    }
+
+    #[test]
+    fn doc_description_is_none_without_doc_comment() {
+        let input: ItemFn = syn::parse_quote! {
+            fn f() -> UITree<Msg> { ui }
+        };
+        assert_eq!(doc_description(&input.attrs), None);
+    }
+
+    #[test]
+    fn body_reads_signal_detects_get_call() {
+        let tokens = quote! { { count.get().to_string() } };
+        assert!(body_reads_signal(&tokens));
+    }
+
+    #[test]
+    fn body_reads_signal_detects_route_signal() {
+        let tokens = quote! { { let r = route_signal(); r } };
+        assert!(body_reads_signal(&tokens));
+    }
+
+    #[test]
+    fn body_reads_signal_false_when_no_markers_present() {
+        let tokens = quote! { { "static".to_string() } };
+        assert!(!body_reads_signal(&tokens));
+    }
+
+    #[test]
+    fn body_reads_signal_flags_coincidental_get_method() {
+        // Known false-positive: any identifier named `get` trips the
+        // heuristic, even one unrelated to `Signal::get`.
+        let tokens = quote! { { some_map.get(&key) } };
+        assert!(body_reads_signal(&tokens));
+    }
+
+    #[test]
+    fn returns_ui_tree_true_for_ui_tree_return_type() {
+        let sig: syn::Signature = syn::parse_quote! { fn f() -> UITree<Msg> };
+        assert!(returns_ui_tree(&sig.output));
+    }
+
+    #[test]
+    fn returns_ui_tree_false_for_other_return_type() {
+        let sig: syn::Signature = syn::parse_quote! { fn f() -> String };
+        assert!(!returns_ui_tree(&sig.output));
+
+        let sig_unit: syn::Signature = syn::parse_quote! { fn f() };
+        assert!(!returns_ui_tree(&sig_unit.output));
+    }
 }

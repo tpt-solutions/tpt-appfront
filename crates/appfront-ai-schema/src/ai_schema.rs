@@ -139,3 +139,98 @@ fn build_params(pairs: &[(String, String)]) -> Map<String, Value> {
     }
     map
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use appfront_core::UITree;
+
+    #[derive(Debug, Clone)]
+    enum Msg {
+        Clicked,
+    }
+
+    #[test]
+    fn title_comes_from_first_data_element() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.heading(1, "Welcome");
+            c.button("Go").on_click(Msg::Clicked);
+        });
+        let schema = to_ai_schema(&ui);
+        assert_eq!(schema.title, "Welcome");
+        assert_eq!(schema.interactive.len(), 1);
+        assert_eq!(schema.interactive[0].kind, "button");
+        assert_eq!(schema.interactive[0].label.as_deref(), Some("Go"));
+    }
+
+    #[test]
+    fn button_and_input_params_round_trip() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Add")
+                .ai_action("add_to_cart")
+                .ai_param("qty", "2");
+            c.input("hi").ai_param("max_len", "10");
+        });
+        let schema = to_ai_schema(&ui);
+        assert_eq!(schema.interactive.len(), 2);
+        assert_eq!(schema.interactive[0].action.as_deref(), Some("add_to_cart"));
+        assert_eq!(
+            schema.interactive[0].params.get("qty").unwrap(),
+            &Value::String("2".to_string())
+        );
+        assert_eq!(schema.interactive[1].value.as_deref(), Some("hi"));
+        assert_eq!(
+            schema.interactive[1].params.get("max_len").unwrap(),
+            &Value::String("10".to_string())
+        );
+    }
+
+    #[test]
+    fn list_and_nested_container_recurse() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.container(|inner| {
+                inner.button("Nested").on_click(Msg::Clicked);
+            });
+            c.list(|l| {
+                l.text("item one");
+                l.text("item two");
+            });
+        });
+        let schema = to_ai_schema(&ui);
+        assert_eq!(schema.interactive.len(), 1);
+        assert_eq!(schema.interactive[0].label.as_deref(), Some("Nested"));
+        assert_eq!(schema.data.len(), 2);
+        assert_eq!(schema.data[0].text.as_deref(), Some("item one"));
+        assert_eq!(schema.data[1].text.as_deref(), Some("item two"));
+    }
+
+    #[test]
+    fn data_grid_produces_data_grid_element() {
+        let ui: UITree<Msg> =
+            UITree::container(|c| {
+                c.data_grid(["Name", "Age"], [["Alice", "30"]]);
+            });
+        let schema = to_ai_schema(&ui);
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].kind, "data_grid");
+        assert_eq!(
+            schema.data[0].columns.as_deref(),
+            Some(&["Name".to_string(), "Age".to_string()][..])
+        );
+        assert_eq!(
+            schema.data[0].rows.as_deref(),
+            Some(&[vec!["Alice".to_string(), "30".to_string()]][..])
+        );
+    }
+
+    #[test]
+    fn to_ai_schema_value_serialises_expected_shape() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.heading(1, "Hi");
+            c.button("Go").on_click(Msg::Clicked);
+        });
+        let value = to_ai_schema_value(&ui).unwrap();
+        assert_eq!(value["schema_version"], "0.1.0");
+        assert_eq!(value["interactive"][0]["type"], "button");
+    }
+}

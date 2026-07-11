@@ -1,0 +1,11 @@
+[package]
+name = "appfront-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+appfront-core = { path = "../appfront-core" }
+ratatui = "0.30"
+crossterm = "0.28"
+anyhow = "1"

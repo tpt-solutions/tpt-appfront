@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::virtual_scroll::VirtualScroll;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UITree<Msg> {
     pub kind: NodeKind<Msg>,
@@ -62,6 +64,10 @@ pub struct NodeMeta<Msg> {
     /// instead of rebuilding every child from scratch.
     #[serde(default)]
     pub key: Option<String>,
+    /// Windowed-rendering config for `List`/`DataGrid` nodes — see
+    /// [`VirtualScroll`]. `None` (the default) means render every item.
+    #[serde(default)]
+    pub virtual_scroll: Option<VirtualScroll>,
 }
 
 impl<Msg> Default for NodeMeta<Msg> {
@@ -73,6 +79,7 @@ impl<Msg> Default for NodeMeta<Msg> {
             data_appfront_id: None,
             is_dynamic: false,
             key: None,
+            virtual_scroll: None,
         }
     }
 }
@@ -254,6 +261,13 @@ impl<'a, Msg> NodeRef<'a, Msg> {
     /// [`NodeMeta::key`].
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.meta_mut().key = Some(key.into());
+        self
+    }
+
+    /// Enables windowed rendering for a `List`/`DataGrid` — see
+    /// [`VirtualScroll`].
+    pub fn virtual_scroll(mut self, config: VirtualScroll) -> Self {
+        self.meta_mut().virtual_scroll = Some(config);
         self
     }
 }

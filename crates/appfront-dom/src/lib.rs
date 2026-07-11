@@ -62,12 +62,29 @@ where
         }
         NodeKind::List { items } => {
             let el = document.create_element("ul")?;
-            for (i, item) in items.iter().enumerate() {
-                let li = document.create_element("li")?;
-                li.set_attribute("data-key", &item_key(item, i))?;
-                let item_node = render_node(document, item, dispatch)?;
-                li.append_child(&item_node)?;
-                el.append_child(&li)?;
+            if let Some(vs) = ui.meta.virtual_scroll {
+                el.set_attribute(
+                    "style",
+                    &format!("overflow-y:auto;height:{}px", vs.viewport_height),
+                )?;
+                let range = vs.visible_range(items.len());
+                append_spacer(document, &el, range.top_spacer)?;
+                for (i, item) in items.iter().enumerate().take(range.end).skip(range.start) {
+                    let li = document.create_element("li")?;
+                    li.set_attribute("data-key", &item_key(item, i))?;
+                    let item_node = render_node(document, item, dispatch)?;
+                    li.append_child(&item_node)?;
+                    el.append_child(&li)?;
+                }
+                append_spacer(document, &el, range.bottom_spacer)?;
+            } else {
+                for (i, item) in items.iter().enumerate() {
+                    let li = document.create_element("li")?;
+                    li.set_attribute("data-key", &item_key(item, i))?;
+                    let item_node = render_node(document, item, dispatch)?;
+                    li.append_child(&item_node)?;
+                    el.append_child(&li)?;
+                }
             }
             el.into()
         }
@@ -103,14 +120,21 @@ where
             table.append_child(&thead)?;
 
             let tbody = document.create_element("tbody")?;
-            for row in rows {
-                let tr = document.create_element("tr")?;
-                for cell in row {
-                    let td = document.create_element("td")?;
-                    td.set_text_content(Some(cell));
-                    tr.append_child(&td)?;
+            if let Some(vs) = ui.meta.virtual_scroll {
+                table.set_attribute(
+                    "style",
+                    &format!("display:block;overflow-y:auto;height:{}px", vs.viewport_height),
+                )?;
+                let range = vs.visible_range(rows.len());
+                append_row_spacer(document, &tbody, columns.len(), range.top_spacer)?;
+                for row in rows.iter().take(range.end).skip(range.start) {
+                    append_data_row(document, &tbody, row)?;
                 }
-                tbody.append_child(&tr)?;
+                append_row_spacer(document, &tbody, columns.len(), range.bottom_spacer)?;
+            } else {
+                for row in rows {
+                    append_data_row(document, &tbody, row)?;
+                }
             }
             table.append_child(&tbody)?;
             table.into()
@@ -146,6 +170,67 @@ where
     }
 
     Ok(node)
+}
+
+/// Appends a single `<tr>` of `<td>` cells to `tbody`.
+fn append_data_row(
+    document: &Document,
+    tbody: &Element,
+    row: &[String],
+) -> Result<(), wasm_bindgen::JsValue> {
+    let tr = document.create_element("tr")?;
+    for cell in row {
+        let td = document.create_element("td")?;
+        td.set_text_content(Some(cell));
+        tr.append_child(&td)?;
+    }
+    tbody.append_child(&tr)?;
+    Ok(())
+}
+
+/// Appends an `aria-hidden` `<tr>` of the given pixel height (spanning every
+/// column) to `tbody` so a virtualized `DataGrid`'s scrollable area still
+/// matches the full (unrendered) row count's total height.
+fn append_row_spacer(
+    document: &Document,
+    tbody: &Element,
+    column_count: usize,
+    height: f32,
+) -> Result<(), wasm_bindgen::JsValue> {
+    if height <= 0.0 {
+        return Ok(());
+    }
+    let tr = document.create_element("tr")?;
+    tr.set_attribute("aria-hidden", "true")?;
+    let td = document.create_element("td")?;
+    td.set_attribute("style", &format!("height:{height}px;padding:0;border:none"))?;
+    if column_count > 0 {
+        td.set_attribute("colspan", &column_count.to_string())?;
+    }
+    tr.append_child(&td)?;
+    tbody.append_child(&tr)?;
+    Ok(())
+}
+
+/// Appends an `aria-hidden` `<li>` of the given pixel height to `ul` so a
+/// virtualized list's scrollable area still matches the full (unrendered)
+/// list's total height. A `height` of `0.0` appends nothing.
+fn append_spacer(
+    document: &Document,
+    ul: &Element,
+    height: f32,
+) -> Result<(), wasm_bindgen::JsValue> {
+    if height <= 0.0 {
+        return Ok(());
+    }
+    let spacer = document.create_element("li")?;
+    spacer.set_attribute(
+        "style",
+        &format!("height:{height}px;padding:0;margin:0;list-style:none"),
+    )?;
+    spacer.set_attribute("aria-hidden", "true")?;
+    ul.append_child(&spacer)?;
+    Ok(())
 }
 
 /// Identity used to match a `List` item across renders: the explicit
@@ -243,16 +328,78 @@ fn json_obj(pairs: &[(String, String)]) -> serde_json::Value {
 /// alive for as long as the node should keep updating, or `mem::forget` it
 /// (as a whole-process root mount does) to make the leak an explicit choice
 /// rather than the library's default.
+///
+/// Updates are not applied to the DOM synchronously inside the signal's
+/// `set()` call — they're coalesced into a single `requestAnimationFrame`
+/// callback per frame (see [`schedule_text_update`]), so if several signals
+/// feeding several `reactive_text` nodes change together (e.g. inside
+/// [`appfront_core::batch`]), the resulting `Text::set_data` calls all land
+/// in one JS-boundary-crossing batch instead of one per `set()`.
 pub fn reactive_text(
     document: &Document,
     signal: appfront_core::Signal<String>,
 ) -> Result<(Node, appfront_core::EffectHandle), wasm_bindgen::JsValue> {
     let text_node = document.create_text_node(&signal.get());
     let node_for_effect = text_node.clone();
+    let id = next_text_update_id();
     let handle = appfront_core::create_effect(move || {
-        node_for_effect.set_data(&signal.get());
+        schedule_text_update(id, node_for_effect.clone(), signal.get());
     });
     Ok((text_node.into(), handle))
+}
+
+// ---------------------------------------------------------------------------
+// rAF-batched text updates
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static NEXT_TEXT_UPDATE_ID: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static PENDING_TEXT_UPDATES: std::cell::RefCell<HashMap<u32, (web_sys::Text, String)>> =
+        std::cell::RefCell::new(HashMap::new());
+    static TEXT_FLUSH_SCHEDULED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn next_text_update_id() -> u32 {
+    NEXT_TEXT_UPDATE_ID.with(|c| {
+        let id = c.get();
+        c.set(id.wrapping_add(1));
+        id
+    })
+}
+
+/// Queues `value` as the pending content for the text node identified by
+/// `id`, deduping same-frame updates to the same node (last write wins),
+/// and schedules exactly one `requestAnimationFrame` callback per frame to
+/// flush every pending update at once.
+fn schedule_text_update(id: u32, node: web_sys::Text, value: String) {
+    PENDING_TEXT_UPDATES.with(|pending| {
+        pending.borrow_mut().insert(id, (node, value));
+    });
+
+    let already_scheduled = TEXT_FLUSH_SCHEDULED.with(|s| s.replace(true));
+    if already_scheduled {
+        return;
+    }
+
+    let window = web_sys::window().expect("no window");
+    let closure = Closure::once(flush_text_updates);
+    // `Closure::once` is consumed by the JS callback invocation itself; the
+    // `.forget()` here only leaks if the browser never fires the callback
+    // (e.g. the page is torn down first), the same tradeoff every other
+    // fire-and-forget closure in this module makes.
+    window
+        .request_animation_frame(closure.as_ref().unchecked_ref())
+        .expect("requestAnimationFrame");
+    closure.forget();
+}
+
+fn flush_text_updates() {
+    TEXT_FLUSH_SCHEDULED.with(|s| s.set(false));
+    PENDING_TEXT_UPDATES.with(|pending| {
+        for (node, value) in pending.borrow_mut().drain().map(|(_, v)| v) {
+            node.set_data(&value);
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -331,30 +478,34 @@ fn build_id_map(container: &Element) -> Result<HashMap<u64, Element>, wasm_bindg
 }
 
 /// Recursively walk the `UITree` and attach listeners to pre-existing DOM
-/// elements whose `data-appfront-id` matches.
+/// elements whose `data-appfront-id` matches — but only where hydration can
+/// actually do something: a node whose own subtree has no `on_click`/`ai.action`
+/// anywhere in it, and whose root wasn't flagged [`NodeMeta::is_dynamic`]
+/// (i.e. it wasn't produced by a `#[component]` fn that reads a `Signal`),
+/// is provably inert HTML — skipping it is the "islands" optimization from
+/// Phase 9: static headings/text/paragraphs in a content-heavy page cost
+/// nothing at hydration time.
+///
+/// Returns whether this node (or anything in its subtree) needed hydration,
+/// so a parent can fold its children's results into its own decision in a
+/// single bottom-up pass instead of a separate whole-subtree pre-check.
 fn hydrate_node<Msg>(
     ui: &UITree<Msg>,
     dispatch: &Rc<dyn Fn(Msg)>,
     id_map: &HashMap<u64, Element>,
-) -> Result<(), wasm_bindgen::JsValue>
+) -> Result<bool, wasm_bindgen::JsValue>
 where
     Msg: Clone + 'static,
 {
-    if let Some(id) = ui.meta.data_appfront_id {
-        if let Some(el) = id_map.get(&id) {
-            attach_listeners(ui, dispatch, el)?;
-        }
-    }
+    let mut needs_hydration =
+        ui.meta.is_dynamic || ui.meta.on_click.is_some() || ui.meta.ai.action.is_some();
 
     match &ui.kind {
-        NodeKind::Container { children } => {
+        NodeKind::Container { children } | NodeKind::List { items: children } => {
             for child in children {
-                hydrate_node(child, dispatch, id_map)?;
-            }
-        }
-        NodeKind::List { items } => {
-            for item in items {
-                hydrate_node(item, dispatch, id_map)?;
+                if hydrate_node(child, dispatch, id_map)? {
+                    needs_hydration = true;
+                }
             }
         }
         NodeKind::DataGrid { .. }
@@ -364,7 +515,15 @@ where
         | NodeKind::Input { .. } => {}
     }
 
-    Ok(())
+    if needs_hydration {
+        if let Some(id) = ui.meta.data_appfront_id {
+            if let Some(el) = id_map.get(&id) {
+                attach_listeners(ui, dispatch, el)?;
+            }
+        }
+    }
+
+    Ok(needs_hydration)
 }
 
 /// Attach event listeners (and AI attributes) to a single existing element.

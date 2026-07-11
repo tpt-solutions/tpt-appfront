@@ -1,0 +1,9 @@
+[package]
+name = "counter-tui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+appfront-core = { path = "../../crates/appfront-core" }
+appfront-tui = { path = "../../crates/appfront-tui" }

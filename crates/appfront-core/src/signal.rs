@@ -161,6 +161,38 @@ struct SignalInner<T> {
     /// long as the returned `Signal` handle (or a clone of it) is alive, and
     /// consulted by `get()` to rank downstream consumers correctly.
     memo_effect: Option<Rc<EffectNode>>,
+    /// Optional human-readable name used by the devtools inspector to report
+    /// how often this signal is written. `None` (the default) means the signal
+    /// is anonymous and never contributes to the activity log.
+    label: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Optional signal-write activity tracking (devtools inspector).
+//
+// Cheap by construction: only signals explicitly named via `Signal::labeled`
+// ever touch this map, so anonymous signals pay nothing extra on `set()`.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static SIGNAL_ACTIVITY: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+}
+
+/// Snapshot of how many times each labeled signal has been written since the
+/// last [`reset_signal_activity`], used by the devtools inspector to show
+/// "which signals are firing". Only signals named via [`Signal::labeled`]
+/// appear here.
+pub fn signal_activity() -> HashMap<String, u64> {
+    SIGNAL_ACTIVITY.with(|a| a.borrow().clone())
+}
+
+/// Clears the per-label signal-write counters returned by [`signal_activity`].
+pub fn reset_signal_activity() {
+    SIGNAL_ACTIVITY.with(|a| a.borrow_mut().clear());
+}
+
+fn record_signal_write(label: &str) {
+    SIGNAL_ACTIVITY.with(|a| *a.borrow_mut().entry(label.to_string()).or_insert(0) += 1);
 }
 
 impl<T> Clone for Signal<T> {
@@ -178,8 +210,26 @@ impl<T: Clone + 'static> Signal<T> {
                 value,
                 subscribers: Vec::new(),
                 memo_effect: None,
+                label: None,
             })),
         }
+    }
+
+    /// Attaches a human-readable `name` to this signal so the devtools
+    /// inspector can report how often it is written (see
+    /// [`signal_activity`]). Purely a debugging aid — it changes nothing
+    /// about reactivity. Returns `self` for chaining.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let count = Signal::new(0i32).labeled("count");
+    /// // ... after some updates ...
+    /// assert_eq!(signal_activity().get("count"), Some(&3));
+    /// ```
+    pub fn labeled(self, name: &str) -> Self {
+        self.inner.borrow_mut().label = Some(name.to_string());
+        self
     }
 
     /// Create a signal whose initial value is taken from the server-side
@@ -264,6 +314,7 @@ impl<T: Clone + 'static> Signal<T> {
     }
 
     fn notify(&self) {
+        let label = self.inner.borrow().label.clone();
         let effects: Vec<Rc<EffectNode>> = {
             let mut inner = self.inner.borrow_mut();
             inner.subscribers.retain(|weak| weak.strong_count() > 0);
@@ -272,6 +323,9 @@ impl<T: Clone + 'static> Signal<T> {
         enqueue(effects);
         if BATCH_DEPTH.with(Cell::get) == 0 {
             flush();
+        }
+        if let Some(label) = label {
+            record_signal_write(&label);
         }
     }
 }
