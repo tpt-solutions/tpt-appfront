@@ -203,6 +203,28 @@ pub fn gitignore() -> &'static str {
     "/target\n/dist\nCargo.lock\n"
 }
 
+/// `cargo-packager` config (`packager.toml`) written by `appfront build
+/// --bundle` / `appfront optimize --bundle` when one isn't already present.
+/// Produces per-OS installers (.msi/.dmg/.appimage/.deb) plus delta auto-update
+/// artifacts (todo.md Phase 11 stretch). Tune `formats`/signing to taste.
+pub fn packager_toml(pkg_name: &str) -> String {
+    format!(
+        r#"[package]
+product-name = "{pkg_name}"
+version = "0.1.0"
+
+[packager]
+# Installer/archive formats per target OS:
+#   windows -> msi, nsis
+#   macos   -> app, dmg
+#   linux   -> appimage, deb
+formats = ["msi", "dmg", "appimage", "deb"]
+# Emit delta auto-update artifacts alongside the installers.
+generate-updates = true
+"#
+    )
+}
+
 pub fn readme(name: &str, both: bool) -> String {
     if both {
         format!(
@@ -305,6 +327,14 @@ mod tests {
     #[test]
     fn gitignore_has_expected_entries() {
         assert_eq!(gitignore(), "/target\n/dist\nCargo.lock\n");
+    }
+
+    #[test]
+    fn packager_toml_mentions_formats_and_updates() {
+        let out = packager_toml("my-app");
+        assert!(out.contains("product-name = \"my-app\""));
+        assert!(out.contains("formats = ["));
+        assert!(out.contains("generate-updates = true"));
     }
 
     #[test]

@@ -12,6 +12,7 @@ appfront-ai-schema = { path = "../appfront-ai-schema" }
 axum = { version = "0.7", features = ["macros"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "trace", "timeout", "set-header", "cors"] }
+tower_governor = { version = "0.4" }
 tracing = { version = "0.1" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,0 +1,10 @@
+[package]
+name = "counter-webview"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+appfront-core = { path = "../../crates/appfront-core" }
+appfront-webview = { path = "../../crates/appfront-webview" }
+anyhow = "1"

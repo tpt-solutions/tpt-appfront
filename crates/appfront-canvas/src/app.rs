@@ -2,6 +2,7 @@
 //! the `UITree` (immediate-mode, matching `egui`'s own paradigm), lays it
 //! out with `taffy`, and paints it (see `layout.rs` / `paint.rs`).
 
+use crate::auto_optimizer::{AutoOptimizer, OptimizerState};
 use crate::text::TextMeasurer;
 use crate::{layout, paint};
 use appfront_core::UITree;
@@ -12,6 +13,11 @@ pub struct CanvasApp<Msg: Clone + 'static> {
     build_ui: Box<dyn FnMut() -> UITree<Msg>>,
     dispatch: Rc<dyn Fn(Msg)>,
     measurer: TextMeasurer,
+    /// Runtime frame-time profiler (todo.md Phase 11 stretch). Records the
+    /// per-frame work duration each `ui()` and exposes recommended
+    /// optimizations; reading its `recommendations()` from app code lets a
+    /// canvas app auto-toggle virtual scrolling / texture caching.
+    optimizer: AutoOptimizer,
 }
 
 impl<Msg: Clone + 'static> CanvasApp<Msg> {
@@ -23,12 +29,25 @@ impl<Msg: Clone + 'static> CanvasApp<Msg> {
             build_ui: Box::new(build_ui),
             dispatch: Rc::new(dispatch),
             measurer: TextMeasurer::new(),
+            optimizer: AutoOptimizer::default(),
         }
+    }
+
+    /// Smoothed per-frame work duration in milliseconds (for an FPS overlay).
+    pub fn frame_ms(&self) -> f64 {
+        self.optimizer.smoothed_ms()
+    }
+
+    /// Current auto-tuned optimization recommendations.
+    pub fn optimizer_state(&self) -> OptimizerState {
+        self.optimizer.recommendations()
     }
 }
 
 impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let start = std::time::Instant::now();
+
         let ui_tree = (self.build_ui)();
 
         let mut tree: TaffyTree<()> = TaffyTree::new();
@@ -50,6 +69,10 @@ impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
 
         let root_layout = tree.layout(root.taffy_id).expect("root layout");
         ui.allocate_space(egui::vec2(root_layout.size.width, root_layout.size.height));
+
+        // Feed the measured per-frame work into the profiler. `record_frame`
+        // is a no-op cost (an EMA update) and safe to call unconditionally.
+        self.optimizer.record_frame(start.elapsed().as_secs_f64() * 1000.0);
     }
 
     #[cfg(target_arch = "wasm32")]

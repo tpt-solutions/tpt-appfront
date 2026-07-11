@@ -12,6 +12,9 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
+use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::key_extractor::GlobalKeyExtractor;
+use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -19,11 +22,19 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::client_kind::{self, ClientKind};
+use crate::pwa::{manifest, manifest_link, registration_script, service_worker, PwaConfig};
 
 /// Maximum accepted body size for `POST /command`, applied before the
 /// request reaches the handler — closes the gap noted in Phase 12: no
 /// write route should ship without a body-size limit from day one.
 const COMMAND_BODY_LIMIT_BYTES: usize = 16 * 1024;
+
+/// Default steady-state rate and burst allowance for `POST /command` when the
+/// app doesn't configure its own via [`SmartRouterBuilder::rate_limit`] — a
+/// route with an app-supplied handler shouldn't ship unthrottled by default,
+/// same precedent as [`COMMAND_BODY_LIMIT_BYTES`].
+const DEFAULT_COMMAND_RATE_PER_SECOND: u64 = 5;
+const DEFAULT_COMMAND_RATE_BURST: u32 = 10;
 
 /// An inbound instruction from an AI agent or other automated client,
 /// deserialized from the `POST /command` request body.
@@ -62,6 +73,27 @@ impl CommandResponse {
 /// the app's own reactive state and `Msg` dispatch.
 pub type CommandHandler = dyn Fn(Command) -> CommandResponse + Send + Sync;
 
+/// Rate limit applied to `POST /command`. The limit is a single shared bucket
+/// for the whole route (not per-client): this router has no connect-info
+/// plumbing yet, so per-IP limiting isn't available — see
+/// [`SmartRouterBuilder::rate_limit`].
+#[derive(Debug, Clone, Copy)]
+pub struct RateLimitConfig {
+    /// Sustained requests per second once the burst allowance is exhausted.
+    pub per_second: u64,
+    /// Number of requests permitted in a burst above the steady-state rate.
+    pub burst: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        RateLimitConfig {
+            per_second: DEFAULT_COMMAND_RATE_PER_SECOND,
+            burst: DEFAULT_COMMAND_RATE_BURST,
+        }
+    }
+}
+
 /// Configuration for the smart router.
 pub struct SmartRouter<Msg> {
     /// The application's UITree, used for SSR / AI-Schema rendering.
@@ -93,6 +125,15 @@ pub struct SmartRouter<Msg> {
     /// If set, `POST /command` rejects any `action` not in this list with
     /// `403 Forbidden` before invoking `command_handler`.
     pub allowed_actions: Option<Vec<String>>,
+    /// Rate limit applied to `POST /command`. Always on; defaults to
+    /// [`RateLimitConfig::default`] if not overridden via
+    /// [`SmartRouterBuilder::rate_limit`].
+    pub rate_limit: RateLimitConfig,
+    /// When `Some`, the app is served as a PWA: the router serves
+    /// `/service-worker.js` + `/manifest.webmanifest` and injects the
+    /// manifest `<link>` + service-worker registration `<script>` into the
+    /// HTML shells. Off by default.
+    pub pwa: Option<PwaConfig>,
 }
 
 /// Builder-pattern helper for constructing a [`SmartRouter`] with sensible
@@ -107,6 +148,8 @@ pub struct SmartRouterBuilder<Msg> {
     signals: HashMap<String, serde_json::Value>,
     command_handler: Option<std::sync::Arc<CommandHandler>>,
     allowed_actions: Option<Vec<String>>,
+    rate_limit: RateLimitConfig,
+    pwa: Option<PwaConfig>,
 }
 
 impl<Msg> SmartRouterBuilder<Msg> {
@@ -121,6 +164,8 @@ impl<Msg> SmartRouterBuilder<Msg> {
             signals: HashMap::new(),
             command_handler: None,
             allowed_actions: None,
+            rate_limit: RateLimitConfig::default(),
+            pwa: None,
         }
     }
 
@@ -172,6 +217,21 @@ impl<Msg> SmartRouterBuilder<Msg> {
         self
     }
 
+    /// Override the default rate limit ([`RateLimitConfig::default`]) applied
+    /// to `POST /command`.
+    pub fn rate_limit(mut self, rate_limit: RateLimitConfig) -> Self {
+        self.rate_limit = rate_limit;
+        self
+    }
+
+    /// Turn the app into an installable, offline-capable PWA. Serves
+    /// `/service-worker.js` + `/manifest.webmanifest` and injects the
+    /// manifest `<link>` + registration `<script>` into the HTML shells.
+    pub fn pwa(mut self, config: PwaConfig) -> Self {
+        self.pwa = Some(config);
+        self
+    }
+
     pub fn build(self) -> SmartRouter<Msg> {
         let wasm_shell_template = r#"<!DOCTYPE html>
 <html lang="en">
@@ -205,6 +265,8 @@ init().catch(e => console.error('appfront init failed', e));
             signals: self.signals,
             command_handler: self.command_handler,
             allowed_actions: self.allowed_actions,
+            rate_limit: self.rate_limit,
+            pwa: self.pwa,
         }
     }
 }
@@ -238,7 +300,24 @@ where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     let serve_dir = ServeDir::new(&router.static_dir);
+    let rate_limit = router.rate_limit;
     let state = std::sync::Arc::new(router);
+
+    // Single shared bucket for the whole route rather than per-client: this
+    // router doesn't plumb `ConnectInfo<SocketAddr>` (no
+    // `into_make_service_with_connect_info` wiring), so `tower_governor`'s
+    // per-IP key extractors aren't usable yet. Coarser than per-IP, but still
+    // stops a single misbehaving/compromised client from hammering the one
+    // write route this server exposes. Per-IP limiting is a documented
+    // follow-up (todo.md).
+    let governor_conf = std::sync::Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(rate_limit.per_second)
+            .burst_size(rate_limit.burst)
+            .key_extractor(GlobalKeyExtractor)
+            .finish()
+            .expect("valid governor rate-limit config"),
+    );
 
     // Baseline security headers applied to every response — explicit rather
     // than absent. `X-Content-Type-Options` stops MIME-sniffing,
@@ -250,9 +329,13 @@ where
         .route("/", get(root_handler::<Msg>))
         .route("/ai-schema.json", get(ai_schema_handler::<Msg>))
         .route("/opengraph", get(opengraph_handler::<Msg>))
+        .route("/service-worker.js", get(pwa_service_worker::<Msg>))
+        .route("/manifest.webmanifest", get(pwa_manifest::<Msg>))
         .route(
             "/command",
-            post(command_handler::<Msg>).route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES)),
+            post(command_handler::<Msg>)
+                .route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES))
+                .route_layer(GovernorLayer { config: governor_conf }),
         )
         .fallback_service(serve_dir)
         .with_state(state)
@@ -347,9 +430,43 @@ where
     social_opengraph(&state).await.into_response()
 }
 
+async fn pwa_service_worker<Msg>(
+    state: axum::extract::State<std::sync::Arc<SmartRouter<Msg>>>,
+) -> Response
+where
+    Msg: Clone + Send + Sync + serde::Serialize + 'static,
+{
+    match &state.pwa {
+        Some(cfg) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+            service_worker(cfg),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn pwa_manifest<Msg>(
+    state: axum::extract::State<std::sync::Arc<SmartRouter<Msg>>>,
+) -> Response
+where
+    Msg: Clone + Send + Sync + serde::Serialize + 'static,
+{
+    match &state.pwa {
+        Some(cfg) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/manifest+json")],
+            manifest(cfg),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn human_shell<Msg>(state: &std::sync::Arc<SmartRouter<Msg>>) -> Html<String>
 where
-    Msg: Clone + serde::Serialize + 'static,
+    Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     if !state.enable_hydration {
         // Legacy bare-WASM shell.
@@ -358,7 +475,7 @@ where
             .replace("{TITLE}", &appfront_html::esc_attr(&state.title))
             .replace("{DESC}", &appfront_html::esc_attr(&state.description))
             .replace("{WASM}", &state.wasm_path);
-        return Html(shell);
+        return Html(inject_pwa(shell, state));
     }
 
     // Hydration page: SSR HTML + serialised state + WASM bootstrap.
@@ -403,7 +520,30 @@ init().catch(e => console.error('appfront init failed', e));
         wasm_path = wasm_path,
     );
 
-    Html(page)
+    Html(inject_pwa(page, state))
+}
+
+/// Injects the PWA manifest `<link>` + service-worker registration `<script>`
+/// into an HTML shell when [`SmartRouter::pwa`] is configured; returns the
+/// input unchanged otherwise. The replacements are idempotent for the shell
+/// shapes produced above.
+fn inject_pwa<Msg>(mut page: String, state: &std::sync::Arc<SmartRouter<Msg>>) -> String {
+    if state.pwa.is_none() {
+        return page;
+    }
+    if let Some(head_end) = page.find("</head>") {
+        page.insert_str(
+            head_end,
+            &format!("\n    {}", manifest_link()),
+        );
+    }
+    if let Some(body_end) = page.rfind("</body>") {
+        page.insert_str(
+            body_end,
+            &format!("\n    {}", registration_script()),
+        );
+    }
+    page
 }
 
 async fn crawler_html<Msg>(state: &std::sync::Arc<SmartRouter<Msg>>) -> Html<String> {
@@ -676,6 +816,113 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn command_rejects_requests_beyond_the_rate_limit() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .on_command(|_cmd| CommandResponse::ok("ok"))
+            .rate_limit(RateLimitConfig { per_second: 1, burst: 3 })
+            .build();
+        let app = build_router(router);
+
+        let make_req = || {
+            Request::builder()
+                .method("POST")
+                .uri("/command")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"greet"}"#))
+                .unwrap()
+        };
+
+        for _ in 0..3 {
+            let resp = app.clone().oneshot(make_req()).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+
+        // The burst allowance (3) is now exhausted; the next request should
+        // be throttled.
+        let resp = app.clone().oneshot(make_req()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn pwa_routes_served_and_shell_injects_glue() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::util::ServiceExt;
+
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
+            .title("PWA App")
+            .pwa(PwaConfig {
+                precache: vec!["/".to_string(), "/app.wasm".to_string()],
+                ..Default::default()
+            })
+            .build();
+        let app = build_router(router);
+
+        let sw = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/service-worker.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sw.status(), StatusCode::OK);
+        assert_eq!(
+            sw.headers().get(axum::http::header::CONTENT_TYPE).unwrap(),
+            "application/javascript"
+        );
+
+        let m = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/manifest.webmanifest")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(m.status(), StatusCode::OK);
+
+        // No PWA config -> 404 instead of serving the assets.
+        let app2 = build_router(test_router());
+        let sw2 = app2
+            .oneshot(
+                Request::builder()
+                    .uri("/service-worker.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sw2.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn hydration_shell_injects_pwa_glue() {
+        let router = SmartRouterBuilder::new(UITree::<Msg>::container(|c| {
+            c.heading(1, "Hello");
+        }))
+        .title("PWA App")
+        .enable_hydration(true)
+        .pwa(PwaConfig::default())
+        .build();
+        let state = std::sync::Arc::new(router);
+        let resp = human_shell(&state).await;
+        let html = &resp.0;
+        assert!(html.contains(r#"rel="manifest""#));
+        assert!(html.contains("/manifest.webmanifest"));
+        assert!(html.contains("/service-worker.js"));
+        assert!(html.contains("navigator.serviceWorker.register"));
     }
 
     #[tokio::test]

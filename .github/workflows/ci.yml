@@ -81,6 +81,14 @@ jobs:
           set -e
           for dir in examples/*/; do
             if [ -f "$dir/Cargo.toml" ] && [ ! -f "$dir/index.html" ]; then
+              # The webview host compiles against `wry`, which needs system
+              # webview libraries (webkit2gtk on Linux) plus a pre-built
+              # `ui/dist` produced by `trunk`. It is verified locally instead
+              # of in this job to keep the runner image lean.
+              if [ -f "$dir/ui/index.html" ]; then
+                echo "Skipping webview example $dir (needs system webview libs + trunk build)"
+                continue
+              fi
               echo "Building native example $dir"
               (cd "$dir" && cargo build)
             fi

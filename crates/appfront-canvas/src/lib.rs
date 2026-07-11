@@ -4,11 +4,14 @@
 //! desktop (native) and in the browser (WASM canvas).
 
 mod app;
+mod auto_optimizer;
 mod layout;
 mod paint;
 mod text;
 
 pub use app::CanvasApp;
+pub use auto_optimizer::AutoOptimizer;
+pub use text::TextMeasurer;
 
 use appfront_core::UITree;
 

@@ -34,17 +34,43 @@ pub fn paint<Msg: Clone>(
         NodeKind::Container { .. } | NodeKind::List { .. } => {}
         NodeKind::Heading { text, level } => {
             paint_text(ui, pos, text, layout::heading_font_size(*level));
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, text, Some(egui::accesskit::Role::Heading));
         }
         NodeKind::Text { text } => {
             paint_text(ui, pos, text, TEXT_FONT_SIZE);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, text, None);
         }
         NodeKind::Button { label } => {
             let response = ui.put(rect, egui::Button::new(label.clone()));
             clicked = response.clicked();
+            #[cfg(feature = "accesskit")]
+            {
+                response.set_accessible_name(label.clone());
+                if let Some(desc) = &node.ui.meta.ai.description {
+                    response.set_accessible_description(desc.clone());
+                }
+            }
         }
         NodeKind::Input { value } => {
             let mut value = value.clone();
-            ui.put(rect, egui::TextEdit::singleline(&mut value));
+            let response = ui.put(rect, egui::TextEdit::singleline(&mut value));
+            #[cfg(feature = "accesskit")]
+            {
+                // Give the field a name so a screen reader announces it; prefer
+                // an explicit AI description, then the class, else a generic
+                // placeholder derived from the current value.
+                let name = node
+                    .ui
+                    .meta
+                    .ai
+                    .description
+                    .clone()
+                    .or_else(|| node.ui.meta.class.clone())
+                    .unwrap_or_else(|| format!("Text input: {value}"));
+                response.set_accessible_name(name);
+            }
         }
         NodeKind::DataGrid { columns, rows } => {
             paint_data_grid(ui, tree, node, pos, columns, rows);
@@ -75,6 +101,26 @@ fn paint_text(ui: &egui::Ui, pos: Pos2, text: &str, font_size: f32) {
         FontId::proportional(font_size),
         ui.visuals().text_color(),
     );
+}
+
+/// Registers a non-focusable AccessKit node for a painted (non-widget) node
+/// — egui's `painter().text` produces no accessible node on its own, so
+/// without this a screen reader sees nothing for canvas `Heading`/`Text`.
+/// `Sense::hover()` makes the node present to AT without making it
+/// keyboard-focusable. Only compiled when the `accesskit` feature is on.
+#[cfg(feature = "accesskit")]
+fn name_accessible_node(
+    ui: &egui::Ui,
+    rect: Rect,
+    id: egui::Id,
+    name: &str,
+    role: Option<egui::accesskit::Role>,
+) {
+    let response = ui.interact(rect, id, Sense::hover());
+    response.set_accessible_name(name.to_string());
+    if let Some(role) = role {
+        response.set_accessible_role(role);
+    }
 }
 
 /// `DataGrid` cells aren't real `RenderNode`s (see `layout::build_data_grid`)

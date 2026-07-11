@@ -24,13 +24,23 @@ taffy = "0.12"
 [features]
 # Opt into cosmic-text for real text shaping (CJK/Arabic/ligatures). Off by
 # default: the heuristic width estimator in text.rs covers the common
-# Latin-text case without pulling in a font-shaping stack.
+# Latin-text case without pulling in a font-shaping stack. On native this
+# gives cosmic-text the system font database; on wasm32 it additionally
+# loads the bundled Noto Sans fallback (see text.rs) so web canvas apps get
+# real shaping instead of the heuristic estimator.
 full-text-shaping = ["dep:cosmic-text"]
+# Expose the canvas to screen readers via AccessKit (egui's built-in
+# accessibility backend). Enables roles + names for the painted widgets so
+# GPU-canvas apps aren't a screen-reader dead-end (the webview shell
+# gets this for free from the OS webview). Off by default to keep
+# the dependency/startup surface minimal.
+accesskit = ["eframe/accesskit"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cosmic-text = { version = "0.19", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+cosmic-text = { version = "0.19", optional = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }

@@ -146,6 +146,14 @@ fn close_tag(buf: &mut String, tag: &str) {
 fn attrs<Msg>(buf: &mut String, ui: &UITree<Msg>) {
     if let Some(class) = &ui.meta.class {
         attr(buf, "class", class);
+        // Tailwind-style utility layer: recognized utility classes (e.g.
+        // `bg-blue-500 p-4`) are resolved to real CSS so SSR output is
+        // actually styled without a separate build step. See
+        // `appfront_core::styling`.
+        let style = appfront_core::styling::inline_style(class);
+        if !style.is_empty() {
+            attr(buf, "style", &style);
+        }
     }
     if let Some(id) = &ui.meta.data_appfront_id {
         attr(buf, "data-appfront-id", &id.to_string());
@@ -314,6 +322,27 @@ mod tests {
         let html = render(&ui);
         assert!(!html.contains("<script>"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn utility_classes_emit_inline_style() {
+        let ui = appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.heading(1, "Styled").class("bg-blue-500 p-4");
+        });
+        let html = render(&ui);
+        assert!(html.contains(r#"class="bg-blue-500 p-4""#), "{html}");
+        assert!(html.contains("background-color: #3b82f6"), "{html}");
+        assert!(html.contains("padding: 1rem"), "{html}");
+    }
+
+    #[test]
+    fn unknown_class_not_styled() {
+        let ui = appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.text("plain").class("my-custom-class");
+        });
+        let html = render(&ui);
+        assert!(html.contains(r#"class="my-custom-class""#), "{html}");
+        assert!(!html.contains("style="), "{html}");
     }
 
     #[test]

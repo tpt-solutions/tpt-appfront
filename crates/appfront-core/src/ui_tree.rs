@@ -154,6 +154,35 @@ pub struct ContainerBuilder<Msg> {
 }
 
 impl<Msg> ContainerBuilder<Msg> {
+    /// Creates an empty builder. Used by macro codegen for static-subtree
+    /// caching (the `view!`/`#[component]` `static_tree` path), which builds
+    /// a one-off subtree and extracts it via [`ContainerBuilder::into_only_child`].
+    pub fn new() -> Self {
+        ContainerBuilder {
+            children: Vec::new(),
+        }
+    }
+
+    /// Builds the children described by `build` and returns the resulting list.
+    /// Helper for macro codegen; see [`ContainerBuilder::into_only_child`].
+    pub fn build_children(build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> Vec<UITree<Msg>> {
+        let mut b = ContainerBuilder::new();
+        build(&mut b);
+        b.children
+    }
+
+    /// Consumes the builder and returns its single child (the result of a
+    /// macro-generated subtree built via [`ContainerBuilder::new`]). Panics if
+    /// the builder produced zero or more than one child, since the static-
+    /// subtree codegen always builds exactly one root node.
+    pub fn into_only_child(self) -> Option<UITree<Msg>> {
+        if self.children.len() == 1 {
+            Some(self.children.into_iter().next().unwrap())
+        } else {
+            None
+        }
+    }
+
     fn push(&mut self, kind: NodeKind<Msg>) -> NodeRef<'_, Msg> {
         self.children.push(UITree::leaf(kind));
         let index = self.children.len() - 1;
@@ -165,6 +194,19 @@ impl<Msg> ContainerBuilder<Msg> {
 
     pub fn container(&mut self, build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> NodeRef<'_, Msg> {
         let node = UITree::container(build);
+        self.children.push(node);
+        let index = self.children.len() - 1;
+        NodeRef {
+            children: &mut self.children,
+            index,
+        }
+    }
+
+    /// Appends an already-built `UITree<Msg>` as a child and returns a
+    /// [`NodeRef`] to it. Primarily used by the `view!` macro's static-subtree
+    /// codegen, which hands a [`crate::static_tree::static_node`] instance
+    /// here instead of rebuilding the subtree inline every render.
+    pub fn with(&mut self, node: UITree<Msg>) -> NodeRef<'_, Msg> {
         self.children.push(node);
         let index = self.children.len() - 1;
         NodeRef {

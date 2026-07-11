@@ -123,7 +123,7 @@ pub fn inspect_state(state: &AgentState) -> String {
 }
 
 fn element_line(el: &ElementSummary) -> String {
-    let mut s = format!("{}", el.kind);
+    let mut s = el.kind.clone();
     if let Some(label) = &el.label {
         s.push_str(&format!(" \"{label}\""));
     }

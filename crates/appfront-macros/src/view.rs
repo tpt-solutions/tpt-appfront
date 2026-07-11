@@ -290,10 +290,52 @@ fn single_text(node: &Node) -> Result<&Expr, Error> {
     }
 }
 
+/// A node is *static* when every text/attribute value is a literal (a string
+/// or numeric literal, not a `{ expr }` interpolation) **and** every child is
+/// itself static. Static subtrees never change between renders, so the codegen
+/// can build them once and clone the cached instance — the "compile-time
+/// codegen for static UITree subtrees" differentiator (see `todo.md` Phase 5).
+fn node_is_static(node: &Node) -> bool {
+    let values_static = node.attrs.iter().all(|(_, e)| is_literal_expr(e))
+        && node.children.iter().all(|c| match c {
+            Child::Text(e) => is_literal_expr(e),
+            Child::Node(_) => true,
+        });
+    if !values_static {
+        return false;
+    }
+    node.children.iter().all(|c| match c {
+        Child::Node(n) => node_is_static(n),
+        Child::Text(_) => true,
+    })
+}
+
+/// A literal expression is one the macro can prove is constant at compile time:
+/// a string literal or a numeric/char literal (anything in `Expr::Lit` whose
+/// inner `Lit` is not a `bool`/negative-number ambiguity issue). Brace-group
+/// expressions (`{ count.get() }`) are dynamic and return `false`.
+fn is_literal_expr(e: &Expr) -> bool {
+    matches!(e, Expr::Lit(_))
+}
+
 /// Validates attributes/children and emits a statement that builds this node
 /// as a child of `parent` (a `&mut ContainerBuilder<Msg>`), including any
 /// trailing `.class(..)`/`.key(..)` chain.
-fn gen_node_stmt(node: &Node, parent: &Ident, id: &mut usize) -> Result<TokenStream, Error> {
+///
+/// When the node is provably static (no `{ expr }` interpolation anywhere in it
+/// or its subtree) and its parent is *not* already part of a cached static
+/// subtree, it's built once via [`appfront_core::static_tree::static_node`] and
+/// appended with [`appfront_core::ContainerBuilder::with`] — the
+/// "compile-time codegen for static UITree subtrees" differentiator. Otherwise
+/// the normal runtime builder calls are emitted, and `parent_static` is
+/// threaded into the children so a dynamic container can still have
+/// individually-cached static children.
+fn gen_node_stmt(
+    node: &Node,
+    parent: &Ident,
+    parent_static: bool,
+    id: &mut usize,
+) -> Result<TokenStream, Error> {
     let tag = node.tag.to_string();
 
     // Validate attributes are allowed for this tag.
@@ -318,11 +360,38 @@ fn gen_node_stmt(node: &Node, parent: &Ident, id: &mut usize) -> Result<TokenStr
 
     let chain = chain_suffix(&node.attrs);
 
+    // A static node under a non-static parent is hoisted into a per-node
+    // cached `UITree` (built exactly once, cloned thereafter). Inside an
+    // already-cached subtree we keep emitting plain builder calls — the parent
+    // cache already covers the whole thing, so nesting caches is redundant.
+    if node_is_static(node) && !parent_static {
+        let sentinel = format_ident!("__appfront_static_{}", *id);
+        *id += 1;
+        let inner_parent = format_ident!("__appfront_b_{}", *id);
+        *id += 1;
+        // Recurse with `parent_static = true` so the inner subtree is built
+        // inline (cached wholesale by this outer `static_node` call).
+        let inner = gen_node_stmt(node, &inner_parent, true, id)?;
+        return Ok(quote! {
+            #parent.with({
+                static #sentinel: u8 = 0;
+                let __appfront_id = (&#sentinel as *const u8) as u64;
+                appfront_core::static_tree::static_node(__appfront_id, || {
+                    let mut #inner_parent = appfront_core::ContainerBuilder::new();
+                    #inner
+                    #inner_parent
+                        .into_only_child()
+                        .expect("static subtree must yield exactly one node")
+                })
+            });
+        });
+    }
+
     match tag.as_str() {
         "Container" => {
             let child_param = format_ident!("__c{}", *id);
             *id += 1;
-            let inner = gen_children(&node.children, &child_param, id)?;
+            let inner = gen_children(&node.children, &child_param, parent_static, id)?;
             let body = if inner.is_empty() {
                 quote! { let _ = & #child_param; }
             } else {
@@ -379,12 +448,13 @@ fn chain_suffix(attrs: &[(Ident, Expr)]) -> TokenStream {
 fn gen_children(
     children: &[Child],
     parent: &Ident,
+    parent_static: bool,
     id: &mut usize,
 ) -> Result<Vec<TokenStream>, Error> {
     let mut out = Vec::with_capacity(children.len());
     for child in children {
         match child {
-            Child::Node(n) => out.push(gen_node_stmt(n, parent, id)?),
+            Child::Node(n) => out.push(gen_node_stmt(n, parent, parent_static, id)?),
             Child::Text(e) => out.push(quote! { #parent.text(#e); }),
         }
     }
@@ -409,6 +479,8 @@ pub fn expand(input: TokenStream) -> Result<TokenStream, Error> {
         ));
     }
 
+    let root_is_static = node_is_static(&root);
+
     // Root attributes land on the root node's meta (class/key). Matches
     // ContainerBuilder's `impl Into<String>` acceptance on non-root nodes
     // (see `chain_suffix`), so e.g. `class={"page"}` (a `&str`) works here too.
@@ -419,11 +491,43 @@ pub fn expand(input: TokenStream) -> Result<TokenStream, Error> {
     if let Some(e) = attr_expr(&root, "key") {
         root_stmts.extend(quote! { __ui.meta.key = Some(::std::string::ToString::to_string(&(#e))); });
     }
+    // `is_dynamic` is now set precisely by the macro (it was a heuristic flag
+    // before): `false` when the entire `view!` is purely static, `true` when
+    // any interpolation exists. Backends read it to skip hydration/listener
+    // work on inert subtrees, and the codegen above consumes it to hoist
+    // static subtrees into cached `UITree`s.
+    let is_dynamic_lit = !root_is_static;
+    root_stmts.extend(quote! { __ui.meta.is_dynamic = #is_dynamic_lit; });
 
     let mut id = 0usize;
+
+    if root_is_static {
+        let sentinel = format_ident!("__appfront_static_root_{}", id);
+        id += 1;
+        let root_param = format_ident!("__c{}", id);
+        id += 1;
+        let inner = gen_children(&root.children, &root_param, true, &mut id)?;
+        let body = if inner.is_empty() {
+            quote! { let _ = & #root_param; }
+        } else {
+            quote! { #(#inner)* }
+        };
+        return Ok(quote! {
+            {
+                static #sentinel: u8 = 0;
+                let __appfront_id = (&#sentinel as *const u8) as u64;
+                let mut __ui = appfront_core::static_tree::static_node(__appfront_id, || {
+                    appfront_core::UITree::container(|#root_param| { #body })
+                });
+                #root_stmts
+                __ui
+            }
+        });
+    }
+
     let root_param = format_ident!("__c{}", id);
     id += 1;
-    let inner = gen_children(&root.children, &root_param, &mut id)?;
+    let inner = gen_children(&root.children, &root_param, false, &mut id)?;
     let body = if inner.is_empty() {
         quote! { let _ = & #root_param; }
     } else {
