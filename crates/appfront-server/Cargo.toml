@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Axum smart router serving the right TPT AppFront backend per client"
+readme = "README.md"
 
 [dependencies]
 appfront-core = { path = "../appfront-core", version = "0.1.0" }
