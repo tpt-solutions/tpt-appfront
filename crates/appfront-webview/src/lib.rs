@@ -34,12 +34,12 @@ use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use wry::application::dpi::LogicalSize;
-use wry::application::event::{Event, WindowEvent};
-use wry::application::event_loop::{ControlFlow, EventLoop};
-use wry::application::window::WindowBuilder;
+use tao::dpi::LogicalSize;
+use tao::event::{Event, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoop};
+use tao::window::WindowBuilder;
 use wry::http::{header::CONTENT_TYPE, Request, Response};
-use wry::webview::WebViewBuilder;
+use wry::WebViewBuilder;
 
 /// Options controlling the webview window and the IPC bridge.
 pub struct WebviewOptions {
@@ -114,17 +114,16 @@ where
     let allowed: HashSet<String> = opts.allowed_actions.iter().cloned().collect();
     let limiter = new_ipc_rate_limiter(opts.max_commands_per_second);
 
-    let builder = WebViewBuilder::new(window)?
+    let _webview = WebViewBuilder::new()
         .with_initialization_script(INIT_SCRIPT)
-        .with_custom_protocol("app".to_string(), move |request: &Request<Vec<u8>>| {
-            serve(&dist_dir, request)
+        .with_custom_protocol("app".to_string(), move |_id, request| {
+            serve(&dist_dir, &request)
         })
-        .with_ipc_handler(move |_window, message| {
-            handle_ipc(&allowed, &limiter, &on_command, &message);
+        .with_ipc_handler(move |request: Request<String>| {
+            handle_ipc(&allowed, &limiter, &on_command, request.body());
         })
-        .with_url("app://localhost/index.html")?;
-
-    let _webview = builder.build()?;
+        .with_url("app://localhost/index.html")
+        .build(&window)?;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -135,14 +134,11 @@ where
         {
             *control_flow = ControlFlow::Exit;
         }
-    });
+    })
 }
 
 /// Serves a single file from `dist_dir` over the custom protocol.
-fn serve(
-    dist_dir: &Path,
-    request: &Request<Vec<u8>>,
-) -> wry::Result<Response<Cow<'static, [u8]>>> {
+fn serve(dist_dir: &Path, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     let path = request.uri().path();
     let rel = path.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
@@ -152,28 +148,28 @@ fn serve(
     // `dist_dir` so a crafted URI like `/../../etc/passwd` can't read files
     // outside the app's bundle (path-traversal).
     if rel.split('/').any(|seg| seg == ".." || seg.starts_with("..")) {
-        return Ok(not_found());
+        return not_found();
     }
     let Ok(root) = dist_dir.canonicalize() else {
-        return Ok(not_found());
+        return not_found();
     };
     let Ok(resolved) = dist_dir.join(rel).canonicalize() else {
-        return Ok(not_found());
+        return not_found();
     };
     if !resolved.starts_with(&root) {
-        return Ok(not_found());
+        return not_found();
     }
 
     match std::fs::read(&resolved) {
         Ok(bytes) => {
             let mime = mime_for(&resolved);
-            let resp = Response::builder()
+            Response::builder()
                 .status(200)
                 .header(CONTENT_TYPE, mime)
-                .body(Cow::Owned(bytes))?;
-            Ok(resp)
+                .body(Cow::Owned(bytes))
+                .unwrap_or_else(|_| not_found())
         }
-        Err(_) => Ok(not_found()),
+        Err(_) => not_found(),
     }
 }
 

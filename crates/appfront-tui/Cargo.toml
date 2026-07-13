@@ -3,9 +3,12 @@ name = "appfront-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "ratatui terminal backend for TPT AppFront"
+readme = "README.md"
 
 [dependencies]
-appfront-core = { path = "../appfront-core" }
+appfront-core = { path = "../appfront-core", version = "0.1.0" }
 ratatui = "0.30"
 crossterm = "0.28"
 anyhow = "1"

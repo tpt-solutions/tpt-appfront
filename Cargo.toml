@@ -19,7 +19,8 @@ exclude = ["examples"]
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/REPLACE_ME/tpt-appfront"
+repository = "https://github.com/tpt-solutions/tpt-appfront"
+homepage = "https://github.com/tpt-solutions/tpt-appfront"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

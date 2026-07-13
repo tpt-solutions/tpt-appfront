@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "CLI for scaffolding, building, and running TPT AppFront projects"
+readme = "README.md"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
