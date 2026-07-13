@@ -158,6 +158,35 @@ fn dep_path(crate_name: &str) -> String {
     crates_dir().join(crate_name).to_string_lossy().replace('\\', "/")
 }
 
+/// True when this CLI is running against the `tpt-appfront` monorepo checkout
+/// that built it — i.e. the sibling `crates/appfront-core/Cargo.toml` exists
+/// on disk. A `cargo install appfront-cli` has no such sibling, and its
+/// `CARGO_MANIFEST_DIR` points at the (absent) build-time source dir, so this
+/// is false and we fall back to version dependencies instead.
+fn is_workspace_checkout() -> bool {
+    crates_dir().join("appfront-core").join("Cargo.toml").exists()
+}
+
+/// The version to require for crates on a published install, overridable via
+/// the `APPFRONT_DEP_VERSION` env var (e.g. pinning a pre-release). Defaults to
+/// this CLI's own `CARGO_PKG_VERSION`.
+fn published_version() -> String {
+    std::env::var("APPFRONT_DEP_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+}
+
+/// Returns a ready-to-emit TOML dependency spec for `crate_name`: a `path`
+/// dependency when running inside the monorepo checkout, or a version
+/// dependency on a published install. This is what makes scaffolded
+/// `Cargo.toml`s build both locally (against the checkout) and once the
+/// crates are published to crates.io (`todo.md` Phase 15).
+fn dep_ref(crate_name: &str) -> String {
+    if is_workspace_checkout() {
+        format!("{{ path = \"{}\" }}", dep_path(crate_name))
+    } else {
+        format!("\"{}\"", published_version())
+    }
+}
+
 fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
     if name.is_empty()
         || name.contains(['/', '\\'])
@@ -222,7 +251,7 @@ fn scaffold_canvas_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow:
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::canvas_cargo_toml(pkg_name, &dep_path("appfront-core"), &dep_path("appfront-canvas")),
+        templates::canvas_cargo_toml(pkg_name, &dep_ref("appfront-core"), &dep_ref("appfront-canvas")),
     )?;
     fs::write(dir.join("src").join("main.rs"), templates::canvas_main_rs(app_title))?;
     Ok(())
@@ -232,7 +261,7 @@ fn scaffold_dom_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::dom_cargo_toml(pkg_name, &dep_path("appfront-core"), &dep_path("appfront-dom")),
+        templates::dom_cargo_toml(pkg_name, &dep_ref("appfront-core"), &dep_ref("appfront-dom")),
     )?;
     fs::write(dir.join("src").join("lib.rs"), templates::dom_lib_rs(app_title))?;
     fs::write(dir.join("index.html"), templates::index_html(app_title))?;
@@ -243,7 +272,7 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::tui_cargo_toml(pkg_name, &dep_path("appfront-core"), &dep_path("appfront-tui")),
+        templates::tui_cargo_toml(pkg_name, &dep_ref("appfront-core"), &dep_ref("appfront-tui")),
     )?;
     fs::write(dir.join("src").join("main.rs"), templates::tui_main_rs(app_title))?;
     Ok(())
@@ -710,6 +739,18 @@ mod tests {
         let path = dep_path("appfront-core");
         assert!(path.ends_with("appfront-core"));
         assert!(!path.contains('\\'));
+    }
+
+    #[test]
+    fn dep_ref_is_path_dep_inside_checkout_and_version_when_installed() {
+        // In this repo the sibling crates exist, so we get a `path` dep.
+        if is_workspace_checkout() {
+            let r = dep_ref("appfront-core");
+            assert!(r.starts_with("{ path ="), "expected path dep, got {r}");
+        } else {
+            let r = dep_ref("appfront-core");
+            assert!(r.starts_with('"') && r.ends_with('"'), "expected version dep, got {r}");
+        }
     }
 
     #[test]

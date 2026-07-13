@@ -204,12 +204,26 @@ fn new_ipc_rate_limiter(max_commands_per_second: u32) -> IpcRateLimiter {
     RateLimiter::direct(Quota::per_second(n).allow_burst(n))
 }
 
+/// Mirror of `appfront-server`'s `POST /command` body limit: an IPC message
+/// is fully buffered as a `String` before it is JSON-parsed, so an unbounded
+/// payload lets a hostile/buggy hosted page allocate arbitrarily much memory in
+/// the host process. Reject anything larger up front, before any parse cost.
+const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
+
 /// Parses an IPC message, checks the allowlist and rate limit, and dispatches
 /// to `on_command`.
 fn handle_ipc<F>(allowed: &HashSet<String>, limiter: &IpcRateLimiter, on_command: &F, message: &str)
 where
     F: Fn(&str, serde_json::Value) -> std::result::Result<(), String>,
 {
+    if message.len() > MAX_IPC_MESSAGE_BYTES {
+        eprintln!(
+            "[appfront-webview] rejecting IPC message: {} bytes exceeds {} byte limit",
+            message.len(),
+            MAX_IPC_MESSAGE_BYTES
+        );
+        return;
+    }
     let parsed: serde_json::Value = match serde_json::from_str(message) {
         Ok(v) => v,
         Err(e) => {
@@ -277,6 +291,26 @@ mod tests {
         handle_ipc(&allowed, &limiter, &on_command, r#"{"action":"reset_everything"}"#);
 
         assert!(calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn handle_ipc_rejects_oversized_message_before_parsing() {
+        let allowed: HashSet<String> = ["increment".to_string()].into_iter().collect();
+        let limiter = new_ipc_rate_limiter(100);
+        let calls = RefCell::new(0u32);
+        let on_command = |_action: &str, _params: serde_json::Value| -> Result<(), String> {
+            *calls.borrow_mut() += 1;
+            Ok(())
+        };
+
+        // 20 KiB payload (well over the 16 KiB cap) with a valid action inside.
+        let big = format!(
+            "{{\"action\":\"increment\",\"params\":{{\"x\":\"{}\"}}}}",
+            "a".repeat(20 * 1024)
+        );
+        handle_ipc(&allowed, &limiter, &on_command, &big);
+
+        assert_eq!(*calls.borrow(), 0);
     }
 
     #[test]

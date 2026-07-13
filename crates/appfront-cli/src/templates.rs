@@ -1,10 +1,13 @@
 //! String templates used by `appfront init` to scaffold a new project.
-//! Path dependencies point at the `tpt-appfront` checkout that built this
-//! CLI binary (via `CARGO_MANIFEST_DIR`), so the generated project builds
-//! with zero manual edits as long as it's run against that same checkout.
-//! Once the crates are published this switches to version dependencies.
+//! The dependency spec (`core_dep`/`canvas_dep`/etc.) is computed by the
+//! caller: a `path = "..."` dependency when running against the
+//! `tpt-appfront` checkout that built this CLI, or a version dependency
+//! (`"0.1.0"`) once the crates are published and `appfront init` is invoked
+//! from an installed `cargo install appfront-cli` (see `dep_ref` in
+//! `main.rs`). This avoids scaffolding projects with broken path deps on a
+//! published install.
 
-pub fn canvas_cargo_toml(pkg_name: &str, core_path: &str, canvas_path: &str) -> String {
+pub fn canvas_cargo_toml(pkg_name: &str, core_dep: &str, canvas_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -13,8 +16,8 @@ edition = "2021"
 publish = false
 
 [dependencies]
-appfront-core = {{ path = "{core_path}" }}
-appfront-canvas = {{ path = "{canvas_path}" }}
+appfront-core = {core_dep}
+appfront-canvas = {canvas_dep}
 "#
     )
 }
@@ -51,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     )
 }
 
-pub fn dom_cargo_toml(pkg_name: &str, core_path: &str, dom_path: &str) -> String {
+pub fn dom_cargo_toml(pkg_name: &str, core_dep: &str, dom_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -63,8 +66,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-appfront-core = {{ path = "{core_path}" }}
-appfront-dom = {{ path = "{dom_path}" }}
+appfront-core = {core_dep}
+appfront-dom = {dom_dep}
 wasm-bindgen = "0.2"
 web-sys = {{ version = "0.3", features = ["Document", "Window", "Element"] }}
 console_error_panic_hook = "0.1"
@@ -151,7 +154,7 @@ pub fn index_html(app_title: &str) -> String {
     )
 }
 
-pub fn tui_cargo_toml(pkg_name: &str, core_path: &str, tui_path: &str) -> String {
+pub fn tui_cargo_toml(pkg_name: &str, core_dep: &str, tui_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -160,8 +163,8 @@ edition = "2021"
 publish = false
 
 [dependencies]
-appfront-core = {{ path = "{core_path}" }}
-appfront-tui = {{ path = "{tui_path}" }}
+appfront-core = {core_dep}
+appfront-tui = {tui_dep}
 "#
     )
 }
@@ -270,27 +273,27 @@ mod tests {
 
     #[test]
     fn canvas_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = canvas_cargo_toml("my-app", "/repo/appfront-core", "/repo/appfront-canvas");
-        assert!(out.contains("/repo/appfront-core"));
-        assert!(out.contains("/repo/appfront-canvas"));
+        let out = canvas_cargo_toml("my-app", "path = \"/repo/appfront-core\"", "path = \"/repo/appfront-canvas\"");
+        assert!(out.contains("appfront-core = path = \"/repo/appfront-core\""));
+        assert!(out.contains("appfront-canvas = path = \"/repo/appfront-canvas\""));
         assert!(out.contains("name = \"my-app\""));
         assert!(looks_like_toml(&out));
     }
 
     #[test]
     fn dom_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = dom_cargo_toml("my-app", "/repo/appfront-core", "/repo/appfront-dom");
-        assert!(out.contains("/repo/appfront-core"));
-        assert!(out.contains("/repo/appfront-dom"));
+        let out = dom_cargo_toml("my-app", "path = \"/repo/appfront-core\"", "path = \"/repo/appfront-dom\"");
+        assert!(out.contains("appfront-core = path = \"/repo/appfront-core\""));
+        assert!(out.contains("appfront-dom = path = \"/repo/appfront-dom\""));
         assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
         assert!(looks_like_toml(&out));
     }
 
     #[test]
     fn tui_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = tui_cargo_toml("my-app", "/repo/appfront-core", "/repo/appfront-tui");
-        assert!(out.contains("/repo/appfront-core"));
-        assert!(out.contains("/repo/appfront-tui"));
+        let out = tui_cargo_toml("my-app", "path = \"/repo/appfront-core\"", "path = \"/repo/appfront-tui\"");
+        assert!(out.contains("appfront-core = path = \"/repo/appfront-core\""));
+        assert!(out.contains("appfront-tui = path = \"/repo/appfront-tui\""));
         assert!(looks_like_toml(&out));
     }
 
