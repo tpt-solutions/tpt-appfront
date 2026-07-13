@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Axum smart router serving the right TPT AppFront backend per client"
 
 [dependencies]
-appfront-core = { path = "../appfront-core" }
-appfront-html = { path = "../appfront-html" }
-appfront-ai-schema = { path = "../appfront-ai-schema" }
+appfront-core = { path = "../appfront-core", version = "0.1.0" }
+appfront-html = { path = "../appfront-html", version = "0.1.0" }
+appfront-ai-schema = { path = "../appfront-ai-schema", version = "0.1.0" }
 axum = { version = "0.7", features = ["macros"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "trace", "timeout", "set-header", "cors"] }

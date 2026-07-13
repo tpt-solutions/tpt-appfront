@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "egui/taffy canvas backend (native + WASM) for TPT AppFront"
 
 [dependencies]
-appfront-core = { path = "../appfront-core" }
+appfront-core = { path = "../appfront-core", version = "0.1.0" }
 # glow (raw GL/GLES) instead of the default wgpu renderer: layout is CPU-side
 # via taffy, so wgpu's GPU-compute capability isn't in use yet (Phase 11
 # stretch), and glow avoids shader-pipeline compilation at startup, links

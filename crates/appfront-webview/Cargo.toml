@@ -1,12 +1,13 @@
 [package]
 name = "appfront-webview"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
-publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native webview shell (wry+tao) hosting the TPT AppFront DOM backend"
 
 [dependencies]
-appfront-core = { path = "../appfront-core" }
+appfront-core = { path = "../appfront-core", version = "0.1.0" }
 anyhow = "1"
 serde_json = "1"
 wry = "0.24"

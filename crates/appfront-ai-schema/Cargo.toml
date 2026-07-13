@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "JSON-LD and AI-agent schema backend for TPT AppFront"
 
 [dependencies]
-appfront-core = { path = "../appfront-core" }
+appfront-core = { path = "../appfront-core", version = "0.1.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }

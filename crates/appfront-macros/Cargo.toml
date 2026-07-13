@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "#[component] and view!/rsx! proc macros for TPT AppFront"
 
 [lib]
 proc-macro = true
