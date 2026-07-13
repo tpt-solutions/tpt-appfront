@@ -10,5 +10,6 @@ description = "Native webview shell (wry+tao) hosting the TPT AppFront DOM backe
 appfront-core = { path = "../appfront-core", version = "0.1.0" }
 anyhow = "1"
 serde_json = "1"
-wry = "0.24"
+wry = "0.55"
+tao = "0.35"
 governor = "0.6"
