@@ -66,3 +66,4 @@ pub use styling::{
 };
 pub use ui_tree::{AiMeta, ContainerBuilder, HydrationPayload, NodeKind, NodeMeta, NodeRef, UITree};
 pub use virtual_scroll::{VirtualScroll, VisibleRange};
+pub use component::{memoize, Children};
