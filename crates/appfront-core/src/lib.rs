@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod component;
 pub mod context;
 pub mod devtools;
 pub mod error_boundary;

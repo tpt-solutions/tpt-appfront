@@ -311,6 +311,40 @@ where
     })
 }
 
+/// Mounts `ui` into `container` and returns an [`EffectHandle`] that keeps the
+/// mounted subtree reconciled against `view()` on every signal change. Each
+/// effect run diffs the freshly-built `UITree` against the mounted one and
+/// updates only the changed subtrees in place — no teardown, no listener leak.
+///
+/// This is the fine-grained-render entry point for non-router apps (the
+/// counterpart to [`mount_router`] for router apps). The returned handle must
+/// be kept alive for the lifetime of the mount; drop it (or `mem::forget` it
+/// for a whole-process root) to stop reconciling.
+///
+/// `view` is a thunk so the effect always reads the latest app state when it
+/// re-runs: `|| my_app_view(&state)`. `dispatch` routes `Msg`s back to the app.
+pub fn render<Msg>(
+    container: &Element,
+    view: Rc<dyn Fn() -> UITree<Msg>>,
+    dispatch: Rc<dyn Fn(Msg)>,
+) -> Result<appfront_core::EffectHandle, wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    let initial = view();
+    let mut root = mount(container, &initial, dispatch)?;
+
+    let handle = create_effect({
+        let view = Rc::clone(&view);
+        move || {
+            let new_ui = view();
+            let _ = root.render(&new_ui);
+        }
+    });
+
+    Ok(handle)
+}
+
 /// Diffs `new_ui` against the live `mounted` record and updates the DOM *in
 /// place*: reused nodes keep their identity (and listeners), only changed
 /// attributes/text/children are touched, and removed subtrees are unmounted so
@@ -392,9 +426,16 @@ where
                     }
                 }
                 NodeKind::DataGrid { columns, rows } => {
-                    reconcile_data_grid(document, dispatch, el, mounted, columns, rows)?;
+                    reconcile_data_grid(
+                        document,
+                        dispatch,
+                        el,
+                        &mut mounted.children,
+                        columns,
+                        rows,
+                    )?;
                 }
-                NodeKind::Portal { content } => {
+                NodeKind::Portal { content, .. } => {
                     while let Some(child) = el.first_child() {
                         el.remove_child(&child)?;
                     }
@@ -511,7 +552,7 @@ fn reconcile_data_grid<Msg>(
     document: &Document,
     dispatch: &Rc<dyn Fn(Msg)>,
     table: &Element,
-    mounted: &mut MountedNode,
+    mounted_children: &mut Vec<MountedNode>,
     columns: &[String],
     rows: &[Vec<String>],
 ) -> Result<(), wasm_bindgen::JsValue>
@@ -547,7 +588,7 @@ where
     }
 
     if let Some(tbody) = table.query_selector("tbody").ok().flatten() {
-        reconcile_data_rows(document, dispatch, &tbody, &mut mounted.children, rows)?;
+        reconcile_data_rows(document, dispatch, &tbody, mounted_children, rows)?;
     }
     Ok(())
 }
@@ -871,9 +912,9 @@ where
 // Keeps event `Closure`s alive for as long as their DOM node lives, keyed by
 // a stable per-node id so a re-render that replaces the handler can find and
 // drop the old one. `unmount` clears the entry when it clears the handler.
+type LiveClosures = std::cell::RefCell<HashMap<u32, Vec<Closure<dyn FnMut()>>>>;
 thread_local! {
-    static LIVE_CLOSURES: std::cell::RefCell<HashMap<u32, Vec<Closure<dyn FnMut()>>>> =
-        std::cell::RefCell::new(HashMap::new());
+    static LIVE_CLOSURES: LiveClosures = std::cell::RefCell::new(HashMap::new());
 }
 
 /// Stable identity for a DOM node across renders (unique for the node's
