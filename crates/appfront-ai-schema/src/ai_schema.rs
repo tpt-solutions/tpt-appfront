@@ -129,6 +129,10 @@ fn collect<Msg>(
                 text: None,
             });
         }
+        NodeKind::Portal { content, .. } => {
+            // Surface the portal's content so AI consumers see its elements.
+            collect(content, interactive, data);
+        }
     }
 }
 

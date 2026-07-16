@@ -112,6 +112,128 @@ where
     out
 }
 
+/// A one-line human-readable description of a single [`ListEdit`], for
+/// change-explanation UIs (e.g. "moved a", "inserted c", "kept b"). This is the
+/// "what changed" half of the undo/redo + change-explanation utility (#75).
+pub fn edit_description<K: std::fmt::Display>(edit: &ListEdit<K>) -> String {
+    match edit {
+        ListEdit::Keep { key } => format!("kept {key}"),
+        ListEdit::Move { key } => format!("moved {key}"),
+        ListEdit::Insert { key } => format!("inserted {key}"),
+    }
+}
+
+/// A human-readable summary of a [`KeyedDiff`]: how many items were kept,
+/// moved, inserted, and removed. Suitable for surfacing "what changed between
+/// renders" in a devtools/undo panel.
+pub fn diff_summary<K: std::fmt::Display>(diff: &KeyedDiff<K>) -> String {
+    let mut keeps = 0;
+    let mut moves = 0;
+    let mut inserts = 0;
+    for e in &diff.edits {
+        match e {
+            ListEdit::Keep { .. } => keeps += 1,
+            ListEdit::Move { .. } => moves += 1,
+            ListEdit::Insert { .. } => inserts += 1,
+        }
+    }
+    format!(
+        "kept {keeps}, moved {moves}, inserted {inserts}, removed {}",
+        diff.removed.len()
+    )
+}
+
+/// A bounded undo/redo stack over snapshot values of type `T` (e.g. a `UITree`,
+/// a form struct, or any `Clone` app state). Pushing a *new* value records it
+/// as the present; [`History::undo`]/`[`History::redo`] walk the timeline.
+///
+/// This is intentionally generic and backend-agnostic: it stores plain `T`
+/// snapshots (the same `UITree`/`Signal` data the render core already uses),
+/// so any app gets "what changed / undo this" almost for free on top of the
+/// keyed-diffing in this module. Pair [`diff_summary`] with the snapshot delta
+/// to explain each step.
+pub struct History<T> {
+    past: Vec<T>,
+    present: T,
+    future: Vec<T>,
+    limit: Option<usize>,
+}
+
+impl<T: Clone> History<T> {
+    /// Creates a history seeded with `initial` as the present. `limit`, if
+    /// `Some`, caps how many past snapshots are retained (oldest dropped first).
+    pub fn new(initial: T, limit: Option<usize>) -> Self {
+        History {
+            past: Vec::new(),
+            present: initial,
+            future: Vec::new(),
+            limit,
+        }
+    }
+
+    /// Returns the current value.
+    pub fn present(&self) -> &T {
+        &self.present
+    }
+
+    /// Commits a new present, pushing the old one onto the undo stack and
+    /// clearing the redo stack. No-op (aside from `present` already being the
+    /// new value) if `new_value` is equal to the current present.
+    pub fn push(&mut self, new_value: T)
+    where
+        T: PartialEq,
+    {
+        if new_value == self.present {
+            return;
+        }
+        self.past.push(self.present.clone());
+        if let Some(limit) = self.limit {
+            while self.past.len() > limit {
+                self.past.remove(0);
+            }
+        }
+        self.present = new_value;
+        self.future.clear();
+    }
+
+    /// Moves the present onto the redo stack and restores the most recent past
+    /// snapshot. Returns `true` if an undo happened.
+    pub fn undo(&mut self) -> bool {
+        if let Some(prev) = self.past.pop() {
+            self.future.push(std::mem::replace(&mut self.present, prev));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Moves the present onto the undo stack and restores the most recent
+    /// future snapshot. Returns `true` if a redo happened.
+    pub fn redo(&mut self) -> bool {
+        if let Some(next) = self.future.pop() {
+            self.past.push(std::mem::replace(&mut self.present, next));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether an [`History::undo`] would succeed.
+    pub fn can_undo(&self) -> bool {
+        !self.past.is_empty()
+    }
+
+    /// Whether an [`History::redo`] would succeed.
+    pub fn can_redo(&self) -> bool {
+        !self.future.is_empty()
+    }
+
+    /// Number of undo-able steps currently retained.
+    pub fn depth(&self) -> usize {
+        self.past.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +338,76 @@ mod tests {
                 ListEdit::Insert { key: "b".to_string() },
             ]
         );
+    }
+
+    #[test]
+    fn edit_description_is_readable() {
+        assert_eq!(edit_description(&ListEdit::Keep { key: "a" }), "kept a");
+        assert_eq!(edit_description(&ListEdit::Move { key: "b" }), "moved b");
+        assert_eq!(edit_description(&ListEdit::Insert { key: "c" }), "inserted c");
+    }
+
+    #[test]
+    fn diff_summary_counts_ops() {
+        let old = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let new = vec!["a".to_string(), "x".to_string(), "c".to_string()];
+        let diff = reconcile_keys(&old, &new);
+        assert_eq!(diff_summary(&diff), "kept 2, moved 0, inserted 1, removed 1");
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn push_then_undo_redo_round_trips() {
+        let mut h = History::new(0u32, None);
+        h.push(1);
+        h.push(2);
+        assert_eq!(*h.present(), 2);
+        assert!(h.can_undo());
+        assert!(h.undo());
+        assert_eq!(*h.present(), 1);
+        assert!(h.undo());
+        assert_eq!(*h.present(), 0);
+        assert!(!h.can_undo());
+
+        assert!(h.redo());
+        assert_eq!(*h.present(), 1);
+        assert!(h.redo());
+        assert_eq!(*h.present(), 2);
+        assert!(!h.can_redo());
+    }
+
+    #[test]
+    fn new_push_clears_redo() {
+        let mut h = History::new(0u32, None);
+        h.push(1);
+        h.undo();
+        assert!(h.can_redo());
+        h.push(5);
+        assert!(!h.can_redo());
+        assert_eq!(*h.present(), 5);
+    }
+
+    #[test]
+    fn equal_push_is_noop() {
+        let mut h = History::new(1u32, None);
+        let depth_before = h.depth();
+        h.push(1);
+        assert_eq!(h.depth(), depth_before);
+    }
+
+    #[test]
+    fn limit_drops_oldest() {
+        let mut h = History::new(0u32, Some(2));
+        h.push(1);
+        h.push(2);
+        h.push(3);
+        // past holds at most 2 snapshots.
+        assert_eq!(h.depth(), 2);
+        assert!(h.undo());
+        assert_eq!(*h.present(), 2);
     }
 }

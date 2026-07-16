@@ -189,6 +189,10 @@ fn walk<Msg>(
                 description: None,
             });
         }
+        NodeKind::Portal { content, .. } => {
+            // Surface the portal's content so agents observe its elements.
+            walk(content, interactive, data);
+        }
     }
 }
 

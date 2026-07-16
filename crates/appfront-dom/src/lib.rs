@@ -192,6 +192,18 @@ where
             table.append_child(&tbody)?;
             table.into()
         }
+        NodeKind::Portal { target, content } => {
+            // Render the portal content inline at the declaration site but mark
+            // it with `data-portal-target` so a host/runtime can relocate it
+            // into the named overlay layer. `collect_portals` is the
+            // authoritative way for a host to extract portals regardless of
+            // where they were declared.
+            let el = render_node(document, content, dispatch)?;
+            if let Some(el) = el.dyn_ref::<Element>() {
+                el.set_attribute("data-portal-target", target)?;
+            }
+            el
+        }
     };
 
     if let Some(class) = &ui.meta.class {
@@ -579,7 +591,8 @@ where
         | NodeKind::Heading { .. }
         | NodeKind::Text { .. }
         | NodeKind::Button { .. }
-        | NodeKind::Input { .. } => {}
+        | NodeKind::Input { .. }
+        | NodeKind::Portal { .. } => {}
     }
 
     if needs_hydration {

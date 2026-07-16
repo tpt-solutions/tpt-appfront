@@ -44,6 +44,7 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::DataGrid { columns, rows } => {
             format!("DataGrid [{}] {}x{}", columns.join(", "), columns.len(), rows.len())
         }
+        NodeKind::Portal { target, .. } => format!("Portal -> \"{target}\""),
     }
 }
 

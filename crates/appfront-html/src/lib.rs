@@ -123,6 +123,16 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
 
             close_tag(buf, "table");
         }
+        NodeKind::Portal { target, content } => {
+            // Render the portal content inline but tag it so a crawler/host can
+            // find and relocate it; `UITree::collect_portals` is the
+            // authoritative extraction path for SSR hosts.
+            buf.push_str("<div data-portal-target=\"");
+            buf.push_str(&esc_text(target));
+            buf.push_str("\">");
+            render_node(buf, content);
+            buf.push_str("</div>");
+        }
     }
 }
 

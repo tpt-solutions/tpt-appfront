@@ -73,7 +73,10 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
                     walk(item, out);
                 }
             }
-            NodeKind::Heading { .. } | NodeKind::Text { .. } | NodeKind::DataGrid { .. } => {}
+            NodeKind::Heading { .. }
+            | NodeKind::Text { .. }
+            | NodeKind::DataGrid { .. }
+            | NodeKind::Portal { .. } => {}
         }
     }
     walk(ui, &mut out);
@@ -179,6 +182,12 @@ fn render_node<Msg: Clone>(
                     .block(Block::default().borders(Borders::ALL)),
                 area,
             );
+        }
+        NodeKind::Portal { content, .. } => {
+            // TUI has no overlay layer: render the portal content inline at the
+            // declaration site. Hosts that want true overlay portals can use
+            // `UITree::collect_portals` to extract them first.
+            render_node(content, frame, area, inputs, focus_id);
         }
     }
 }

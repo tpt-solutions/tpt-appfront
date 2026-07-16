@@ -98,6 +98,11 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
             item.insert("rows".to_string(), Value::Array(row_values));
             graph.push(Value::Object(item));
         }
+        NodeKind::Portal { content, .. } => {
+            // Portals are rendered into an overlay layer; surface their content
+            // in the graph so AI consumers still see the portal's elements.
+            walk(content, graph);
+        }
     }
 }
 

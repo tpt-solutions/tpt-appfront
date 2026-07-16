@@ -85,6 +85,12 @@ pub fn build<'a, Msg>(
             }
         }
         NodeKind::DataGrid { columns, rows } => build_data_grid(tree, measurer, ui, columns, rows),
+        // Canvas has no overlay layer; render the portal content inline as a
+        // column flex container (its `target` is metadata for hosts that
+        // collect portals via `UITree::collect_portals`).
+        NodeKind::Portal { content, .. } => {
+            build_flex_container(tree, measurer, ui, std::slice::from_ref(content), FlexDirection::Column)
+        }
     }
 }
 

@@ -31,7 +31,7 @@ pub fn paint<Msg: Clone>(
 
     let mut clicked = false;
     match &node.ui.kind {
-        NodeKind::Container { .. } | NodeKind::List { .. } => {}
+        NodeKind::Container { .. } | NodeKind::List { .. } | NodeKind::Portal { .. } => {}
         NodeKind::Heading { text, level } => {
             paint_text(ui, pos, text, layout::heading_font_size(*level));
             #[cfg(feature = "accesskit")]

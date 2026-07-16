@@ -27,6 +27,17 @@ pub enum NodeKind<Msg> {
         columns: Vec<String>,
         rows: Vec<Vec<String>>,
     },
+    /// A "portal": its `content` is rendered not inline at this node's position
+    /// but into the named portal *target* instead. Hosts (DOM/canvas/TUI)
+    /// render portal targets as overlay layers (modal/toast/tooltip surfaces)
+    /// regardless of where in the logical tree the portal was declared. See
+    /// [`UITree::collect_portals`] and [`ContainerBuilder::portal`]. Backend-
+    /// agnostic: a backend that doesn't support portal targets can simply
+    /// inline `content` at the declaration site as a fallback.
+    Portal {
+        target: String,
+        content: Box<UITree<Msg>>,
+    },
 }
 
 /// AI-agent metadata attached to any node (see `docs/ai-schema.md`).
@@ -151,6 +162,73 @@ impl<Msg> UITree<Msg> {
         &mut self.meta
     }
 
+    /// Collects the contents of every portal targeting `target` anywhere in
+    /// this tree (including nested portals), in document order. Hosts render
+    /// these as an overlay layer independent of where each portal was declared.
+    /// Portals that target a *different* name are ignored (but still walked, so
+    /// nested portals are found wherever they live).
+    pub fn collect_portals(&self, target: &str) -> Vec<UITree<Msg>>
+    where
+        Msg: Clone,
+    {
+        fn walk<Msg: Clone>(ui: &UITree<Msg>, target: &str, out: &mut Vec<UITree<Msg>>) {
+            match &ui.kind {
+                NodeKind::Container { children } => {
+                    for child in children {
+                        walk(child, target, out);
+                    }
+                }
+                NodeKind::List { items } => {
+                    for item in items {
+                        walk(item, target, out);
+                    }
+                }
+                NodeKind::Portal {
+                    target: t,
+                    content,
+                } => {
+                    if t == target {
+                        out.push((**content).clone());
+                    } else {
+                        // Still recurse: a nested portal may target `target`.
+                        walk(content, target, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, target, &mut out);
+        out
+    }
+
+    /// Names of all distinct portal targets referenced anywhere in this tree.
+    /// Useful for a host to pre-create its overlay layers.
+    pub fn portal_targets(&self) -> std::collections::BTreeSet<String> {
+        fn walk<Msg>(ui: &UITree<Msg>, out: &mut std::collections::BTreeSet<String>) {
+            match &ui.kind {
+                NodeKind::Container { children } => {
+                    for child in children {
+                        walk(child, out);
+                    }
+                }
+                NodeKind::List { items } => {
+                    for item in items {
+                        walk(item, out);
+                    }
+                }
+                NodeKind::Portal { target, content } => {
+                    out.insert(target.clone());
+                    walk(content, out);
+                }
+                _ => {}
+            }
+        }
+        let mut out = std::collections::BTreeSet::new();
+        walk(self, &mut out);
+        out
+    }
+
     /// Walks the tree and assigns a unique sequential [`NodeMeta::data_appfront_id`]
     /// to every node. Safe to call multiple times — previously assigned IDs are
     /// overwritten.
@@ -168,6 +246,9 @@ impl<Msg> UITree<Msg> {
                     for item in items {
                         walk(item, next);
                     }
+                }
+                NodeKind::Portal { content, .. } => {
+                    walk(content, next);
                 }
                 NodeKind::DataGrid { .. }
                 | NodeKind::Heading { .. }
@@ -280,6 +361,28 @@ impl<Msg> ContainerBuilder<Msg> {
         build(&mut inner);
         self.push(NodeKind::List {
             items: inner.children,
+        })
+    }
+
+    /// Declares a portal: `build` produces a subtree that is rendered into the
+    /// named portal *target* (an overlay layer) rather than inline. The host
+    /// collects portals via [`UITree::collect_portals`] and renders each target
+    /// independently — this is how modals/toasts/tooltips escape their logical
+    /// parent's clipping/stacking context. Returns a [`NodeRef`] to the portal
+    /// node (the declaration site) for chaining `class`/`key` onto it.
+    pub fn portal(
+        &mut self,
+        target: impl Into<String>,
+        build: impl FnOnce(&mut ContainerBuilder<Msg>),
+    ) -> NodeRef<'_, Msg> {
+        let mut inner = ContainerBuilder { children: Vec::new() };
+        build(&mut inner);
+        let single = inner.into_only_child().unwrap_or_else(|| {
+            UITree::container(|_| {})
+        });
+        self.push(NodeKind::Portal {
+            target: target.into(),
+            content: Box::new(single),
         })
     }
 
