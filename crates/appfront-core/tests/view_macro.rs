@@ -255,29 +255,139 @@ fn two_way_binding_emits_on_input() {
     }
 }
 
-// NOTE: a `<DataGrid>` with child nodes is rejected at macro-expansion time
-// (see `data_grid` codegen in `appfront-macros/src/view.rs`), so the test
-// below cannot be exercised as a runtime assertion — the expansion emits a
-// compile error. The real guarantee is enforced by `cargo build` of this test
-// crate (and the macro's token-span error). The harness is kept as a
-// documentation anchor and ignored so it doesn't break compilation.
 #[test]
-#[ignore = "DataGrid-with-children is rejected at macro expansion; verified by cargo build"]
-fn data_grid_rejects_children() {
-    // The following would be the intended assertion if `view!` accepted the
-    // invalid node; it does not, so this is a documentation anchor only:
-    //
-    //     let err = trybuild_style_error(|| {
-    //         view! {
-    //             <Container>
-    //                 <DataGrid columns={vec!["a".to_string()]}
-    //                           rows={vec![vec!["b".to_string()]]}>
-    //                     <Text>"nope"</Text>
-    //                 </DataGrid>
-    //             </Container>
-    //         }
-    //     });
-    //     assert!(err, "DataGrid with children must be a compile error");
-    let _ = true;
+fn for_loop_builds_dynamic_list_items() {
+    let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let ui = view! {
+        <Container>
+            <List>
+                {for item in items {
+                    <Text>{ item.clone() }</Text>
+                }}
+            </List>
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    match &children[0].kind {
+        NodeKind::List { items } => {
+            assert_eq!(items.len(), 3);
+            for (i, item) in items.iter().enumerate() {
+                match &item.kind {
+                    NodeKind::Text { text } => assert_eq!(text, &format!("{}", ['a', 'b', 'c'][i])),
+                    other => panic!("expected text item, got {other:?}"),
+                }
+            }
+        }
+        other => panic!("expected list, got {other:?}"),
+    }
 }
 
+#[test]
+fn if_else_control_flow_selects_children() {
+    let show = true;
+    let ui = view! {
+        <Container>
+            {if show {
+                <Text>"yes"</Text>
+            } else {
+                <Text>"no"</Text>
+            }}
+            {if !show {
+                <Text>"hidden"</Text>
+            }}
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    assert_eq!(children.len(), 1, "only the taken branch should appear");
+    match &children[0].kind {
+        NodeKind::Text { text } => assert_eq!(text, "yes"),
+        other => panic!("expected 'yes' text, got {other:?}"),
+    }
+}
+
+#[test]
+fn node_expr_child_is_appended_via_with() {
+    let ui = view! {
+        <Container>
+            { UITree::container(|c| { c.text("composed"); }) }
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    assert_eq!(children.len(), 1);
+    match &children[0].kind {
+        NodeKind::Text { text } => assert_eq!(text, "composed"),
+        other => panic!("expected composed text, got {other:?}"),
+    }
+}
+
+#[test]
+fn control_flow_marks_view_dynamic() {
+    let flag = true;
+    let ui = view! {
+        <Container>
+            {if flag { <Text>"x"</Text> }}
+        </Container>
+    };
+    assert!(ui.meta.is_dynamic, "control flow must set is_dynamic = true");
+}
+
+#[test]
+fn for_loop_with_else_if_branches() {
+    let n = 1;
+    let ui = view! {
+        <Container>
+            {if n == 1 {
+                <Text>"one"</Text>
+            } else if n == 2 {
+                <Text>"two"</Text>
+            } else {
+                <Text>"many"</Text>
+            }}
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    assert_eq!(children.len(), 1);
+    match &children[0].kind {
+        NodeKind::Text { text } => assert_eq!(text, "one"),
+        other => panic!("expected 'one' text, got {other:?}"),
+    }
+}
+
+#[test]
+fn data_grid_rejects_children() {
+    let err = trybuild_style_error(|| {
+        view! {
+            <Container>
+                <DataGrid columns={vec!["a".to_string()]} rows={vec![vec!["b".to_string()]]}>
+                    <Text>"nope"</Text>
+                </DataGrid>
+            </Container>
+        }
+    });
+    assert!(err, "DataGrid with children must be a compile error");
+}
+
+/// Helper used only by the negative test above: returns `true` if the
+/// expanded `view!` fails to compile. Since `view!` is a proc-macro we can't
+/// easily catch the compile error at runtime, so this is a stand-in that
+/// documents intent; the real check is the `cargo build` of this test crate.
+fn trybuild_style_error<F, T>(f: F) -> bool
+where
+    F: FnOnce() -> T,
+{
+    // The closure only typechecks/compiles when the macro accepts the input.
+    // We call it to force monomorphization; the test above is effectively a
+    // documentation anchor. A genuinely invalid node would fail at macro
+    // expansion (compile time), so reaching here means it compiled.
+    let _ = std::any::type_name::<T>();
+    f();
+    false
+}

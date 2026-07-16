@@ -434,6 +434,14 @@ fn handle_ipc<F>(acl: &Acl, limiter: &IpcRateLimiter, on_command: &F, message: &
 where
     F: Fn(&str, serde_json::Value) -> std::result::Result<(), String>,
 {
+    if message.len() > MAX_IPC_MESSAGE_BYTES {
+        eprintln!(
+            "[appfront-webview] rejecting IPC message: {} bytes exceeds {} byte limit",
+            message.len(),
+            MAX_IPC_MESSAGE_BYTES
+        );
+        return;
+    }
     let parsed: serde_json::Value = match serde_json::from_str(message) {
         Ok(v) => v,
         Err(e) => {

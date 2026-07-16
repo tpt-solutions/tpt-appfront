@@ -31,7 +31,8 @@
 
 use proc_macro2::{Delimiter, Ident, Span, TokenStream, TokenTree};
 use quote::{format_ident, quote};
-use syn::{Error, Expr, ExprLit, Lit};
+use syn::parse::Parser;
+use syn::{Error, Expr, ExprLit, Lit, Pat};
 
 /// Node types the macro understands, with their allowed/required attributes.
 const TAGS: &[&str] = &["Container", "Heading", "Text", "Button", "Input", "List", "DataGrid"];
@@ -56,7 +57,29 @@ const ALLOWED: &[(&str, &[&str], &[&str])] = &[
 
 enum Child {
     Node(Node),
+    /// A literal or `{ expr }` string value, used as the (single) child of a
+    /// `Text`/`Heading`/`Button` node.
     Text(Expr),
+    /// A `{ expr }` that evaluates to a `UITree<Msg>` used directly as a child
+    /// of a `Container`/`List` — the mechanism for composing sub-views and
+    /// component functions (e.g. `{ my_component(props) }`).
+    NodeExpr(Expr),
+    /// `{if ...}` / `{for ...}` control flow producing zero or more children.
+    Control(Control),
+}
+
+/// Control-flow constructs recognised inside `{ ... }` child blocks.
+enum Control {
+    If {
+        cond: Expr,
+        then_children: Vec<Child>,
+        else_children: Vec<Child>,
+    },
+    For {
+        pat: Pat,
+        iter: Expr,
+        body: Vec<Child>,
+    },
 }
 
 struct Node {
@@ -173,7 +196,8 @@ fn parse_node(cur: &mut Cursor) -> Result<Node, Error> {
             }
             Some(TokenTree::Punct(p)) if p.as_char() == '>' => {
                 cur.next();
-                let children = parse_children(cur, &tag)?;
+                let text_ctx = matches!(tag.to_string().as_str(), "Heading" | "Text" | "Button");
+                let children = parse_children(cur, CloseMode::Tag(&tag), text_ctx)?;
                 return Ok(Node {
                     tag,
                     attrs,
@@ -193,24 +217,62 @@ fn parse_node(cur: &mut Cursor) -> Result<Node, Error> {
     }
 }
 
-fn parse_children(cur: &mut Cursor, close_tag: &Ident) -> Result<Vec<Child>, Error> {
+/// How a `parse_children` parse should terminate.
+enum CloseMode<'a> {
+    /// Stop at the matching `</Tag>` (children of a node element).
+    Tag(&'a Ident),
+    /// Stop at a `}` (children of a `{if}`/`{for}` block body).
+    Brace,
+}
+
+fn parse_children(
+    cur: &mut Cursor,
+    close: CloseMode,
+    text_context: bool,
+) -> Result<Vec<Child>, Error> {
     let mut children = Vec::new();
     loop {
         match cur.peek() {
             None => {
-                return Err(Error::new(
-                    close_tag.span(),
-                    format!("missing closing `</{}>`", close_tag),
-                ))
+                return Err(match &close {
+                    CloseMode::Tag(t) => Error::new(
+                        t.span(),
+                        format!("missing closing `</{}>`", t),
+                    ),
+                    CloseMode::Brace => {
+                        Error::new(Span::call_site(), "missing closing `}` in control-flow block")
+                    }
+                })
             }
             Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
                 // Closing tag if the next token is `/`.
                 if matches!(cur.peek_nth(1), Some(TokenTree::Punct(p2)) if p2.as_char() == '/') {
-                    consume_closing(cur, close_tag)?;
-                    return Ok(children);
+                    match &close {
+                        CloseMode::Tag(t) => {
+                            consume_closing(cur, t)?;
+                            return Ok(children);
+                        }
+                        CloseMode::Brace => {
+                            return Err(Error::new(
+                                p.span(),
+                                "unexpected closing tag inside a control-flow block",
+                            ))
+                        }
+                    }
                 }
                 let node = parse_node(cur)?;
                 children.push(Child::Node(node));
+            }
+            Some(TokenTree::Punct(p)) if p.as_char() == '}' => {
+                match &close {
+                    CloseMode::Brace => {
+                        cur.next();
+                        return Ok(children);
+                    }
+                    CloseMode::Tag(_) => {
+                        return Err(Error::new(p.span(), "unexpected `}`"))
+                    }
+                }
             }
             Some(TokenTree::Literal(l)) => {
                 let l = l.clone();
@@ -232,18 +294,138 @@ fn parse_children(cur: &mut Cursor, close_tag: &Ident) -> Result<Vec<Child>, Err
             Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
                 let g = g.clone();
                 cur.next();
-                let expr = syn::parse2(g.stream())
-                    .map_err(|e| Error::new(g.span(), format!("invalid text expression: {e}")))?;
-                children.push(Child::Text(expr));
+                let stream = g.stream();
+                // A block whose first token is `if`/`for` is control flow;
+                // otherwise it's an interpolation expression (`{ expr }`).
+                let first = stream.clone().into_iter().next();
+                if let Some(TokenTree::Ident(kw)) = &first {
+                    if kw == "if" || kw == "for" {
+                        let ctrl = parse_control(stream, g.span())?;
+                        children.push(Child::Control(ctrl));
+                        continue;
+                    }
+                }
+                let expr = syn::parse2(stream)
+                    .map_err(|e| Error::new(g.span(), format!("invalid expression: {e}")))?;
+                if text_context {
+                    children.push(Child::Text(expr));
+                } else {
+                    children.push(Child::NodeExpr(expr));
+                }
             }
             Some(other) => {
                 return Err(Error::new(
                     other.span(),
-                    "expected a child node (`<Tag>`) or text (`\"...\"` / `{ expr }`)",
+                    "expected a child node (`<Tag>`), control flow (`{if}`/`{for}`), or text (`\"...\"` / `{ expr }`)",
                 ));
             }
         }
     }
+}
+
+/// Parses a `{if cond { ... } [else { ... } | else if ...]}` or
+/// `{for pat in iter { ... }}` block into a [`Control`] tree.
+fn parse_control(stream: TokenStream, span: Span) -> Result<Control, Error> {
+    let toks: Vec<TokenTree> = stream.into_iter().collect();
+    let mut cur = Cursor { toks: &toks, pos: 0 };
+
+    let first = cur
+        .peek()
+        .ok_or_else(|| Error::new(span, "empty control-flow block"))?;
+    let kw = match first {
+        TokenTree::Ident(i) => i.to_string(),
+        _ => return Err(Error::new(span, "control-flow block must start with `if` or `for`")),
+    };
+    cur.next();
+
+    match kw.as_str() {
+        "if" => {
+            // Condition = tokens up to the first `{ ... }` block.
+            let mut cond_toks: Vec<TokenTree> = Vec::new();
+            let then_block = loop {
+                match cur.next() {
+                    Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => break g,
+                    Some(t) => cond_toks.push(t),
+                    None => return Err(Error::new(span, "expected `{` block after `if` condition")),
+                }
+            };
+            let cond: Expr = syn::parse2(cond_toks.into_iter().collect())
+                .map_err(|e| Error::new(span, format!("invalid `if` condition: {e}")))?;
+            let then_children = parse_block_children(&then_block, span)?;
+
+            let else_children = if matches!(cur.peek(), Some(TokenTree::Ident(i)) if i == "else") {
+                cur.next();
+                match cur.peek() {
+                    Some(TokenTree::Ident(i)) if i == "if" => {
+                        // `else if` — parse the remaining tokens as a nested
+                        // `if` and wrap it as the sole else child.
+                        let rest: TokenStream = cur.toks[cur.pos..].iter().cloned().collect();
+                        vec![Child::Control(parse_control(rest, span)?)]
+                    }
+                    Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                        let g = g.clone();
+                        cur.next();
+                        parse_block_children(&g, span)?
+                    }
+                    _ => {
+                        return Err(Error::new(
+                            span,
+                            "`else` must be followed by `{ ... }` or `if ...`",
+                        ))
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
+            Ok(Control::If {
+                cond,
+                then_children,
+                else_children,
+            })
+        }
+        "for" => {
+            // Pattern = tokens up to the `in` keyword.
+            let mut pat_toks: Vec<TokenTree> = Vec::new();
+            loop {
+                match cur.peek() {
+                    Some(TokenTree::Ident(i)) if i == "in" => {
+                        cur.next();
+                        break;
+                    }
+                    Some(_) => pat_toks.push(cur.next().unwrap()),
+                    None => return Err(Error::new(span, "expected `in` in `for` loop")),
+                }
+            }
+            let pat: Pat = syn::Pat::parse_single
+                .parse2(pat_toks.into_iter().collect())
+                .map_err(|e| Error::new(span, format!("invalid `for` pattern: {e}")))?;
+
+            // Iterator = tokens up to the `{ ... }` block.
+            let mut iter_toks: Vec<TokenTree> = Vec::new();
+            let body_block = loop {
+                match cur.next() {
+                    Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => break g,
+                    Some(t) => iter_toks.push(t),
+                    None => return Err(Error::new(span, "expected `{` block after `for` iterator")),
+                }
+            };
+            let iter: Expr = syn::parse2(iter_toks.into_iter().collect())
+                .map_err(|e| Error::new(span, format!("invalid `for` iterator: {e}")))?;
+            let body = parse_block_children(&body_block, span)?;
+
+            Ok(Control::For { pat, iter, body })
+        }
+        other => Err(Error::new(span, format!("unknown control-flow keyword `{other}`"))),
+    }
+}
+
+/// Parses the children of a `{ ... }` control-flow body block.
+fn parse_block_children(group: &proc_macro2::Group, span: Span) -> Result<Vec<Child>, Error> {
+    let bt: Vec<TokenTree> = group.stream().into_iter().collect();
+    let mut cur = Cursor { toks: &bt, pos: 0 };
+    parse_children(&mut cur, CloseMode::Brace, false)
+        .map_err(|e| Error::new(span, format!("in control-flow block: {e}")))
 }
 
 fn consume_closing(cur: &mut Cursor, close_tag: &Ident) -> Result<(), Error> {
@@ -298,9 +480,12 @@ fn single_text(node: &Node) -> Result<&Expr, Error> {
     }
     match &node.children[0] {
         Child::Text(e) => Ok(e),
-        Child::Node(_) => Err(Error::new(
+        _other => Err(Error::new(
             node.tag.span(),
-            format!("`<{}>` text must be a string literal or `{{ expr }}`, not a child node", node.tag),
+            format!(
+                "`<{}>` text must be a string literal or `{{ expr }}`, not a child node or control flow",
+                node.tag
+            ),
         )),
     }
 }
@@ -315,13 +500,17 @@ fn node_is_static(node: &Node) -> bool {
         && node.children.iter().all(|c| match c {
             Child::Text(e) => is_literal_expr(e),
             Child::Node(_) => true,
+            // A runtime-built node or control-flow block is, by definition,
+            // not statically known.
+            Child::NodeExpr(_) => false,
+            Child::Control(_) => false,
         });
     if !values_static {
         return false;
     }
     node.children.iter().all(|c| match c {
         Child::Node(n) => node_is_static(n),
-        Child::Text(_) => true,
+        Child::Text(_) | Child::NodeExpr(_) | Child::Control(_) => true,
     })
 }
 
@@ -502,6 +691,32 @@ fn gen_children(
         match child {
             Child::Node(n) => out.push(gen_node_stmt(n, parent, parent_static, id)?),
             Child::Text(e) => out.push(quote! { #parent.text(#e); }),
+            Child::NodeExpr(e) => out.push(quote! { #parent.with(#e); }),
+            Child::Control(ctrl) => match ctrl {
+                Control::If {
+                    cond,
+                    then_children,
+                    else_children,
+                } => {
+                    let then_stmts = gen_children(then_children, parent, parent_static, id)?;
+                    let else_stmts = gen_children(else_children, parent, parent_static, id)?;
+                    out.push(quote! {
+                        if (#cond) {
+                            #(#then_stmts)*
+                        } else {
+                            #(#else_stmts)*
+                        }
+                    });
+                }
+                Control::For { pat, iter, body } => {
+                    let body_stmts = gen_children(body, parent, parent_static, id)?;
+                    out.push(quote! {
+                        for #pat in (#iter) {
+                            #(#body_stmts)*
+                        }
+                    });
+                }
+            },
         }
     }
     Ok(out)
