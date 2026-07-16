@@ -9,3 +9,9 @@ repository.workspace = true
 appfront-core = { path = "../appfront-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[[bin]]
+name = "appfront-mcp-e2e-helper"
+path = "src/e2e_helper.rs"
+test = false
+doc = false

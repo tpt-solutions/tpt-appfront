@@ -5,7 +5,7 @@
 
 use crate::layout::{self, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
 use appfront_core::NodeKind;
-use egui::{Align2, FontId, Pos2, Rect, Sense, Vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use std::rc::Rc;
 use taffy::TaffyTree;
 
@@ -26,24 +26,36 @@ pub fn paint<Msg: Clone>(
     let size = Vec2::new(layout.size.width, layout.size.height);
     let rect = Rect::from_min_size(pos, size);
 
+    // Utility-class styling adapter: honor `bg-*`/`text-*` utilities on canvas
+    // (they were previously a silent no-op here; DOM/HTML already honored them).
+    let style = layout::canvas_style_for(&node.ui.meta.class);
+
     *id_seed += 1;
     let id = egui::Id::new(("appfront_canvas_node", *id_seed));
 
     let mut clicked = false;
     match &node.ui.kind {
-        NodeKind::Container { .. } | NodeKind::List { .. } | NodeKind::Portal { .. } => {}
+        NodeKind::Container { .. } | NodeKind::List { .. } | NodeKind::Portal { .. } => {
+            if let Some(bg) = style.background {
+                ui.painter().rect_filled(rect, 0.0, bg);
+            }
+        }
         NodeKind::Heading { text, level } => {
-            paint_text(ui, pos, text, layout::heading_font_size(*level));
+            paint_text(ui, pos, text, layout::heading_font_size(*level), style.foreground);
             #[cfg(feature = "accesskit")]
             name_accessible_node(ui, rect, id, text, Some(egui::accesskit::Role::Heading));
         }
         NodeKind::Text { text } => {
-            paint_text(ui, pos, text, TEXT_FONT_SIZE);
+            paint_text(ui, pos, text, TEXT_FONT_SIZE, style.foreground);
             #[cfg(feature = "accesskit")]
             name_accessible_node(ui, rect, id, text, None);
         }
         NodeKind::Button { label } => {
-            let response = ui.put(rect, egui::Button::new(label.as_str()));
+            let mut button = egui::Button::new(label.as_str());
+            if let Some(bg) = style.background {
+                button = button.fill(bg);
+            }
+            let response = ui.put(rect, button);
             clicked = response.clicked();
             #[cfg(feature = "accesskit")]
             {
@@ -97,13 +109,14 @@ pub fn paint<Msg: Clone>(
     }
 }
 
-fn paint_text(ui: &egui::Ui, pos: Pos2, text: &str, font_size: f32) {
+fn paint_text(ui: &egui::Ui, pos: Pos2, text: &str, font_size: f32, color: Option<Color32>) {
+    let text_color = color.unwrap_or_else(|| ui.visuals().text_color());
     ui.painter().text(
         pos,
         Align2::LEFT_TOP,
         text,
         FontId::proportional(font_size),
-        ui.visuals().text_color(),
+        text_color,
     );
 }
 
@@ -165,7 +178,7 @@ fn paint_data_grid<Msg>(
             let cell_pos = row_origin
                 + Vec2::new(cell_layout.location.x, cell_layout.location.y)
                 + Vec2::new(CELL_PADDING, CELL_PADDING / 2.0);
-            paint_text(ui, cell_pos, text, TEXT_FONT_SIZE);
+            paint_text(ui, cell_pos, text, TEXT_FONT_SIZE, None);
         }
     }
 }

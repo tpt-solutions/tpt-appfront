@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn plugin_with_state_registers() {
         let mut reg = PluginRegistry::<()>::new();
-        reg.register(ThemePlugin);
+        reg.register_with_state(ThemePlugin, Theme { dark: false });
         assert!(!reg.is_empty());
     }
 

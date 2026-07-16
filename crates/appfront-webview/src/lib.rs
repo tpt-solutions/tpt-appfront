@@ -410,6 +410,15 @@ fn not_found() -> Response<Cow<'static, [u8]>> {
         })
 }
 
+/// Maximum IPC message size accepted before parsing. Mirrors the 16 KiB body
+/// limit on `appfront-server`'s `POST /command` (Phase 10): an unbounded IPC
+/// string would let a hosted page allocate arbitrarily large buffers in the
+/// native process purely by posting oversized messages, so we reject anything
+/// above this ceiling before `serde_json::from_str` runs. Messages are plain
+/// `{action, params, requestId}` JSON, so 16 KiB is ample for any realistic
+/// command while keeping the worst-case parse cost bounded.
+const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
+
 /// Direct (unkeyed) in-process rate limiter for the IPC bridge — there's no
 /// per-client concept here, just one hosted page in one local process.
 type IpcRateLimiter = RateLimiter<
@@ -519,6 +528,36 @@ mod tests {
         handle_ipc(&acl, &limiter, &on_command, r#"{"action":"reset_everything"}"#);
 
         assert!(calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn handle_ipc_rejects_oversized_messages_before_parsing() {
+        let acl = Acl {
+            capabilities: vec![cap("increment", vec![])],
+        };
+        let limiter = new_ipc_rate_limiter(10);
+        let calls = RefCell::new(0u32);
+        let on_command = |_action: &str, _params: serde_json::Value| -> Result<(), String> {
+            *calls.borrow_mut() += 1;
+            Ok(())
+        };
+
+        // Build a message of exactly `MAX_IPC_MESSAGE_BYTES` (accepted) and one
+        // a single byte longer (rejected), by padding the `p` field to the
+        // precise length rather than guessing the JSON overhead.
+        let suffix = "\"}";
+        let prefix = "{\"action\":\"increment\",\"p\":\"";
+        let pad_for = |target: usize| "a".repeat(target.saturating_sub(prefix.len() + suffix.len()));
+
+        let within = format!("{prefix}{}{suffix}", pad_for(MAX_IPC_MESSAGE_BYTES));
+        assert_eq!(within.len(), MAX_IPC_MESSAGE_BYTES, "within.len()");
+        handle_ipc(&acl, &limiter, &on_command, &within);
+        assert_eq!(*calls.borrow(), 1);
+
+        let over = format!("{prefix}{}{suffix}", pad_for(MAX_IPC_MESSAGE_BYTES + 1));
+        assert_eq!(over.len(), MAX_IPC_MESSAGE_BYTES + 1, "over.len()");
+        handle_ipc(&acl, &limiter, &on_command, &over);
+        assert_eq!(*calls.borrow(), 1);
     }
 
     #[test]

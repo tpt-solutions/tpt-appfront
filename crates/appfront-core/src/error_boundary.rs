@@ -74,13 +74,10 @@ pub fn recover_or<Msg: Clone + 'static>(
 }
 
 fn payload_as_string(payload: &Box<dyn std::any::Any + Send>) -> Option<String> {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        Some((*s).to_string())
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        Some(s.clone())
-    } else {
-        None
-    }
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
 }
 
 #[cfg(test)]
@@ -109,13 +106,13 @@ mod tests {
 
     #[test]
     fn primary_ok_returns_primary() {
-        let r = error_boundary(button_ok, fallback_tree);
+        let r = error_boundary(button_ok::<()>, fallback_tree::<()>);
         assert!(matches!(r, BoundaryResult::Ok(_)));
     }
 
     #[test]
     fn panic_recovers_with_fallback() {
-        let r = error_boundary(button_boom, fallback_tree);
+        let r = error_boundary(button_boom::<()>, fallback_tree::<()>);
         match r {
             BoundaryResult::Recovered { fallback, panic } => {
                 let NodeKind::Container { children } = &fallback.kind else {

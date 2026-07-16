@@ -65,7 +65,10 @@ enum Child {
     /// component functions (e.g. `{ my_component(props) }`).
     NodeExpr(Expr),
     /// `{if ...}` / `{for ...}` control flow producing zero or more children.
-    Control(Control),
+    /// Boxed because the `Control` variant holds `Vec<Child>` (which can hold
+    /// further `Control`s), and leaving it inline makes `Child` lopsided enough
+    /// to trip `clippy::large_enum_variant`.
+    Control(Box<Control>),
 }
 
 /// Control-flow constructs recognised inside `{ ... }` child blocks.
@@ -234,6 +237,14 @@ fn parse_children(
     loop {
         match cur.peek() {
             None => {
+                // A control-flow body block is always a `Group`, so its closing
+                // `}` is the *group delimiter* and is not part of the token
+                // stream we iterate here — reaching the end of the group means
+                // the block closed normally. (A genuinely unbalanced `}` is a
+                // token-level error upstream, before we ever get here.)
+                if matches!(close, CloseMode::Brace) {
+                    return Ok(children);
+                }
                 return Err(match &close {
                     CloseMode::Tag(t) => Error::new(
                         t.span(),
@@ -301,7 +312,7 @@ fn parse_children(
                 if let Some(TokenTree::Ident(kw)) = &first {
                     if kw == "if" || kw == "for" {
                         let ctrl = parse_control(stream, g.span())?;
-                        children.push(Child::Control(ctrl));
+                        children.push(Child::Control(Box::new(ctrl)));
                         continue;
                     }
                 }
@@ -360,7 +371,7 @@ fn parse_control(stream: TokenStream, span: Span) -> Result<Control, Error> {
                         // `else if` — parse the remaining tokens as a nested
                         // `if` and wrap it as the sole else child.
                         let rest: TokenStream = cur.toks[cur.pos..].iter().cloned().collect();
-                        vec![Child::Control(parse_control(rest, span)?)]
+                        vec![Child::Control(Box::new(parse_control(rest, span)?))]
                     }
                     Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
                         let g = g.clone();
@@ -692,11 +703,11 @@ fn gen_children(
             Child::Node(n) => out.push(gen_node_stmt(n, parent, parent_static, id)?),
             Child::Text(e) => out.push(quote! { #parent.text(#e); }),
             Child::NodeExpr(e) => out.push(quote! { #parent.with(#e); }),
-            Child::Control(ctrl) => match ctrl {
+            Child::Control(ctrl) => match &**ctrl {
                 Control::If {
-                    cond,
-                    then_children,
-                    else_children,
+                    ref cond,
+                    ref then_children,
+                    ref else_children,
                 } => {
                     let then_stmts = gen_children(then_children, parent, parent_static, id)?;
                     let else_stmts = gen_children(else_children, parent, parent_static, id)?;
@@ -708,7 +719,7 @@ fn gen_children(
                         }
                     });
                 }
-                Control::For { pat, iter, body } => {
+                Control::For { ref pat, ref iter, ref body } => {
                     let body_stmts = gen_children(body, parent, parent_static, id)?;
                     out.push(quote! {
                         for #pat in (#iter) {

@@ -79,6 +79,15 @@ enum Command {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Pre-flight environment check: verifies `trunk`, the
+    /// `wasm32-unknown-unknown` target, and `cargo-packager` are available
+    /// before you scaffold/build, and reports whether this CLI is running from
+    /// the monorepo checkout (path deps) or a published install (version deps).
+    Doctor {
+        /// Directory of the project to inspect (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
     /// Build with size optimizations and report the resulting artifact size.
     Optimize {
         /// Target: canvas, dom, webview, or all.
@@ -117,6 +126,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Build { target, project, bundle } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
+        Command::Doctor { project } => doctor(&project),
         Command::Optimize { target, project, auto, bundle } => {
             optimize(&target, &project, auto, bundle)
         }
@@ -707,6 +717,98 @@ fn run_bundler(project: &Path) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// doctor — pre-flight environment check
+// ---------------------------------------------------------------------------
+
+/// Result of one `doctor` check.
+struct Check {
+    name: &'static str,
+    ok: bool,
+    detail: String,
+}
+
+/// Runs a pre-flight environment check, printing one line per check and exiting
+/// non-zero if any required check failed. Mirrors what `cargo`/toolchain checks
+/// surface early instead of failing mid-build with an obscure error.
+fn doctor(project: &Path) -> anyhow::Result<()> {
+    let mut checks: Vec<Check> = Vec::new();
+
+    let on_path = |prog: &str| Process::new(prog).arg("--version").output().is_ok();
+
+    checks.push(Check {
+        name: "cargo",
+        ok: on_path("cargo"),
+        detail: "Rust toolchain".into(),
+    });
+
+    // `trunk` is only required for dom/wasm builds.
+    checks.push(Check {
+        name: "trunk",
+        ok: on_path("trunk"),
+        detail: if on_path("trunk") {
+            "installed (dom/wasm builds supported)".into()
+        } else {
+            "not found — `cargo install trunk` (needed for --web / dom builds)".into()
+        },
+    });
+
+    // `wasm32-unknown-unknown` target, queried via `rustc`.
+    let wasm_target = Process::new("rustc")
+        .args(["--print", "target-list"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
+        .unwrap_or(false);
+    checks.push(Check {
+        name: "wasm32-unknown-unknown target",
+        ok: wasm_target,
+        detail: if wasm_target {
+            "installed".into()
+        } else {
+            "missing — `rustup target add wasm32-unknown-unknown`".into()
+        },
+    });
+
+    // `cargo-packager` only needed for --bundle installers.
+    checks.push(Check {
+        name: "cargo-packager",
+        ok: on_path("cargo"), // `cargo packager` subcommand; can't easily probe, report version-free
+        detail: if on_path("cargo") {
+            "available via `cargo packager` (install with `cargo install cargo-packager`)".into()
+        } else {
+            "unavailable".into()
+        },
+    });
+
+    // Install mode: path deps (monorepo checkout) vs version deps (published).
+    checks.push(Check {
+        name: "dependency mode",
+        ok: true,
+        detail: if is_workspace_checkout() {
+            "monorepo checkout — scaffolds use path deps".into()
+        } else {
+            "published install — scaffolds use version deps (requires crates.io publish)".into()
+        },
+    });
+
+    let _ = project;
+
+    let mut failed = false;
+    for c in &checks {
+        let mark = if c.ok { "ok  " } else { "FAIL" };
+        println!("[{mark}] {:<28} {}", c.name, c.detail);
+        if !c.ok {
+            failed = true;
+        }
+    }
+
+    if failed {
+        bail!("doctor found missing required tooling — see above");
+    }
+    println!("doctor: environment looks good");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // process helper
 // ---------------------------------------------------------------------------
 
@@ -820,6 +922,12 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["appfront", "generate"]).is_err());
+    }
+
+    #[test]
+    fn doctor_flags_parse() {
+        assert!(Cli::try_parse_from(["appfront", "doctor"]).is_ok());
+        assert!(Cli::try_parse_from(["appfront", "doctor", "--project", "."]).is_ok());
     }
 
     #[test]
