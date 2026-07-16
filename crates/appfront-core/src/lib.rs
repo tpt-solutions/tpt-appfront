@@ -1,11 +1,18 @@
 pub mod agent;
+pub mod context;
 pub mod devtools;
 pub mod reconcile;
+pub mod resource;
+pub mod router;
 pub mod signal;
 pub mod static_tree;
 pub mod styling;
 pub mod ui_tree;
 pub mod virtual_scroll;
+
+pub use context::{provide_context, use_context, Context};
+pub use resource::{Resource, ResourceState};
+pub use router::{Route, RouteTable, Router};
 
 /// Tailwind-style utility-class macro.
 ///

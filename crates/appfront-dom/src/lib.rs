@@ -16,19 +16,26 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use appfront_core::{HydrationPayload, NodeKind, UITree};
+use appfront_core::{create_effect, HydrationPayload, NodeKind, Router, UITree};
 use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, Node};
 
-/// Renders `ui` into real DOM nodes and appends them to `container`.
-/// `dispatch` is called with a cloned `Msg` whenever a bound event fires
-/// (e.g. `on_click`).
-pub fn mount<Msg>(
+/// Renders a [`Router`] into `container`, wiring it to the browser's History
+/// API so navigation updates the URL and the back/forward buttons re-render.
+///
+/// On every route change (whether triggered by [`Router::navigate`] or by the
+/// browser's `popstate`), the router's current view is re-rendered, replacing
+/// the container's previous contents. `dispatch` routes `Msg`s from the
+/// rendered view back to the app.
+///
+/// Returns an [`EffectHandle`](appfront_core::EffectHandle); keep it alive for
+/// the lifetime of the page (it is intentionally leaked on first mount).
+pub fn mount_router<Msg>(
     container: &Element,
-    ui: &UITree<Msg>,
+    router: &Router<Msg>,
     dispatch: Rc<dyn Fn(Msg)>,
 ) -> Result<(), wasm_bindgen::JsValue>
 where
@@ -38,9 +45,55 @@ where
         .expect("no window")
         .document()
         .expect("no document");
-    let node = render_node(&document, ui, &dispatch)?;
-    container.append_child(&node)?;
+
+    // Sync browser URL -> router on back/forward.
+    {
+        let router = router.clone();
+        let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_ev: web_sys::Event| {
+            let path = web_sys::window()
+                .and_then(|w| w.location().pathname().ok())
+                .unwrap_or_else(|| "/".to_string());
+            router.navigate(&path);
+        });
+        web_sys::window()
+            .expect("no window")
+            .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref())?;
+        closure.forget();
+    }
+
+    // Router -> DOM render loop.
+    let router = router.clone();
+    let dispatch = Rc::clone(&dispatch);
+    let container = container.clone();
+    let render = {
+        let router = router.clone();
+        move || {
+            let view = router.current_view();
+            // Replace the container's children with the freshly-rendered view.
+            while let Some(child) = container.first_child() {
+                let _ = container.remove_child(&child);
+            }
+            if let Ok(node) = render_node(&document, &view, &dispatch) {
+                let _ = container.append_child(&node);
+            }
+        }
+    };
+
+    // The effect runs `render` immediately, then on every navigation.
+    let _handle = create_effect(render);
+    std::mem::forget(_handle);
     Ok(())
+}
+
+/// Navigates the router and syncs the browser URL via `history.pushState`,
+/// so the address bar and back/forward buttons reflect the new route.
+pub fn navigate_path<Msg>(router: &Router<Msg>, path: &str) {
+    if let Some(window) = web_sys::window() {
+        if let Ok(history) = window.history() {
+            let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path));
+        }
+    }
+    router.navigate(path);
 }
 
 fn render_node<Msg>(

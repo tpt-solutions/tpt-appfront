@@ -580,11 +580,12 @@ pub fn expand(input: TokenStream) -> Result<TokenStream, Error> {
         quote! { #(#inner)* }
     };
 
-    Ok(quote! {
+    let out = quote! {
         {
             let mut __ui = UITree::container(|#root_param| { #body });
             #root_stmts
             __ui
         }
-    })
+    };
+    Ok(out)
 }

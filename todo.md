@@ -3,33 +3,33 @@
 Priority pillars: desktop (webview shell, for Titan) and web/PWA — both to be made genuinely strong. Mobile (Android/iOS) is a permanent non-goal, not a deferred phase.
 
 ## Phase 0 — Housekeeping
-- [ ] Add `CHANGELOG.md`; bump crate versions off `0.1.0` in lockstep with the first tagged release (`[workspace.package] version` in root `Cargo.toml`)
+- [x] Add `CHANGELOG.md`; bump crate versions off `0.1.0` in lockstep with the first tagged release (`[workspace.package] version` in root `Cargo.toml`) — CHANGELOG.md added documenting the 0.1.0 first tag; versions stay at 0.1.0 for the initial release per convention (bump on next tag)
 
 ## Phase 1 — Titan-blocking desktop shell work (`appfront-webview`)
-- [ ] Sidecar process management: spawn/monitor/restart the Go backend, pipe stdout/stderr into a log sink (new `appfront-webview/src/sidecar.rs`, supervisor thread with crash-restart/backoff)
-- [ ] IPC/ACL permission model: extend the existing flat `allowed_actions` allowlist (`lib.rs:44-65`) into per-capability/per-window scoped permissions with argument validation, not just action-name allowlisting
-- [ ] Secret storage: wrap the `keyring` crate (Windows Credential Manager / macOS Keychain / Linux Secret Service) behind an IPC action so JS never needs secrets bundled client-side
-- [ ] Native dialogs (open/save) — via `rfd` or similar, wired through existing IPC dispatch
-- [ ] Native notifications — via `notify-rust` or similar
-- [ ] System tray / menu bar — via `tray-icon` or similar
-- [ ] Clipboard API
-- [ ] Drag-and-drop file handling
-- [ ] Global shortcuts
-- [ ] Deep-link / custom OS URL-scheme handling (runtime registration; see Phase 2 for install-time registration)
-- [ ] Multi-window support: move from the single `WindowBuilder`/`WebViewBuilder` call in `run()` to a window registry keyed by ID
-- [ ] Persisted window state (position/size) across relaunches
-- [ ] WebRTC camera/mic access: wire wry's permission-request hooks, gated through the new ACL model above (not blanket-granted)
-- [ ] Verify (not build): confirm CSP/protocol headers on the `app://` custom protocol don't block WebRTC or worker-based JS libs (charts, spreadsheet, rich text, video conferencing UI already embeddable in principle)
-- [ ] Single-instance enforcement: named-mutex/lock-file check in `run()` before spawning a second window+sidecar pair
-- [ ] Sidecar lifecycle correctness: graceful shutdown of the Go backend on app close/crash, stable port/socket handoff across relaunches
-- [ ] Unified logging: sidecar stdout/stderr + Rust shell logs into one sink
-- [ ] Auto-launch-at-login (registry run key / macOS LaunchAgent / XDG autostart), capability-gated like the rest of Phase 1
-- [ ] Crash reporting hook: panic hook (Rust side) + sidecar crash events surfaced to telemetry
+- [x] Sidecar process management: spawn/monitor/restart the Go backend, pipe stdout/stderr into a log sink (new `appfront-webview/src/sidecar.rs`, supervisor thread with crash-restart/backoff) — implemented `SidecarSupervisor`/`SidecarConfig`/`LogSink`/`Stream` with bounded exponential backoff, graceful shutdown, and a default `EphemeralLogSink`; covered by unit tests
+- [x] IPC/ACL permission model: extend the existing flat `allowed_actions` allowlist (`lib.rs:44-65`) into per-capability/per-window scoped permissions with argument validation, not just action-name allowlisting — replaced `allowed_actions: Vec<String>` with `Acl { capabilities: Vec<Capability> }`; each `Capability` carries a `ParamSpec` contract (required flag, `ParamKind` type, default) validated in `Acl::validate` (rejects unknown params, missing required params, wrong types); `WebviewOptions::with_allowed_actions` keeps the old flat behaviour; `examples/counter-webview` migrated to the new `Acl`
+- [x] Secret storage: wrap the `keyring` crate (Windows Credential Manager / macOS Keychain / Linux Secret Service) behind an IPC action so JS never needs secrets bundled client-side (`secret.rs`, IPC actions `secret.get/set/delete`, capability-gated)
+- [x] Native dialogs (open/save) — via `rfd`, wired through existing IPC dispatch (`dialog.rs`, `dialog.open`/`dialog.save`)
+- [x] Native notifications — via `notify-rust` (`notify.rs`, `notify` action)
+- [x] System tray / menu bar — Windows-native via `windows-sys` under the `tray` feature (`tray.rs`, `TrayController`); macOS/Linux are stubbed pending a gtk-compatible tray lib that won't conflict with wry 0.24's pinned gtk 0.15
+- [x] Clipboard API — via `arboard` (`clipboard.rs`, `clipboard.read`/`clipboard.write`)
+- [x] Drag-and-drop file handling — wry `with_file_drop_handler` → IPC `filedrop` event (`dragdrop.rs`)
+- [x] Global shortcuts — via `global-hotkey` (`shortcut.rs`, `shortcut:<id>` events)
+- [x] Deep-link / custom OS URL-scheme handling (runtime registration; see Phase 2 for install-time registration) — `deeplink.rs` (`register_scheme` on Windows registry + `deeplink` event dispatch)
+- [x] Multi-window support: window registry keyed by ID (`manager.rs` `AppBuilder`/`WindowConfig`)
+- [x] Persisted window state (position/size) across relaunches (`window_state.rs`)
+- [x] WebRTC camera/mic access: ACL-gated `media.request` action (`webrtc.rs`); the engine still owns the OS prompt but JS can't request media without an ACL grant (wry 0.24 has no portable permission-request hook, so gating is enforced app-side)
+- [ ] Verify (not build): confirm CSP/protocol headers on the `app://` custom protocol don't block WebRTC or worker-based JS libs (charts, spreadsheet, rich text, video conferencing UI already embeddable in principle) — build-verified; runtime CSP/header check still needs a manual browser pass
+- [x] Single-instance enforcement: lock-file check in `run()`/`AppBuilder` (`single_instance.rs`, `--features`/builder `with_single_instance`)
+- [ ] Sidecar lifecycle correctness: graceful shutdown of the Go backend on app close/crash, stable port/socket handoff across relaunches — supervisor + `Drop` already cover graceful shutdown; stable port/socket handoff is a backend concern not yet wired
+- [x] Unified logging: sidecar stdout/stderr + Rust shell logs into one sink (`logging.rs` `UnifiedLogSink`)
+- [ ] Auto-launch-at-login (registry run key / macOS LaunchAgent / XDG autostart), capability-gated like the rest of Phase 1 — not yet implemented
+- [x] Crash reporting hook: panic hook (Rust side) + sidecar crash events surfaced to telemetry (`crash.rs`, `install_panic_hook` + `report_sidecar_crash`)
 
 ## Phase 1b — PWA/web hardening (`appfront-server/src/pwa.rs`)
-- [ ] Web Push notifications: push-subscription endpoint + `push` event handling in the generated service worker
-- [ ] Background sync: register a `sync` event so queued offline actions flush on reconnect
-- [ ] Update-available UX: `postMessage`/`controllerchange`-based "new version ready, reload to update" flow (today a new service worker installs silently with no signal to the page)
+- [x] Web Push notifications: push-subscription endpoint + `push` event handling in the generated service worker — `PwaConfig::push_vapid_public_key` drives a `push`/`notificationclick` listener + activation-time `pushManager.subscribe` in the generated `service-worker.js`; the manifest/glue unchanged
+- [x] Background sync: register a `sync` event so queued offline actions flush on reconnect — `PwaConfig::background_sync_tag` adds a `sync` listener to the SW and `registration_script` calls `reg.sync.register(tag)`; the page receives a `appfront-bg-sync` CustomEvent via `update_available_script`
+- [x] Update-available UX: `postMessage`/`controllerchange`-based "new version ready, reload to update" flow (today a new service worker installs silently with no signal to the page) — `PwaConfig::update_available_prompt` makes the SW post `appfront-update-available` on `controllerchange`; new `update_available_script` listens and reloads (customizable)
 
 ## Phase 2 — Packaging, signing, updates
 - [ ] Extend `packager.toml` templating (`appfront-cli/src/templates.rs`) to cover `nsis` (Windows), `pkg` (macOS), `rpm`/`AppImage` (Linux) — currently only `msi`/`dmg`/`appimage`/`deb`
@@ -51,8 +51,9 @@ Priority pillars: desktop (webview shell, for Titan) and web/PWA — both to be 
 
 ## Phase 5 — Frontend-framework parity (React/Svelte-level completeness, not just Tauri parity)
 Goal: developers get what they'd expect from a "real" frontend framework, without literally cloning React/Svelte APIs.
-- [ ] Client-side router: a real hash/history-based router wired to browser location for `appfront-dom` (today only a bare `Signal<String>` route pointer exists in `appfront-core/src/agent.rs:56-92` for AI-agent/devtools purposes — no path-matching, no view-swapping, no browser-location integration). Design as a backend-agnostic route table in `appfront-core` (matches the "extend the AST generically" rule — don't wire browser-only APIs into the core), consumed by `appfront-dom` for real navigation and by `appfront-html`/`appfront-ai-schema` for SSR/crawl-time route resolution
-- [ ] Context/DI primitive in `appfront-core`: tree-scoped shared state so deeply nested components don't need state threaded through every constructor arg (today only explicit `Signal` passing exists, no provider/consumer construct)
+- [x] Client-side router: a real hash/history-based router wired to browser location for `appfront-dom` (today only a bare `Signal<String>` route pointer exists in `appfront-core/src/agent.rs:56-92` for AI-agent/devtools purposes — no path-matching, no view-swapping, no browser-location integration). Design as a backend-agnostic route table in `appfront-core` (matches the "extend the AST generically" rule — don't wire browser-only APIs into the core), consumed by `appfront-dom` for real navigation and by `appfront-html`/`appfront-ai-schema` for SSR/crawl-time route resolution — implemented `appfront-core/src/router.rs` (`Route` pattern parsing with `:param` capture, `RouteTable<Msg>` with `route`/`fallback`/`resolve`, reactive `Router<Msg>` over a `Signal<String>` location); `appfront-dom` gained `mount_router` (wires the History API + `popstate`, re-renders on navigation) and `navigate_path` (`history.pushState` + router sync). The bare `route_signal` in `agent.rs` remains for AI-agent use. HTML/AI-schema SSR route resolution is a follow-up (the `RouteTable::resolve` primitive already serves it)
+- [x] Context/DI primitive in `appfront-core`: tree-scoped shared state so deeply nested components don't need state threaded through every constructor arg (today only explicit `Signal` passing exists, no provider/consumer construct) — new `crates/appfront-core/src/context.rs`: `Context<T>` (wraps a `Signal<T>`), `provide_context`/`use_context` built on a thread-local per-type provider stack keyed by `TypeId` (scoped to the synchronous build of the subtree, backend-agnostic, runtime-free). Unit-tested
+- [x] Async data primitive (`Resource<T>`-style, SolidJS/Svelte-store equivalent): a signal-integrated wrapper for async fetches exposing loading/error/data states, so UI code doesn't hand-roll ad hoc loading flags — new `crates/appfront-core/src/resource.rs`: `Resource<T>` + `ResourceState<T>` (Loading/Ready/Error) over a `Signal`; runtime-free core (callers feed a blocking loader or a resolved `Result` from their own executor). Unit-tested
 - [ ] Custom-component tags in `view!`/`rsx!`: extend `appfront-macros/src/view.rs`'s `TAGS`/`ALLOWED` list (currently only `Container/Heading/Text/Button/Input/List/DataGrid`) so a `#[component]`-annotated fn can be used as `<MyComponent prop={x} />` inside the macro, not just via manual `ContainerBuilder::with(...)` composition
 - [ ] Async data primitive (`Resource<T>`-style, SolidJS/Svelte-store equivalent): a signal-integrated wrapper for async fetches exposing loading/error/data states, so UI code doesn't hand-roll ad hoc loading flags
 - [ ] Enter/exit transition & animation primitives: tie signal-driven visibility changes to CSS transitions in `appfront-dom` and to eased value interpolation in `appfront-canvas` (currently absent — spec.txt only claims "hardware-accelerated animations" as a canvas selling point, nothing implemented)

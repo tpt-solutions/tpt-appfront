@@ -8,7 +8,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
 
 use crate::client_kind::{self, ClientKind};
-use crate::pwa::{manifest, manifest_link, registration_script, service_worker};
+use crate::pwa::{manifest, manifest_link, registration_script, service_worker, update_available_script};
 use crate::router::command::{Command, CommandResponse};
 use crate::router::SmartRouter;
 
@@ -239,6 +239,7 @@ fn inject_pwa<Msg>(
     if state.pwa.is_none() {
         return page;
     }
+    let cfg = state.pwa.as_ref().unwrap();
     if let Some(head_end) = page.find("</head>") {
         page.insert_str(
             head_end,
@@ -248,7 +249,11 @@ fn inject_pwa<Msg>(
     if let Some(body_end) = page.rfind("</body>") {
         page.insert_str(
             body_end,
-            &format!("\n    {}", registration_script(nonce)),
+            &format!(
+                "\n    {}\n    {}",
+                registration_script(cfg, nonce),
+                update_available_script(nonce),
+            ),
         );
     }
     page

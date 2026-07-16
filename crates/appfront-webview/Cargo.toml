@@ -5,9 +5,35 @@ edition = "2021"
 license = "Apache-2.0"
 publish = false
 
+[features]
+# Optional native integrations. The default feature set keeps the crate
+# building against wry 0.24's pinned gtk 0.15 on Linux; tray support has no
+# portable cross-gtk dependency and is opt-in / platform-gated.
+default = []
+tray = ["dep:windows-sys"]
+
 [dependencies]
 appfront-core = { path = "../appfront-core" }
 anyhow = "1"
 serde_json = "1"
+serde = { workspace = true }
 wry = "0.24"
 governor = "0.6"
+
+rfd = "0.15"
+notify-rust = "4"
+keyring = "3"
+arboard = "3"
+global-hotkey = "0.6"
+crossbeam-channel = "0.5"
+url = "2"
+winreg = "0.52"
+dirs = "6"
+fs4 = { version = "0.12", features = ["sync"] }
+
+# Only pulled when the `tray` feature is enabled (Windows native tray).
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Foundation",
+], optional = true }
