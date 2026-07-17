@@ -382,13 +382,26 @@ impl AppBuilder {
                 ..
             } = event
             {
-                // Persist geometry for each window before exit.
+                // Persist geometry for each window before exit, reading the
+                // live window bounds rather than re-saving what was loaded.
                 if persisted {
                     for id in &built_windows {
-                        if let Some(wv) = registry.borrow().get(id) {
-                            let _ = wv; // geometry capture would read window bounds here
-                        }
-                        window_state::save(&app_id, id, &window_state::load(&app_id, id));
+                        let geo = match registry.borrow().get(id) {
+                            Some(wv) => {
+                                let window = wv.window();
+                                let scale = window.scale_factor();
+                                let pos = window.outer_position().ok();
+                                let size = window.inner_size().to_logical::<u32>(scale);
+                                window_state::WindowGeometry {
+                                    x: pos.as_ref().map(|p| p.x),
+                                    y: pos.as_ref().map(|p| p.y),
+                                    width: size.width,
+                                    height: size.height,
+                                }
+                            }
+                            None => window_state::load(&app_id, id),
+                        };
+                        window_state::save(&app_id, id, &geo);
                     }
                 }
                 *control_flow = ControlFlow::Exit;

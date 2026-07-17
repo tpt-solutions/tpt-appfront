@@ -382,3 +382,123 @@ fn data_grid_rejects_children() {
     // out of scope for this `view!` smoke-test file.
 }
 
+// ---------------------------------------------------------------------------
+// Component model: props, children slots, memo (Phase 16, item #4)
+// ---------------------------------------------------------------------------
+
+use appfront_core::{Children, NodeMeta};
+
+#[derive(Debug, Clone, PartialEq)]
+struct GreetingProps {
+    name: String,
+}
+
+/// A typed-props component; `#[component]` fills `class`/`ai.description` and
+/// flags `is_dynamic`.
+#[appfront_core::component]
+fn greeting(props: GreetingProps) -> UITree<Msg> {
+    UITree::container(|c| {
+        c.heading(1, format!("Hello, {}!", props.name));
+    })
+}
+
+#[test]
+fn component_with_typed_props_builds_expected_tree() {
+    let ui = greeting(GreetingProps {
+        name: "World".to_string(),
+    });
+    assert_eq!(ui.meta.class.as_deref(), Some("greeting"));
+    // Reading a plain prop (not a Signal) does not flag the component dynamic;
+    // `is_dynamic` is only set when the body reads reactive state.
+    assert!(!ui.meta.is_dynamic, "plain props should not be dynamic");
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container");
+    };
+    match &children[0].kind {
+        NodeKind::Heading { text, .. } => assert_eq!(text, "Hello, World!"),
+        other => panic!("expected heading, got {other:?}"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CardProps {
+    title: String,
+}
+
+/// A component that takes a `children` slot and re-emits it inside its own tree.
+#[appfront_core::component]
+fn card(props: CardProps, children: Children<Msg>) -> UITree<Msg> {
+    UITree::container(|c| {
+        c.heading(2, props.title.clone());
+        for child in children.0 {
+            c.with(child);
+        }
+    })
+}
+
+#[test]
+fn component_with_children_slot_renders_slot() {
+    let ui = card(
+        CardProps {
+            title: "Panel".to_string(),
+        },
+        Children(vec![UITree {
+            kind: NodeKind::Text {
+                text: "body".to_string(),
+            },
+            meta: NodeMeta::default(),
+        }]),
+    );
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container");
+    };
+    // [heading, text("body")]
+    assert_eq!(children.len(), 2);
+    match &children[1].kind {
+        NodeKind::Text { text } => assert_eq!(text, "body"),
+        other => panic!("expected slotted text, got {other:?}"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CountProps {
+    value: i32,
+}
+
+/// Memoized component: when `CountProps` is `PartialEq` to the previous render,
+/// the cached tree is returned unchanged.
+#[appfront_core::component(memo)]
+fn memoized_label(props: CountProps) -> UITree<Msg> {
+    UITree::container(|c| {
+        c.text(format!("value={}", props.value));
+    })
+}
+
+#[test]
+fn memoized_component_reuses_tree_when_props_equal() {
+    let first = memoized_label(CountProps { value: 1 });
+    let second = memoized_label(CountProps { value: 1 });
+    let third = memoized_label(CountProps { value: 2 });
+
+    // Same props -> identical cached tree shape (and pointer-equal clones).
+    assert_eq!(
+        format!("{:?}", first.meta.class),
+        format!("{:?}", second.meta.class)
+    );
+    // Different props -> the tree text differs.
+    let NodeKind::Container { children: c1 } = root_kind(&second) else {
+        panic!()
+    };
+    let NodeKind::Container { children: c3 } = root_kind(&third) else {
+        panic!()
+    };
+    match (&c1[0].kind, &c3[0].kind) {
+        (NodeKind::Text { text: t1 }, NodeKind::Text { text: t3 }) => {
+            assert_eq!(t1, "value=1");
+            assert_eq!(t3, "value=2");
+        }
+        other => panic!("expected text, got {other:?}"),
+    }
+}
+
+

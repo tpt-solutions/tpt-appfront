@@ -67,7 +67,7 @@ thread_local! {
 pub fn memoize<P, Msg, F>(id: u64, key: P, build: F) -> UITree<Msg>
 where
     P: PartialEq + Clone + 'static,
-    Msg: 'static,
+    Msg: Clone + 'static,
     F: FnOnce(&P) -> UITree<Msg>,
 {
     MEMO_CACHE.with(|cache| {

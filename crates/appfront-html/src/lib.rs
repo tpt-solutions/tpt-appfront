@@ -86,6 +86,58 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             attr(buf, "value", value);
             buf.push_str(" />");
         }
+        NodeKind::Textarea { value } => {
+            buf.push_str("<textarea");
+            attrs(buf, ui);
+            buf.push('>');
+            buf.push_str(&esc_text(value));
+            close_tag(buf, "textarea");
+        }
+        NodeKind::Checkbox { label, checked } => {
+            buf.push_str("<label");
+            attrs(buf, ui);
+            buf.push_str("><input type=\"checkbox\"");
+            if *checked {
+                buf.push_str(" checked");
+            }
+            buf.push_str(" /> ");
+            buf.push_str(&esc_text(label));
+            close_tag(buf, "label");
+        }
+        NodeKind::Select { options, selected } => {
+            buf.push_str("<select");
+            attrs(buf, ui);
+            buf.push('>');
+            for (value, label) in options {
+                buf.push_str("<option value=\"");
+                buf.push_str(&esc_attr(value));
+                buf.push('"');
+                if value == selected {
+                    buf.push_str(" selected");
+                }
+                buf.push('>');
+                buf.push_str(&esc_text(label));
+                buf.push_str("</option>");
+            }
+            close_tag(buf, "select");
+        }
+        NodeKind::Radio { name, options, selected } => {
+            open_tag(buf, "div", ui);
+            for (value, label) in options {
+                buf.push_str("<label><input type=\"radio\" name=\"");
+                buf.push_str(&esc_attr(name));
+                buf.push_str("\" value=\"");
+                buf.push_str(&esc_attr(value));
+                buf.push('"');
+                if value == selected {
+                    buf.push_str(" checked");
+                }
+                buf.push_str(" /> ");
+                buf.push_str(&esc_text(label));
+                buf.push_str("</label>");
+            }
+            close_tag(buf, "div");
+        }
         NodeKind::List { items } => {
             open_tag(buf, "ul", ui);
             for item in items {
@@ -364,6 +416,25 @@ mod tests {
         assert!(html.contains("<table>"));
         assert!(html.contains("<th>A</th>"));
         assert!(html.contains("<td>1</td>"));
+    }
+
+    #[test]
+    fn renders_form_controls() {
+        let ui = appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.textarea("notes");
+            c.checkbox("Agree", true);
+            c.select([("a", "Alpha"), ("b", "Beta")], "b");
+            c.radio_group("color", [("r", "Red"), ("g", "Green")], "g");
+        });
+        let html = render(&ui);
+        assert!(html.contains("<textarea"), "{html}");
+        assert!(html.contains(">notes</textarea>"), "{html}");
+        assert!(html.contains("type=\"checkbox\" checked"), "{html}");
+        assert!(html.contains("<option value=\"b\" selected>Beta</option>"), "{html}");
+        assert!(
+            html.contains("name=\"color\" value=\"g\" checked"),
+            "{html}"
+        );
     }
 
     fn ui_tree() -> appfront_core::UITree<Msg> {

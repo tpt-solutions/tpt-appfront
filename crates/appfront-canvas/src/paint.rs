@@ -88,6 +88,54 @@ pub fn paint<Msg: Clone>(
                 _response.set_accessible_name(name);
             }
         }
+        NodeKind::Textarea { value } => {
+            let mut value = value.clone();
+            let _response = ui.put(rect, egui::TextEdit::multiline(&mut value));
+            #[cfg(feature = "accesskit")]
+            {
+                let name = node
+                    .ui
+                    .meta
+                    .ai
+                    .description
+                    .clone()
+                    .or_else(|| node.ui.meta.class.clone())
+                    .unwrap_or_else(|| format!("Text area: {value}"));
+                _response.set_accessible_name(name);
+            }
+        }
+        NodeKind::Checkbox { label, checked } => {
+            let mut checked = *checked;
+            let _response = ui.put(rect, egui::Checkbox::new(&mut checked, label.as_str()));
+            #[cfg(feature = "accesskit")]
+            _response.set_accessible_name(label.as_str());
+        }
+        NodeKind::Select { options, selected } => {
+            let label = options
+                .iter()
+                .find(|(v, _)| v == selected)
+                .map(|(_, l)| l.as_str())
+                .unwrap_or(selected.as_str());
+            paint_text(ui, pos, &format!("{label} \u{25be}"), TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, label, None);
+        }
+        NodeKind::Radio { options, selected, .. } => {
+            let text: String = options
+                .iter()
+                .map(|(v, l)| {
+                    if v == selected {
+                        format!("(*) {l}")
+                    } else {
+                        format!("( ) {l}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("   ");
+            paint_text(ui, pos, &text, TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, &text, None);
+        }
         NodeKind::DataGrid { columns, rows } => {
             paint_data_grid(ui, tree, node, pos, columns, rows);
         }
@@ -238,6 +286,10 @@ mod tests {
                 l.text("item one");
                 l.text("item two");
             });
+            c.textarea("notes");
+            c.checkbox("Agree", true);
+            c.select([("a", "Alpha"), ("b", "Beta")], "b");
+            c.radio_group("color", [("r", "Red"), ("g", "Green")], "g");
         });
         let ctx = egui::Context::default();
         let dispatched = run_paint_frame(&ctx, &ui, RawInput::default());

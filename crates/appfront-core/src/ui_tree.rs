@@ -22,6 +22,29 @@ pub enum NodeKind<Msg> {
     Text { text: String },
     Button { label: String },
     Input { value: String },
+    /// Multi-line text input.
+    Textarea { value: String },
+    /// A single boolean toggle, e.g. `<input type="checkbox">`. Two-way bound
+    /// via [`NodeMeta::on_toggle`] rather than [`NodeMeta::on_input`] since its
+    /// value is a `bool`, not a `String`.
+    Checkbox { label: String, checked: bool },
+    /// A single-choice dropdown. `options` is `(value, label)` pairs;
+    /// `selected` is the currently-chosen option's `value`. Two-way bound via
+    /// [`NodeMeta::on_input`] (the new selected value).
+    Select {
+        options: Vec<(String, String)>,
+        selected: String,
+    },
+    /// A single-choice radio button group. `name` groups the individual radio
+    /// inputs so selecting one clears the others — required by HTML's radio
+    /// semantics and mirrored by non-DOM backends for consistency. `options`
+    /// is `(value, label)` pairs; `selected` is the currently-chosen value.
+    /// Two-way bound via [`NodeMeta::on_input`].
+    Radio {
+        name: String,
+        options: Vec<(String, String)>,
+        selected: String,
+    },
     List { items: Vec<UITree<Msg>> },
     DataGrid {
         columns: Vec<String>,
@@ -52,8 +75,9 @@ pub struct AiMeta {
     pub description: Option<String>,
 }
 
-/// Two-way-binding callback for `Input` nodes: takes the input's new string
-/// value (known only once the change event fires) and produces a `Msg` to
+/// Two-way-binding callback for string-valued form nodes (`Input`,
+/// `Textarea`, `Select`, `Radio`): takes the control's new string value
+/// (known only once the change event fires) and produces a `Msg` to
 /// dispatch, mirroring `on_click`'s dispatch pattern but parameterized by a
 /// runtime value instead of a value baked in at tree-build time. `Arc<dyn Fn
 /// + Send + Sync>` (not `Rc`) — same reasoning as
@@ -62,12 +86,23 @@ pub struct AiMeta {
 /// which requires every field to be `Send + Sync`.
 pub type OnInput<Msg> = std::sync::Arc<dyn Fn(String) -> Msg + Send + Sync>;
 
+/// Two-way-binding callback for `Checkbox` nodes: takes the checkbox's new
+/// `checked` state and produces a `Msg` to dispatch. Separate from
+/// [`OnInput`] since a checkbox's value is a `bool`, not a `String`.
+pub type OnToggle<Msg> = std::sync::Arc<dyn Fn(bool) -> Msg + Send + Sync>;
+
 /// `#[serde(default = "...")]` target for [`NodeMeta::on_input`]. Needed
 /// because plain `#[serde(skip)]` makes serde's derive require `Msg:
 /// Default` (it infers the bound from the field's generic parameters, not
 /// realizing `Option<T>: Default` doesn't actually need `T: Default`) —
 /// spelling out the default function sidesteps that overly-strict inference.
 fn on_input_default<Msg>() -> Option<OnInput<Msg>> {
+    None
+}
+
+/// `#[serde(default = "...")]` target for [`NodeMeta::on_toggle`] — see
+/// [`on_input_default`] for why this can't just be `#[serde(skip)]`.
+fn on_toggle_default<Msg>() -> Option<OnToggle<Msg>> {
     None
 }
 
@@ -82,6 +117,10 @@ pub struct NodeMeta<Msg> {
     /// don't consume it yet.
     #[serde(skip, default = "on_input_default")]
     pub on_input: Option<OnInput<Msg>>,
+    /// See [`OnToggle`]. Two-way binding for `Checkbox` nodes; not
+    /// serializable, same reasoning as `on_input`.
+    #[serde(skip, default = "on_toggle_default")]
+    pub on_toggle: Option<OnToggle<Msg>>,
     pub ai: AiMeta,
     /// Stable identifier assigned before SSR so the client hydrator can match
     /// server-rendered DOM nodes back to their `UITree` counterpart.
@@ -95,6 +134,14 @@ pub struct NodeMeta<Msg> {
     /// (see Phase 9 islands hydration).
     #[serde(default)]
     pub is_dynamic: bool,
+    /// Arbitrary key/value attributes rendered verbatim by backends. Used for
+    /// accessibility (`role`, `aria-*`, `tabindex`), semantic landmarks
+    /// (`aria-label`, `role="navigation"`), and any backend-specific attribute
+    /// that has no first-class `NodeMeta` field. Serialized as-is, so values
+    /// must be `String` (no closures). Backends render these as DOM attributes
+    /// (HTML/SSR), and ignore the ones they don't model (canvas/TUI).
+    #[serde(default)]
+    pub attrs: Vec<(String, String)>,
     /// Stable identity for reconciliation, e.g. a row/entity id. Set via
     /// [`NodeRef::key`] on items inside a [`NodeKind::List`]/[`NodeKind::DataGrid`]
     /// so backends can diff add/remove/reorder against a previous render
@@ -113,9 +160,11 @@ impl<Msg> Default for NodeMeta<Msg> {
             class: None,
             on_click: None,
             on_input: None,
+            on_toggle: None,
             ai: AiMeta::default(),
             data_appfront_id: None,
             is_dynamic: false,
+            attrs: Vec::new(),
             key: None,
             virtual_scroll: None,
         }
@@ -131,6 +180,7 @@ impl<Msg: std::fmt::Debug> std::fmt::Debug for NodeMeta<Msg> {
             .field("class", &self.class)
             .field("on_click", &self.on_click)
             .field("on_input", &self.on_input.as_ref().map(|_| "<fn>"))
+            .field("on_toggle", &self.on_toggle.as_ref().map(|_| "<fn>"))
             .field("ai", &self.ai)
             .field("data_appfront_id", &self.data_appfront_id)
             .field("is_dynamic", &self.is_dynamic)
@@ -254,7 +304,11 @@ impl<Msg> UITree<Msg> {
                 | NodeKind::Heading { .. }
                 | NodeKind::Text { .. }
                 | NodeKind::Button { .. }
-                | NodeKind::Input { .. } => {}
+                | NodeKind::Input { .. }
+                | NodeKind::Textarea { .. }
+                | NodeKind::Checkbox { .. }
+                | NodeKind::Select { .. }
+                | NodeKind::Radio { .. } => {}
             }
         }
         walk(self, &mut 1);
@@ -356,6 +410,56 @@ impl<Msg> ContainerBuilder<Msg> {
         })
     }
 
+    /// A multi-line text input. Two-way bound via [`NodeRef::on_input`].
+    pub fn textarea(&mut self, value: impl Into<String>) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Textarea {
+            value: value.into(),
+        })
+    }
+
+    /// A boolean toggle. Two-way bound via [`NodeRef::on_toggle`].
+    pub fn checkbox(&mut self, label: impl Into<String>, checked: bool) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Checkbox {
+            label: label.into(),
+            checked,
+        })
+    }
+
+    /// A single-choice dropdown. `options` is `(value, label)` pairs.
+    /// Two-way bound via [`NodeRef::on_input`] (the newly selected value).
+    pub fn select(
+        &mut self,
+        options: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+        selected: impl Into<String>,
+    ) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Select {
+            options: options
+                .into_iter()
+                .map(|(v, l)| (v.into(), l.into()))
+                .collect(),
+            selected: selected.into(),
+        })
+    }
+
+    /// A single-choice radio button group sharing `name`. `options` is
+    /// `(value, label)` pairs. Two-way bound via [`NodeRef::on_input`] (the
+    /// newly selected value).
+    pub fn radio_group(
+        &mut self,
+        name: impl Into<String>,
+        options: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+        selected: impl Into<String>,
+    ) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Radio {
+            name: name.into(),
+            options: options
+                .into_iter()
+                .map(|(v, l)| (v.into(), l.into()))
+                .collect(),
+            selected: selected.into(),
+        })
+    }
+
     pub fn list(&mut self, build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> NodeRef<'_, Msg> {
         let mut inner = ContainerBuilder { children: Vec::new() };
         build(&mut inner);
@@ -438,6 +542,13 @@ impl<'a, Msg> NodeRef<'a, Msg> {
         self
     }
 
+    /// Two-way binding for `Checkbox` nodes: `f` is called with the
+    /// checkbox's new `checked` state on every change. See [`OnToggle`].
+    pub fn on_toggle(mut self, f: impl Fn(bool) -> Msg + Send + Sync + 'static) -> Self {
+        self.meta_mut().on_toggle = Some(std::sync::Arc::new(f));
+        self
+    }
+
     pub fn ai_action(mut self, action: impl Into<String>) -> Self {
         self.meta_mut().ai.action = Some(action.into());
         self
@@ -451,6 +562,22 @@ impl<'a, Msg> NodeRef<'a, Msg> {
     pub fn ai_description(mut self, desc: impl Into<String>) -> Self {
         self.meta_mut().ai.description = Some(desc.into());
         self
+    }
+
+    /// Sets an arbitrary attribute (e.g. `role`, `tabindex`, `aria-*`,
+    /// `placeholder`). Rendered verbatim by backends that model HTML
+    /// attributes; ignored where unsupported. See [`NodeMeta::attrs`].
+    pub fn attr(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.meta_mut().attrs.push((name.into(), value.into()));
+        self
+    }
+
+    /// Convenience for ARIA attributes (e.g. `self.aria("label", "menu")`
+    /// emits `aria-label="menu"`).
+    pub fn aria(self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        let mut full = String::from("aria-");
+        full.push_str(&name.into());
+        self.attr(full, value)
     }
 
     /// Stable identity for reconciliation (e.g. a row/entity id) — see

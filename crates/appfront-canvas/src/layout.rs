@@ -100,6 +100,93 @@ pub fn build<'a, Msg>(
                 grid_cells: None,
             }
         }
+        NodeKind::Textarea { value } => {
+            let (w, h) = measurer.measure(value, TEXT_FONT_SIZE);
+            let width = (w + 16.0).max(INPUT_MIN_WIDTH);
+            let height = (h + 16.0).max(INPUT_HEIGHT * 3.0);
+            let taffy_id = tree
+                .new_leaf(Style {
+                    size: Size {
+                        width: length(width),
+                        height: length(height),
+                    },
+                    ..Default::default()
+                })
+                .expect("taffy leaf");
+            RenderNode {
+                taffy_id,
+                ui,
+                children: Vec::new(),
+                grid_cells: None,
+            }
+        }
+        NodeKind::Checkbox { label, .. } => {
+            let (w, h) = measurer.measure(label, TEXT_FONT_SIZE);
+            let taffy_id = tree
+                .new_leaf(Style {
+                    size: Size {
+                        // +24 for the checkbox glyph + gap that `egui::Checkbox`
+                        // draws before the label.
+                        width: length(w + 24.0),
+                        height: length(h.max(INPUT_HEIGHT)),
+                    },
+                    ..Default::default()
+                })
+                .expect("taffy leaf");
+            RenderNode {
+                taffy_id,
+                ui,
+                children: Vec::new(),
+                grid_cells: None,
+            }
+        }
+        NodeKind::Select { options, selected } => {
+            let label = options
+                .iter()
+                .find(|(v, _)| v == selected)
+                .map(|(_, l)| l.as_str())
+                .unwrap_or(selected.as_str());
+            let (w, _) = measurer.measure(label, TEXT_FONT_SIZE);
+            let width = (w + 32.0).max(INPUT_MIN_WIDTH);
+            let taffy_id = tree
+                .new_leaf(Style {
+                    size: Size {
+                        width: length(width),
+                        height: length(INPUT_HEIGHT),
+                    },
+                    ..Default::default()
+                })
+                .expect("taffy leaf");
+            RenderNode {
+                taffy_id,
+                ui,
+                children: Vec::new(),
+                grid_cells: None,
+            }
+        }
+        NodeKind::Radio { options, .. } => {
+            let text: String = options
+                .iter()
+                .map(|(_, l)| l.as_str())
+                .collect::<Vec<_>>()
+                .join("   ");
+            let (w, h) = measurer.measure(&text, TEXT_FONT_SIZE);
+            let taffy_id = tree
+                .new_leaf(Style {
+                    size: Size {
+                        width: length(w + 16.0),
+                        height: length(h.max(INPUT_HEIGHT)),
+                    },
+                    ..Default::default()
+                })
+                .expect("taffy leaf");
+            RenderNode {
+                taffy_id,
+                ui,
+                children: Vec::new(),
+                grid_cells: None,
+            }
+        }
         NodeKind::DataGrid { columns, rows } => build_data_grid(tree, measurer, ui, columns, rows),
         // Canvas has no overlay layer; render the portal content inline as a
         // column flex container (its `target` is metadata for hosts that

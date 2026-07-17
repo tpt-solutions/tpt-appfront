@@ -1,20 +1,26 @@
 pub mod agent;
 pub mod component;
+pub mod components;
 pub mod context;
 pub mod devtools;
 pub mod error_boundary;
+pub mod form;
 pub mod plugin;
 pub mod reconcile;
 pub mod resource;
 pub mod router;
 pub mod signal;
 pub mod static_tree;
+pub mod store;
 pub mod styling;
+pub mod suspense;
 pub mod ui_tree;
 pub mod virtual_scroll;
 
 pub use context::{provide_context, use_context, Context};
 pub use resource::{Resource, ResourceState};
+pub use store::{instrument_store, Persistence, Store, StoreSubscription};
+pub use suspense::Suspense;
 pub use router::{Route, RouteTable, Router};
 
 /// Tailwind-style utility-class macro.
@@ -52,6 +58,7 @@ pub use appfront_macros::rsx;
 pub use appfront_macros::view;
 pub use devtools::{inspect_state, inspect_tree, render, to_html, DevtoolsReport};
 pub use error_boundary::{error_boundary, recover_or, BoundaryResult};
+pub use form::FormState;
 pub use plugin::{context_for_plugin, Plugin, PluginCtx, PluginRegistry};
 pub use reconcile::{
     apply_edits, diff_summary, edit_description, reconcile_keys, History, KeyedDiff, ListEdit,
@@ -67,3 +74,7 @@ pub use styling::{
 pub use ui_tree::{AiMeta, ContainerBuilder, HydrationPayload, NodeKind, NodeMeta, NodeRef, UITree};
 pub use virtual_scroll::{VirtualScroll, VisibleRange};
 pub use component::{memoize, Children};
+pub use components::{
+    announce_resource_status, date_picker, dropdown, live_region, modal, move_focus,
+    sortable_table, tabs,
+};
