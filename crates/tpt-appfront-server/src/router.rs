@@ -1,8 +1,10 @@
 //! Axum-based smart router that detects client type and serves the
 //! appropriate rendering backend.
 
+mod caching;
 mod command;
 mod cors;
+mod csrf;
 mod handlers;
 
 use std::collections::HashMap;
@@ -81,6 +83,26 @@ pub struct SmartRouter<Msg> {
     /// [`CorsPolicy::Permissive`] (unchanged from prior behavior); override
     /// via [`SmartRouterBuilder::cors`] to restrict to an origin allowlist.
     pub cors: CorsPolicy,
+    /// Double-submit-cookie CSRF protection for `POST /command`. On by
+    /// default; only enforced against requests that already carry the
+    /// router's own CSRF cookie (set on document responses), so direct API/
+    /// agent callers that never loaded a page here are unaffected. See
+    /// [`csrf`] module docs.
+    pub csrf: bool,
+    /// Rate limit applied to the read routes (`/`, `/ai-schema.json`,
+    /// `/opengraph`). Defaults to a much more generous
+    /// [`RateLimitConfig`] than `POST /command` since these are
+    /// unauthenticated GETs meant to be crawled/fetched freely, but
+    /// unthrottled reads were an open gap.
+    pub read_rate_limit: RateLimitConfig,
+    /// Optional gate invoked before `command_handler` runs; return `false`
+    /// to reject the request with `401 Unauthorized`. Lets an app plug in
+    /// its own session/token check without the router prescribing one.
+    pub auth_hook: Option<std::sync::Arc<dyn Fn(&axum::http::HeaderMap) -> bool + Send + Sync>>,
+    /// Rendered-content cache for the deterministic read routes; populated
+    /// lazily on first request. See [`caching`] module docs.
+    html_cache: std::sync::OnceLock<(String, String)>,
+    ai_schema_cache: std::sync::OnceLock<(serde_json::Value, String)>,
 }
 
 /// Builder-pattern helper for constructing a [`SmartRouter`] with sensible
@@ -95,6 +117,9 @@ pub struct SmartRouterBuilder<Msg> {
     signals: HashMap<String, serde_json::Value>,
     command_handler: Option<std::sync::Arc<CommandHandler>>,
     allowed_actions: Option<Vec<String>>,
+    csrf: bool,
+    read_rate_limit: RateLimitConfig,
+    auth_hook: Option<std::sync::Arc<dyn Fn(&axum::http::HeaderMap) -> bool + Send + Sync>>,
     rate_limit: RateLimitConfig,
     pwa: Option<PwaConfig>,
     cors: CorsPolicy,
@@ -112,10 +137,38 @@ impl<Msg> SmartRouterBuilder<Msg> {
             signals: HashMap::new(),
             command_handler: None,
             allowed_actions: None,
+            csrf: true,
+            read_rate_limit: RateLimitConfig { per_second: 50, burst: 100 },
+            auth_hook: None,
             rate_limit: RateLimitConfig::default(),
             pwa: None,
             cors: CorsPolicy::default(),
         }
+    }
+
+    /// Toggles double-submit-cookie CSRF protection on `POST /command` (on
+    /// by default). See [`csrf`] module docs for the threat model.
+    pub fn csrf(mut self, enabled: bool) -> Self {
+        self.csrf = enabled;
+        self
+    }
+
+    /// Overrides the default rate limit applied to the read routes (`/`,
+    /// `/ai-schema.json`, `/opengraph`).
+    pub fn read_rate_limit(mut self, rate_limit: RateLimitConfig) -> Self {
+        self.read_rate_limit = rate_limit;
+        self
+    }
+
+    /// Installs a gate invoked before `command_handler` runs; return `false`
+    /// to reject the request with `401 Unauthorized`. Use this to plug in an
+    /// app-specific session/token check.
+    pub fn auth_hook(
+        mut self,
+        hook: impl Fn(&axum::http::HeaderMap) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.auth_hook = Some(std::sync::Arc::new(hook));
+        self
     }
 
     pub fn title(mut self, title: impl Into<String>) -> Self {
@@ -222,9 +275,14 @@ init().catch(e => console.error('appfront init failed', e));
             signals: self.signals,
             command_handler: self.command_handler,
             allowed_actions: self.allowed_actions,
+            csrf: self.csrf,
+            read_rate_limit: self.read_rate_limit,
+            auth_hook: self.auth_hook,
             rate_limit: self.rate_limit,
             pwa: self.pwa,
             cors: self.cors,
+            html_cache: std::sync::OnceLock::new(),
+            ai_schema_cache: std::sync::OnceLock::new(),
         }
     }
 }
@@ -270,6 +328,7 @@ where
 {
     let serve_dir = ServeDir::new(&router.static_dir);
     let rate_limit = router.rate_limit;
+    let read_rate_limit = router.read_rate_limit;
     let cors = router.cors.clone();
     let state = std::sync::Arc::new(router);
 
@@ -289,6 +348,17 @@ where
             .expect("valid governor rate-limit config"),
     );
 
+    // The read routes get their own (much more generous) bucket — see
+    // `SmartRouterBuilder::read_rate_limit`. Previously unthrottled entirely.
+    let read_governor_conf = std::sync::Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(read_rate_limit.per_second)
+            .burst_size(read_rate_limit.burst)
+            .key_extractor(PeerIpKeyExtractor)
+            .finish()
+            .expect("valid governor rate-limit config"),
+    );
+
     // Read/asset routes may be fetched cross-origin by browsers and AI
     // agents; the exact policy is configurable via
     // `SmartRouterBuilder::cors` (defaults to permissive, unchanged from
@@ -301,7 +371,8 @@ where
         .route("/opengraph", get(handlers::opengraph_handler::<Msg>))
         .route("/service-worker.js", get(handlers::pwa_service_worker::<Msg>))
         .route("/manifest.webmanifest", get(handlers::pwa_manifest::<Msg>))
-        .layer(cors::cors_layer(&cors));
+        .layer(cors::cors_layer(&cors))
+        .layer(GovernorLayer { config: read_governor_conf });
 
     // The single write route: body-size-limited and rate-limited, and NOT
     // CORS-exposed, so a third-party page can't invoke app commands for the
@@ -482,24 +553,46 @@ mod tests {
     #[tokio::test]
     async fn crawler_gets_html() {
         let state = std::sync::Arc::new(test_router());
-        let resp = crawler_html(&state).await;
-        assert!(resp.0.contains("<!DOCTYPE html>"));
-        assert!(resp.0.contains("<h1 class=\"title\">Hello</h1>"));
+        let html = body_string(crawler_html(&state, &HeaderMap::new()).await).await;
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<h1 class=\"title\">Hello</h1>"));
     }
 
     #[tokio::test]
     async fn ai_gets_json() {
         let state = std::sync::Arc::new(test_router());
-        let resp = ai_agent_json(&state).await;
-        assert!(resp.0.get("jsonld").is_some());
-        assert!(resp.0.get("ai_schema").is_some());
+        let body = body_string(ai_agent_json(&state, &HeaderMap::new()).await).await;
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(json.get("jsonld").is_some());
+        assert!(json.get("ai_schema").is_some());
     }
 
     #[tokio::test]
     async fn social_gets_html() {
         let state = std::sync::Arc::new(test_router());
-        let resp = social_opengraph(&state).await;
-        assert!(resp.0.contains("og:title"));
+        let html = body_string(social_opengraph(&state, &HeaderMap::new()).await).await;
+        assert!(html.contains("og:title"));
+    }
+
+    #[tokio::test]
+    async fn cached_read_route_honors_if_none_match() {
+        use axum::http::header::{ETAG, IF_NONE_MATCH};
+        use axum::http::StatusCode;
+
+        let state = std::sync::Arc::new(test_router());
+        let first = crawler_html(&state, &HeaderMap::new()).await;
+        let etag = first
+            .headers()
+            .get(ETAG)
+            .expect("etag present")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let mut conditional = HeaderMap::new();
+        conditional.insert(IF_NONE_MATCH, etag.parse().unwrap());
+        let second = crawler_html(&state, &conditional).await;
+        assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
     }
 
     #[tokio::test]
@@ -711,6 +804,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/service-worker.js")
+                    .extension(test_connect_info())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -727,6 +821,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/manifest.webmanifest")
+                    .extension(test_connect_info())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -740,6 +835,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/service-worker.js")
+                    .extension(test_connect_info())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -777,6 +873,7 @@ mod tests {
         let req = Request::builder()
             .uri("/")
             .header("user-agent", "Mozilla/5.0 Chrome/120")
+            .extension(test_connect_info())
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -785,6 +882,7 @@ mod tests {
         let req = Request::builder()
             .uri("/")
             .header("user-agent", "Googlebot/2.1")
+            .extension(test_connect_info())
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -793,6 +891,7 @@ mod tests {
         let req = Request::builder()
             .uri("/")
             .header("user-agent", "GPTBot/1.0")
+            .extension(test_connect_info())
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
@@ -808,6 +907,7 @@ mod tests {
         let req = Request::builder()
             .uri("/")
             .header("origin", "https://evil.example")
+            .extension(test_connect_info())
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -833,6 +933,7 @@ mod tests {
         let allowed = Request::builder()
             .uri("/")
             .header("origin", "https://trusted.example")
+            .extension(test_connect_info())
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(allowed).await.unwrap();
@@ -847,6 +948,7 @@ mod tests {
         let disallowed = Request::builder()
             .uri("/")
             .header("origin", "https://evil.example")
+            .extension(test_connect_info())
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(disallowed).await.unwrap();

@@ -42,9 +42,25 @@ mod view;
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as ItemFn);
-    expand(input)
+    let memo = parse_component_attr(&_attr);
+    expand(input, memo)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// Parses the `#[component(...)]` attribute arguments. Currently the only
+/// recognised argument is `memo` (enable props-equality memoization); any other
+/// token is ignored. Returns `true` when memoization is requested.
+fn parse_component_attr(attr: &TokenStream) -> bool {
+    let tokens: proc_macro2::TokenStream = proc_macro2::TokenStream::from(attr.clone());
+    for tt in tokens {
+        if let TokenTree::Ident(ident) = tt {
+            if ident == "memo" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[proc_macro]
@@ -65,7 +81,7 @@ pub fn rsx(item: TokenStream) -> TokenStream {
     }
 }
 
-fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
+fn expand(input: ItemFn, memo: bool) -> syn::Result<proc_macro2::TokenStream> {
     let ItemFn {
         attrs,
         vis,
@@ -114,6 +130,46 @@ fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
         None => quote! { None },
     };
 
+    // The body that builds the component's tree and fills in default metadata.
+    let build_body = quote! {
+        let mut __appfront_ui = #inner_ident(#(#arg_idents),*);
+        if __appfront_ui.meta.class.is_none() {
+            __appfront_ui.meta.class = Some(::std::string::ToString::to_string(#component_name));
+        }
+        if __appfront_ui.meta.ai.description.is_none() {
+            __appfront_ui.meta.ai.description = #description_tokens;
+        }
+        __appfront_ui.meta.is_dynamic = #is_dynamic;
+        __appfront_ui
+    };
+
+    // With `#[component(memo)]`, wrap the build in `appfront_core::memoize`,
+    // keyed on the first argument (the component's props). When the props are
+    // `PartialEq` to the previous render's, the cached `UITree` is returned
+    // unchanged — the component's subtree is not rebuilt. The props type must
+    // therefore be `PartialEq + Clone`; the compiler enforces this via the
+    // `memoize` bound when memo is enabled.
+    let wrapper_body = if memo {
+        let key_ident = arg_idents
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format_ident!("__appfront_unit_key"));
+        quote! {
+            static __appfront_memo_sentinel: u8 = 0;
+            let __appfront_memo_id = (&__appfront_memo_sentinel as *const u8) as u64;
+            appfront_core::memoize(
+                __appfront_memo_id,
+                #key_ident.clone(),
+                move |#key_ident| {
+                    let #key_ident = #key_ident.clone();
+                    #build_body
+                },
+            )
+        }
+    } else {
+        build_body
+    };
+
     Ok(quote! {
         #[doc(hidden)]
         #[allow(clippy::too_many_arguments)]
@@ -121,15 +177,7 @@ fn expand(input: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
 
         #(#attrs)*
         #vis #sig {
-            let mut __appfront_ui = #inner_ident(#(#arg_idents),*);
-            if __appfront_ui.meta.class.is_none() {
-                __appfront_ui.meta.class = Some(::std::string::ToString::to_string(#component_name));
-            }
-            if __appfront_ui.meta.ai.description.is_none() {
-                __appfront_ui.meta.ai.description = #description_tokens;
-            }
-            __appfront_ui.meta.is_dynamic = #is_dynamic;
-            __appfront_ui
+            #wrapper_body
         }
     })
 }

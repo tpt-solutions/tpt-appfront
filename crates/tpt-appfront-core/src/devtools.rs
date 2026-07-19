@@ -40,10 +40,21 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::Text { text } => format!("Text \"{text}\""),
         NodeKind::Button { label } => format!("Button \"{label}\""),
         NodeKind::Input { value } => format!("Input value=\"{value}\""),
+        NodeKind::Textarea { value } => format!("Textarea value=\"{value}\""),
+        NodeKind::Checkbox { label, checked } => {
+            format!("Checkbox \"{label}\" checked={checked}")
+        }
+        NodeKind::Select { options, selected } => format!(
+            "Select [{options:?}] selected=\"{selected}\""
+        ),
+        NodeKind::Radio { name, options, selected } => format!(
+            "Radio name=\"{name}\" [{options:?}] selected=\"{selected}\""
+        ),
         NodeKind::List { items } => format!("List ({}) items", items.len()),
         NodeKind::DataGrid { columns, rows } => {
             format!("DataGrid [{}] {}x{}", columns.join(", "), columns.len(), rows.len())
         }
+        NodeKind::Portal { target, .. } => format!("Portal -> \"{target}\""),
     }
 }
 

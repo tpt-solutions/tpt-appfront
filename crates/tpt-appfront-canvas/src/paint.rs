@@ -26,24 +26,36 @@ pub fn paint<Msg: Clone>(
     let size = Vec2::new(layout.size.width, layout.size.height);
     let rect = Rect::from_min_size(pos, size);
 
+    // Utility-class styling adapter: honor `bg-*`/`text-*` utilities on canvas
+    // (they were previously a silent no-op here; DOM/HTML already honored them).
+    let style = layout::canvas_style_for(&node.ui.meta.class);
+
     *id_seed += 1;
     let id = egui::Id::new(("appfront_canvas_node", *id_seed));
 
     let mut clicked = false;
     match &node.ui.kind {
-        NodeKind::Container { .. } | NodeKind::List { .. } => {}
+        NodeKind::Container { .. } | NodeKind::List { .. } | NodeKind::Portal { .. } => {
+            if let Some(bg) = style.background {
+                ui.painter().rect_filled(rect, 0.0, bg);
+            }
+        }
         NodeKind::Heading { text, level } => {
-            paint_text(ui, pos, text, layout::heading_font_size(*level));
+            paint_text(ui, pos, text, layout::heading_font_size(*level), style.foreground);
             #[cfg(feature = "accesskit")]
             name_accessible_node(ui, rect, id, text, Some(egui::accesskit::Role::Heading));
         }
         NodeKind::Text { text } => {
-            paint_text(ui, pos, text, TEXT_FONT_SIZE);
+            paint_text(ui, pos, text, TEXT_FONT_SIZE, style.foreground);
             #[cfg(feature = "accesskit")]
             name_accessible_node(ui, rect, id, text, None);
         }
         NodeKind::Button { label } => {
-            let response = ui.put(rect, egui::Button::new(label.as_str()));
+            let mut button = egui::Button::new(label.as_str());
+            if let Some(bg) = style.background {
+                button = button.fill(bg);
+            }
+            let response = ui.put(rect, button);
             clicked = response.clicked();
             #[cfg(feature = "accesskit")]
             {
@@ -76,6 +88,54 @@ pub fn paint<Msg: Clone>(
                 _response.set_accessible_name(name);
             }
         }
+        NodeKind::Textarea { value } => {
+            let mut value = value.clone();
+            let _response = ui.put(rect, egui::TextEdit::multiline(&mut value));
+            #[cfg(feature = "accesskit")]
+            {
+                let name = node
+                    .ui
+                    .meta
+                    .ai
+                    .description
+                    .clone()
+                    .or_else(|| node.ui.meta.class.clone())
+                    .unwrap_or_else(|| format!("Text area: {value}"));
+                _response.set_accessible_name(name);
+            }
+        }
+        NodeKind::Checkbox { label, checked } => {
+            let mut checked = *checked;
+            let _response = ui.put(rect, egui::Checkbox::new(&mut checked, label.as_str()));
+            #[cfg(feature = "accesskit")]
+            _response.set_accessible_name(label.as_str());
+        }
+        NodeKind::Select { options, selected } => {
+            let label = options
+                .iter()
+                .find(|(v, _)| v == selected)
+                .map(|(_, l)| l.as_str())
+                .unwrap_or(selected.as_str());
+            paint_text(ui, pos, &format!("{label} \u{25be}"), TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, label, None);
+        }
+        NodeKind::Radio { options, selected, .. } => {
+            let text: String = options
+                .iter()
+                .map(|(v, l)| {
+                    if v == selected {
+                        format!("(*) {l}")
+                    } else {
+                        format!("( ) {l}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("   ");
+            paint_text(ui, pos, &text, TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, &text, None);
+        }
         NodeKind::DataGrid { columns, rows } => {
             paint_data_grid(ui, tree, node, pos, columns, rows);
         }
@@ -97,13 +157,14 @@ pub fn paint<Msg: Clone>(
     }
 }
 
-fn paint_text(ui: &egui::Ui, pos: Pos2, text: &str, font_size: f32) {
+fn paint_text(ui: &egui::Ui, pos: Pos2, text: &str, font_size: f32, color: Option<Color32>) {
+    let text_color = color.unwrap_or_else(|| ui.visuals().text_color());
     ui.painter().text(
         pos,
         Align2::LEFT_TOP,
         text,
         FontId::proportional(font_size),
-        ui.visuals().text_color(),
+        text_color,
     );
 }
 
@@ -165,7 +226,7 @@ fn paint_data_grid<Msg>(
             let cell_pos = row_origin
                 + Vec2::new(cell_layout.location.x, cell_layout.location.y)
                 + Vec2::new(CELL_PADDING, CELL_PADDING / 2.0);
-            paint_text(ui, cell_pos, text, TEXT_FONT_SIZE);
+            paint_text(ui, cell_pos, text, TEXT_FONT_SIZE, None);
         }
     }
 }
@@ -225,6 +286,10 @@ mod tests {
                 l.text("item one");
                 l.text("item two");
             });
+            c.textarea("notes");
+            c.checkbox("Agree", true);
+            c.select([("a", "Alpha"), ("b", "Beta")], "b");
+            c.radio_group("color", [("r", "Red"), ("g", "Green")], "g");
         });
         let ctx = egui::Context::default();
         let dispatched = run_paint_frame(&ctx, &ui, RawInput::default());

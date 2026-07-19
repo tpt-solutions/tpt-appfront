@@ -142,6 +142,50 @@ fn walk<Msg>(
                 description: ai.description.clone(),
             });
         }
+        NodeKind::Textarea { value } => {
+            interactive.push(ElementSummary {
+                id,
+                kind: "textarea".into(),
+                label: None,
+                value: Some(value.clone()),
+                action: ai.action.clone(),
+                params: ai.params.clone(),
+                description: ai.description.clone(),
+            });
+        }
+        NodeKind::Checkbox { label, checked } => {
+            interactive.push(ElementSummary {
+                id,
+                kind: "checkbox".into(),
+                label: Some(label.clone()),
+                value: Some(checked.to_string()),
+                action: ai.action.clone(),
+                params: ai.params.clone(),
+                description: ai.description.clone(),
+            });
+        }
+        NodeKind::Select { selected, .. } => {
+            interactive.push(ElementSummary {
+                id,
+                kind: "select".into(),
+                label: None,
+                value: Some(selected.clone()),
+                action: ai.action.clone(),
+                params: ai.params.clone(),
+                description: ai.description.clone(),
+            });
+        }
+        NodeKind::Radio { selected, .. } => {
+            interactive.push(ElementSummary {
+                id,
+                kind: "radio".into(),
+                label: None,
+                value: Some(selected.clone()),
+                action: ai.action.clone(),
+                params: ai.params.clone(),
+                description: ai.description.clone(),
+            });
+        }
         NodeKind::Heading { level, text } => {
             data.push(ElementSummary {
                 id,
@@ -188,6 +232,10 @@ fn walk<Msg>(
                 params: Vec::new(),
                 description: None,
             });
+        }
+        NodeKind::Portal { content, .. } => {
+            // Surface the portal's content so agents observe its elements.
+            walk(content, interactive, data);
         }
     }
 }

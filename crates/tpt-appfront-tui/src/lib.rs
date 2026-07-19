@@ -24,7 +24,7 @@ use ratatui::crossterm::terminal::{
 use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
 
 use tpt_appfront_core::{NodeKind, UITree};
@@ -38,13 +38,27 @@ pub struct InteractiveNode<Msg> {
     pub id: u64,
     pub kind: InteractiveKind,
     /// The `Msg` to dispatch when this node is "activated" (Enter/Space).
+    /// Only ever set for `Button` today.
     pub on_click: Option<Msg>,
+    /// `(value, label)` options for `Select`/`Radio`; empty for every other
+    /// kind. Used to cycle the selection with Left/Right/Up/Down.
+    pub options: Vec<(String, String)>,
+    /// The node's original value — `selected` for `Select`/`Radio`, the
+    /// stringified `checked` for `Checkbox` — used to seed keyboard
+    /// cycling/toggling before the user has touched the control (mirrors how
+    /// [`TuiDriver::inputs`] falls back to the `Input`/`Textarea` node's own
+    /// `value` until edited).
+    pub initial_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InteractiveKind {
     Button,
     Input,
+    Textarea,
+    Checkbox,
+    Select,
+    Radio,
 }
 
 /// Walks the tree (after IDs are assigned) and collects every focusable node.
@@ -52,17 +66,30 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
     let mut out = Vec::new();
     fn walk<Msg: Clone>(ui: &UITree<Msg>, out: &mut Vec<InteractiveNode<Msg>>) {
         let id = ui.meta.data_appfront_id.unwrap_or(0);
+        let node = |kind, options: Vec<(String, String)>, initial_value: Option<String>| InteractiveNode {
+            id,
+            kind,
+            on_click: ui.meta.on_click.clone(),
+            options,
+            initial_value,
+        };
         match &ui.kind {
-            NodeKind::Button { .. } => out.push(InteractiveNode {
-                id,
-                kind: InteractiveKind::Button,
-                on_click: ui.meta.on_click.clone(),
-            }),
-            NodeKind::Input { .. } => out.push(InteractiveNode {
-                id,
-                kind: InteractiveKind::Input,
-                on_click: ui.meta.on_click.clone(),
-            }),
+            NodeKind::Button { .. } => out.push(node(InteractiveKind::Button, Vec::new(), None)),
+            NodeKind::Input { .. } => out.push(node(InteractiveKind::Input, Vec::new(), None)),
+            NodeKind::Textarea { .. } => out.push(node(InteractiveKind::Textarea, Vec::new(), None)),
+            NodeKind::Checkbox { checked, .. } => {
+                out.push(node(InteractiveKind::Checkbox, Vec::new(), Some(checked.to_string())))
+            }
+            NodeKind::Select { options, selected } => out.push(node(
+                InteractiveKind::Select,
+                options.clone(),
+                Some(selected.clone()),
+            )),
+            NodeKind::Radio { options, selected, .. } => out.push(node(
+                InteractiveKind::Radio,
+                options.clone(),
+                Some(selected.clone()),
+            )),
             NodeKind::Container { children } => {
                 for child in children {
                     walk(child, out);
@@ -73,7 +100,10 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
                     walk(item, out);
                 }
             }
-            NodeKind::Heading { .. } | NodeKind::Text { .. } | NodeKind::DataGrid { .. } => {}
+            NodeKind::Heading { .. }
+            | NodeKind::Text { .. }
+            | NodeKind::DataGrid { .. }
+            | NodeKind::Portal { .. } => {}
         }
     }
     walk(ui, &mut out);
@@ -87,34 +117,46 @@ fn node_text<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::Heading { text, .. } => text.clone(),
         NodeKind::Button { label } => label.clone(),
         NodeKind::Input { value } => value.clone(),
+        NodeKind::Textarea { value } => value.clone(),
+        NodeKind::Checkbox { label, .. } => label.clone(),
+        NodeKind::Select { selected, .. } => selected.clone(),
+        NodeKind::Radio { selected, .. } => selected.clone(),
         _ => String::new(),
     }
 }
 
 /// Renders a `UITree` into the given `ratatui` frame area.
 ///
-/// `inputs` lets the caller override an `Input` node's displayed value with
-/// the live text being edited (keyed by `data_appfront_id`); `focus_id`
-/// highlights the currently focused interactive node.
+/// `inputs` lets the caller override an `Input`/`Textarea` node's displayed
+/// value with the live text being edited, `checks` overrides a `Checkbox`'s
+/// `checked` state, and `selections` overrides a `Select`/`Radio`'s chosen
+/// value — all keyed by `data_appfront_id`. `focus_id` highlights the
+/// currently focused interactive node.
 pub fn render<Msg: Clone>(
     ui: &UITree<Msg>,
     frame: &mut Frame,
     area: Rect,
     inputs: &HashMap<u64, String>,
+    checks: &HashMap<u64, bool>,
+    selections: &HashMap<u64, String>,
     focus_id: Option<u64>,
 ) {
-    render_node(ui, frame, area, inputs, focus_id);
+    render_node(ui, frame, area, inputs, checks, selections, focus_id);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_node<Msg: Clone>(
     ui: &UITree<Msg>,
     frame: &mut Frame,
     area: Rect,
     inputs: &HashMap<u64, String>,
+    checks: &HashMap<u64, bool>,
+    selections: &HashMap<u64, String>,
     focus_id: Option<u64>,
 ) {
     let id = ui.meta.data_appfront_id;
     let focused = id == focus_id;
+    let focus_style = || Style::default().fg(Color::Black).bg(Color::Yellow);
     match &ui.kind {
         NodeKind::Container { children } => {
             if children.is_empty() {
@@ -123,7 +165,7 @@ fn render_node<Msg: Clone>(
             let constraints: Vec<Constraint> = (0..children.len()).map(|_| Constraint::Min(1)).collect();
             let chunks = Layout::vertical(constraints).split(area);
             for (child, chunk) in children.iter().zip(chunks.iter()) {
-                render_node(child, frame, *chunk, inputs, focus_id);
+                render_node(child, frame, *chunk, inputs, checks, selections, focus_id);
             }
         }
         NodeKind::Heading { text, .. } => {
@@ -133,11 +175,7 @@ fn render_node<Msg: Clone>(
             frame.render_widget(Paragraph::new(text.clone()), area);
         }
         NodeKind::Button { label } => {
-            let style = if focused {
-                Style::default().fg(Color::Black).bg(Color::Yellow)
-            } else {
-                Style::default()
-            };
+            let style = if focused { focus_style() } else { Style::default() };
             frame.render_widget(Paragraph::new(format!("[ {label} ]")).style(style), area);
         }
         NodeKind::Input { value } => {
@@ -151,6 +189,66 @@ fn render_node<Msg: Clone>(
                 Style::default()
             };
             frame.render_widget(Paragraph::new(format!("> {v}")).style(style), area);
+        }
+        NodeKind::Textarea { value } => {
+            let v = inputs
+                .get(&id.unwrap_or(0))
+                .cloned()
+                .unwrap_or_else(|| value.clone());
+            let style = if focused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(v)
+                    .style(style)
+                    .wrap(Wrap { trim: false })
+                    .block(Block::default().borders(Borders::ALL)),
+                area,
+            );
+        }
+        NodeKind::Checkbox { label, checked } => {
+            let c = checks.get(&id.unwrap_or(0)).copied().unwrap_or(*checked);
+            let mark = if c { "x" } else { " " };
+            let style = if focused { focus_style() } else { Style::default() };
+            frame.render_widget(Paragraph::new(format!("[{mark}] {label}")).style(style), area);
+        }
+        NodeKind::Select { options, selected } => {
+            let cur = selections
+                .get(&id.unwrap_or(0))
+                .cloned()
+                .unwrap_or_else(|| selected.clone());
+            let label = options
+                .iter()
+                .find(|(v, _)| v == &cur)
+                .map(|(_, l)| l.as_str())
+                .unwrap_or(cur.as_str());
+            let style = if focused { focus_style() } else { Style::default() };
+            frame.render_widget(Paragraph::new(format!("< {label} >")).style(style), area);
+        }
+        NodeKind::Radio { options, selected, .. } => {
+            let cur = selections
+                .get(&id.unwrap_or(0))
+                .cloned()
+                .unwrap_or_else(|| selected.clone());
+            let text = options
+                .iter()
+                .map(|(v, l)| {
+                    if v == &cur {
+                        format!("(*) {l}")
+                    } else {
+                        format!("( ) {l}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("   ");
+            let style = if focused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(Paragraph::new(text).style(style), area);
         }
         NodeKind::List { items } => {
             let rows: Vec<ListItem> = items
@@ -180,6 +278,12 @@ fn render_node<Msg: Clone>(
                 area,
             );
         }
+        NodeKind::Portal { content, .. } => {
+            // TUI has no overlay layer: render the portal content inline at the
+            // declaration site. Hosts that want true overlay portals can use
+            // `UITree::collect_portals` to extract them first.
+            render_node(content, frame, area, inputs, checks, selections, focus_id);
+        }
     }
 }
 
@@ -191,6 +295,8 @@ pub struct TuiDriver<Msg: Clone> {
     interactive: Vec<InteractiveNode<Msg>>,
     focus: usize,
     inputs: HashMap<u64, String>,
+    checks: HashMap<u64, bool>,
+    selections: HashMap<u64, String>,
     quit: bool,
 }
 
@@ -205,6 +311,8 @@ impl<Msg: Clone> TuiDriver<Msg> {
             interactive,
             focus: 0,
             inputs: HashMap::new(),
+            checks: HashMap::new(),
+            selections: HashMap::new(),
             quit: false,
         }
     }
@@ -228,14 +336,54 @@ impl<Msg: Clone> TuiDriver<Msg> {
         &self.inputs
     }
 
+    /// Live `Checkbox` toggles, keyed by `data_appfront_id` (for rendering
+    /// overrides).
+    pub fn checks(&self) -> &HashMap<u64, bool> {
+        &self.checks
+    }
+
+    /// Live `Select`/`Radio` selections, keyed by `data_appfront_id` (for
+    /// rendering overrides).
+    pub fn selections(&self) -> &HashMap<u64, String> {
+        &self.selections
+    }
+
     /// Whether the driver has been asked to quit.
     pub fn quit(&self) -> bool {
         self.quit
     }
 
+    /// The currently focused node's `(value, label)` options, if it's a
+    /// `Select`/`Radio`; `None` otherwise.
+    fn cycle_option(&mut self, delta: i32) {
+        let node = &self.interactive[self.focus];
+        if node.options.is_empty() {
+            return;
+        }
+        let id = node.id;
+        let current = self
+            .selections
+            .get(&id)
+            .cloned()
+            .or_else(|| node.initial_value.clone())
+            .unwrap_or_default();
+        let idx = node
+            .options
+            .iter()
+            .position(|(v, _)| v == &current)
+            .unwrap_or(0) as i32;
+        let len = node.options.len() as i32;
+        let next = ((idx + delta) % len + len) % len;
+        let value = node.options[next as usize].0.clone();
+        self.selections.insert(id, value);
+    }
+
     /// Feeds a key event to the driver. Returns a `Msg` to dispatch (for an
     /// activated button) when one is produced; otherwise `None`. Mutates the
-    /// focused `Input` buffer for character/backspace keys.
+    /// focused control's live state for character/backspace keys (`Input`/
+    /// `Textarea`), Enter/Space (`Checkbox` toggle, or cycling a `Select`/
+    /// `Radio` forward), and Left/Right/Up/Down (cycling a focused `Select`/
+    /// `Radio`; moving focus for every other kind).
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Msg> {
         if key.kind != KeyEventKind::Press {
             return None;
@@ -247,16 +395,40 @@ impl<Msg: Clone> TuiDriver<Msg> {
             }
             return None;
         }
+        let is_cyclable = matches!(
+            self.interactive[self.focus].kind,
+            InteractiveKind::Select | InteractiveKind::Radio
+        );
         match key.code {
             KeyCode::Esc => {
                 self.quit = true;
                 None
             }
-            KeyCode::Tab | KeyCode::Down | KeyCode::Right => {
+            KeyCode::Tab => {
                 self.focus = (self.focus + 1) % self.interactive.len();
                 None
             }
-            KeyCode::BackTab | KeyCode::Up | KeyCode::Left => {
+            KeyCode::BackTab => {
+                self.focus = self
+                    .focus
+                    .checked_sub(1)
+                    .unwrap_or(self.interactive.len() - 1)
+                    % self.interactive.len();
+                None
+            }
+            KeyCode::Down | KeyCode::Right if is_cyclable => {
+                self.cycle_option(1);
+                None
+            }
+            KeyCode::Up | KeyCode::Left if is_cyclable => {
+                self.cycle_option(-1);
+                None
+            }
+            KeyCode::Down | KeyCode::Right => {
+                self.focus = (self.focus + 1) % self.interactive.len();
+                None
+            }
+            KeyCode::Up | KeyCode::Left => {
                 self.focus = self
                     .focus
                     .checked_sub(1)
@@ -265,18 +437,41 @@ impl<Msg: Clone> TuiDriver<Msg> {
                 None
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                self.interactive[self.focus].on_click.clone()
+                let kind = self.interactive[self.focus].kind;
+                match kind {
+                    InteractiveKind::Checkbox => {
+                        let id = self.interactive[self.focus].id;
+                        let current = self
+                            .checks
+                            .get(&id)
+                            .copied()
+                            .or_else(|| {
+                                self.interactive[self.focus]
+                                    .initial_value
+                                    .as_deref()
+                                    .map(|v| v == "true")
+                            })
+                            .unwrap_or(false);
+                        self.checks.insert(id, !current);
+                        None
+                    }
+                    InteractiveKind::Select | InteractiveKind::Radio => {
+                        self.cycle_option(1);
+                        None
+                    }
+                    _ => self.interactive[self.focus].on_click.clone(),
+                }
             }
             KeyCode::Char(c) => {
                 let node = &self.interactive[self.focus];
-                if node.kind == InteractiveKind::Input {
+                if matches!(node.kind, InteractiveKind::Input | InteractiveKind::Textarea) {
                     self.inputs.entry(node.id).or_default().push(c);
                 }
                 None
             }
             KeyCode::Backspace => {
                 let node = &self.interactive[self.focus];
-                if node.kind == InteractiveKind::Input {
+                if matches!(node.kind, InteractiveKind::Input | InteractiveKind::Textarea) {
                     if let Some(buf) = self.inputs.get_mut(&node.id) {
                         buf.pop();
                     }
@@ -311,7 +506,15 @@ pub fn run<Msg: Clone + 'static>(
         terminal
             .draw(|frame| {
                 let ui = build_ui();
-                render(&ui, frame, frame.area(), driver.inputs(), driver.focus_id());
+                render(
+                    &ui,
+                    frame,
+                    frame.area(),
+                    driver.inputs(),
+                    driver.checks(),
+                    driver.selections(),
+                    driver.focus_id(),
+                );
             })
             .context("draw")?;
 
@@ -358,7 +561,17 @@ pub fn render_to_buffer<Msg: Clone>(
     let mut terminal = Terminal::new(backend).expect("test backend");
     let driver = TuiDriver::new(ui);
     terminal
-        .draw(|frame| render(ui, frame, frame.area(), driver.inputs(), driver.focus_id()))
+        .draw(|frame| {
+            render(
+                ui,
+                frame,
+                frame.area(),
+                driver.inputs(),
+                driver.checks(),
+                driver.selections(),
+                driver.focus_id(),
+            )
+        })
         .expect("draw");
     terminal.backend().buffer().clone()
 }
@@ -393,6 +606,51 @@ mod tests {
         assert_eq!(driver.interactive[1].kind, InteractiveKind::Input);
         // Focus starts on the button.
         assert_eq!(driver.focus_id(), Some(driver.interactive[0].id));
+    }
+
+    fn form_ui() -> UITree<Msg> {
+        UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.checkbox("Agree", false).key("agree");
+            c.select([("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")], "a")
+                .key("choice");
+        })
+    }
+
+    #[test]
+    fn enter_toggles_focused_checkbox() {
+        let ui = form_ui();
+        let mut driver = TuiDriver::new(&ui);
+        let id = driver.interactive[0].id;
+        assert_eq!(driver.checks().get(&id), None);
+
+        let enter = KeyEvent::new(KeyCode::Enter, ratatui::crossterm::event::KeyModifiers::NONE);
+        driver.on_key(enter);
+        assert_eq!(driver.checks().get(&id), Some(&true));
+        driver.on_key(enter);
+        assert_eq!(driver.checks().get(&id), Some(&false));
+    }
+
+    #[test]
+    fn right_arrow_cycles_focused_select() {
+        let ui = form_ui();
+        let mut driver = TuiDriver::new(&ui);
+        // Move focus from the checkbox to the select.
+        let tab = KeyEvent::new(KeyCode::Tab, ratatui::crossterm::event::KeyModifiers::NONE);
+        driver.on_key(tab);
+        let id = driver.interactive[1].id;
+        assert_eq!(driver.selections().get(&id), None);
+
+        let right = KeyEvent::new(KeyCode::Right, ratatui::crossterm::event::KeyModifiers::NONE);
+        driver.on_key(right);
+        assert_eq!(driver.selections().get(&id).map(String::as_str), Some("b"));
+        driver.on_key(right);
+        assert_eq!(driver.selections().get(&id).map(String::as_str), Some("c"));
+        driver.on_key(right);
+        assert_eq!(
+            driver.selections().get(&id).map(String::as_str),
+            Some("a"),
+            "cycling wraps around"
+        );
     }
 
     #[test]

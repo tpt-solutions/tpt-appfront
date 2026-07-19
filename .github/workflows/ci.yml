@@ -35,6 +35,29 @@ jobs:
       - run: cargo build -p tpt-appfront-dom -p tpt-appfront-canvas --target wasm32-unknown-unknown
       - run: cargo clippy -p tpt-appfront-dom -p tpt-appfront-canvas --target wasm32-unknown-unknown --all-targets -- -D warnings
 
+  wasm-tests:
+    name: WASM browser tests (wasm-bindgen-test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install headless browser + wasm-bindgen-test-runner
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y chromium
+          cargo install wasm-bindgen-test-runner
+      - name: Build & run appfront-dom browser tests
+        env:
+          WASM_BINDGEN_TEST_RUNNER_CHROME: /usr/bin/chromium
+        run: |
+          set -e
+          cargo test -p appfront-dom --target wasm32-unknown-unknown --no-run
+          wasm-bindgen-test-runner target/wasm32-unknown-unknown/debug/deps/appfront_dom-*.wasm
+
   audit:
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest

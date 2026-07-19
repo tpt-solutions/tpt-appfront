@@ -8,8 +8,10 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
 
 use crate::client_kind::{self, ClientKind};
-use crate::pwa::{manifest, manifest_link, registration_script, service_worker};
+use crate::pwa::{manifest, manifest_link, registration_script, service_worker, update_available_script};
+use crate::router::caching;
 use crate::router::command::{Command, CommandResponse};
+use crate::router::csrf;
 use crate::router::SmartRouter;
 
 /// Query parameters accepted by every route.
@@ -39,10 +41,20 @@ fn next_nonce() -> String {
 /// document nonce) to an `Html` response. The strict CSP is set per-document
 /// rather than globally so the inline WASM bootstrap / PWA registration
 /// scripts can be allow-listed by their nonce instead of being blocked.
-fn csp_response(mut resp: Response, csp: &str) -> Response {
+///
+/// When `csrf` is set, also attaches a fresh CSRF cookie: this is the only
+/// document route a browser client fetches before it would ever call
+/// `POST /command`, so it's where the double-submit token gets minted (see
+/// `crate::router::csrf`).
+fn csp_response(mut resp: Response, csp: &str, csrf: bool) -> Response {
     if let Ok(v) = HeaderValue::from_str(csp) {
         resp.headers_mut()
             .insert(axum::http::header::CONTENT_SECURITY_POLICY, v);
+    }
+    if csrf {
+        let token = csrf::generate_token();
+        resp.headers_mut()
+            .insert(axum::http::header::SET_COOKIE, csrf::set_cookie_header(&token));
     }
     resp
 }
@@ -60,25 +72,45 @@ where
 
     match kind {
         ClientKind::Human => human_shell(&state).await.into_response(),
-        ClientKind::Crawler => crawler_html(&state).await.into_response(),
-        ClientKind::AiAgent => ai_agent_json(&state).await.into_response(),
-        ClientKind::SocialBot => social_opengraph(&state).await.into_response(),
+        ClientKind::Crawler => crawler_html(&state, &headers).await,
+        ClientKind::AiAgent => ai_agent_json(&state, &headers).await,
+        ClientKind::SocialBot => social_opengraph(&state, &headers).await,
     }
 }
 
 pub(crate) async fn ai_schema_handler<Msg>(
     state: State<Arc<SmartRouter<Msg>>>,
+    headers: HeaderMap,
 ) -> Response
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
-    ai_agent_json(&state).await.into_response()
+    ai_agent_json(&state, &headers).await
 }
 
 pub(crate) async fn command_handler<Msg>(
     state: State<Arc<SmartRouter<Msg>>>,
+    headers: HeaderMap,
     Json(command): Json<Command>,
 ) -> Response {
+    if state.csrf && !csrf::verify(&headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(CommandResponse::err("missing or invalid CSRF token")),
+        )
+            .into_response();
+    }
+
+    if let Some(hook) = &state.auth_hook {
+        if !hook(&headers) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(CommandResponse::err("unauthorized")),
+            )
+                .into_response();
+        }
+    }
+
     if command.action.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -114,11 +146,12 @@ pub(crate) async fn command_handler<Msg>(
 
 pub(crate) async fn opengraph_handler<Msg>(
     state: State<Arc<SmartRouter<Msg>>>,
+    headers: HeaderMap,
 ) -> Response
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
-    social_opengraph(&state).await.into_response()
+    social_opengraph(&state, &headers).await
 }
 
 pub(crate) async fn pwa_service_worker<Msg>(
@@ -178,7 +211,11 @@ where
                 "<script type=\"module\">",
                 &format!("<script type=\"module\" nonce=\"{nonce}\">"),
             );
-        return csp_response(Html(inject_pwa(shell, state, &nonce)).into_response(), &csp);
+        return csp_response(
+            Html(inject_pwa(shell, state, &nonce)).into_response(),
+            &csp,
+            state.csrf,
+        );
     }
 
     // Hydration page: SSR HTML + serialised state + WASM bootstrap.
@@ -223,7 +260,11 @@ init().catch(e => console.error('appfront init failed', e));
         nonce = nonce,
     );
 
-    csp_response(Html(inject_pwa(page, state, &nonce)).into_response(), &csp)
+    csp_response(
+        Html(inject_pwa(page, state, &nonce)).into_response(),
+        &csp,
+        state.csrf,
+    )
 }
 
 /// Injects the PWA manifest `<link>` + service-worker registration `<script>`
@@ -239,6 +280,7 @@ fn inject_pwa<Msg>(
     if state.pwa.is_none() {
         return page;
     }
+    let cfg = state.pwa.as_ref().unwrap();
     if let Some(head_end) = page.find("</head>") {
         page.insert_str(
             head_end,
@@ -248,7 +290,11 @@ fn inject_pwa<Msg>(
     if let Some(body_end) = page.rfind("</body>") {
         page.insert_str(
             body_end,
-            &format!("\n    {}", registration_script(nonce)),
+            &format!(
+                "\n    {}\n    {}",
+                registration_script(cfg, nonce),
+                update_available_script(nonce),
+            ),
         );
     }
     page
@@ -259,7 +305,10 @@ pub(crate) async fn crawler_html<Msg>(state: &Arc<SmartRouter<Msg>>) -> Html<Str
     Html(page)
 }
 
-pub(crate) async fn ai_agent_json<Msg>(state: &Arc<SmartRouter<Msg>>) -> Json<serde_json::Value>
+pub(crate) async fn ai_agent_json<Msg>(
+    state: &Arc<SmartRouter<Msg>>,
+    headers: &HeaderMap,
+) -> Response
 where
     Msg: serde::Serialize,
 {

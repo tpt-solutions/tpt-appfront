@@ -113,6 +113,46 @@ fn collect<Msg>(
                 params,
             });
         }
+        NodeKind::Textarea { value } => {
+            let params = build_params(&ui.meta.ai.params);
+            interactive.push(InteractiveElement {
+                kind: "textarea".to_string(),
+                label: None,
+                value: Some(value.clone()),
+                action: ui.meta.ai.action.clone(),
+                params,
+            });
+        }
+        NodeKind::Checkbox { label, checked } => {
+            let params = build_params(&ui.meta.ai.params);
+            interactive.push(InteractiveElement {
+                kind: "checkbox".to_string(),
+                label: Some(label.clone()),
+                value: Some(checked.to_string()),
+                action: ui.meta.ai.action.clone(),
+                params,
+            });
+        }
+        NodeKind::Select { selected, .. } => {
+            let params = build_params(&ui.meta.ai.params);
+            interactive.push(InteractiveElement {
+                kind: "select".to_string(),
+                label: None,
+                value: Some(selected.clone()),
+                action: ui.meta.ai.action.clone(),
+                params,
+            });
+        }
+        NodeKind::Radio { selected, .. } => {
+            let params = build_params(&ui.meta.ai.params);
+            interactive.push(InteractiveElement {
+                kind: "radio".to_string(),
+                label: None,
+                value: Some(selected.clone()),
+                action: ui.meta.ai.action.clone(),
+                params,
+            });
+        }
         NodeKind::List { items } => {
             for child in items {
                 collect(child, interactive, data);
@@ -128,6 +168,10 @@ fn collect<Msg>(
                 rows: Some(rows.clone()),
                 text: None,
             });
+        }
+        NodeKind::Portal { content, .. } => {
+            // Surface the portal's content so AI consumers see its elements.
+            collect(content, interactive, data);
         }
     }
 }

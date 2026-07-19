@@ -335,4 +335,78 @@ mod tests {
         let resp = server.handle_request(&req).unwrap();
         assert_eq!(resp["error"]["code"], -32601);
     }
+
+    // --- MCP ⇄ app (DOM-equivalent) round-trip ---------------------------------
+    //
+    // Stands in for the "MCP drives the live DOM" story: a shared `Signal` holds
+    // the app's task count; `on_command` mutates it (what the DOM backend's
+    // `dispatch` would do on a real click), and `build_ui` reads it on every
+    // `tools/call`/`query_state`. After an MCP `tools/call` for `add_task`, a
+    // subsequent `query_state` snapshot must reflect the updated count — the
+    // same data flow the DOM would show after the node re-renders.
+
+    #[derive(Debug, Clone)]
+    enum RoundTripMsg {
+        Add,
+    }
+
+    #[test]
+    fn mcp_command_then_query_state_reflects_updated_app_state() {
+        use appfront_core::signal::Signal;
+
+        let task_count = Signal::new(0i32);
+        let count_for_ui = task_count.clone();
+        let count_for_cmd = task_count.clone();
+
+        let server = McpServer::new(
+            "rt-app",
+            "0.1.0",
+            move || {
+                let n = count_for_ui.get();
+                UITree::container(|c: &mut ContainerBuilder<RoundTripMsg>| {
+                    c.heading(1, format!("Tasks: {n}"));
+                    c.button("Add")
+                        .on_click(RoundTripMsg::Add)
+                        .ai_action("add_task")
+                        .ai_param("title", "Buy milk");
+                })
+            },
+            move |cmd| {
+                if cmd.action == "add_task" {
+                    count_for_cmd.set(count_for_cmd.get() + 1);
+                    McpCommandResult::ok("added")
+                } else {
+                    McpCommandResult::err("unknown")
+                }
+            },
+        );
+
+        // Initial state snapshot shows zero tasks.
+        let q0 = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "query_state", "arguments": {} }
+        });
+        let resp0 = server.handle_request(&q0).unwrap();
+        let text0 = resp0["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text0.contains("Tasks: 0"));
+
+        // MCP client invokes the `add_task` tool (the DOM-equivalent of a click
+        // on the "Add" button). The app's shared state updates.
+        let call = json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "add_task", "arguments": { "title": "Buy milk" } }
+        });
+        let call_resp = server.handle_request(&call).unwrap();
+        assert_eq!(call_resp["result"]["isError"], false);
+
+        // A fresh `query_state` now reflects the mutation — the round-trip
+        // closed: MCP tool call → app command → updated UI tree.
+        let q1 = json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "query_state", "arguments": {} }
+        });
+        let resp1 = server.handle_request(&q1).unwrap();
+        let text1 = resp1["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text1.contains("Tasks: 1"), "MCP command should have updated app state");
+    }
 }

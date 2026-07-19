@@ -62,6 +62,44 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
             }
             graph.push(Value::Object(item));
         }
+        NodeKind::Textarea { value } => {
+            let mut item = web_page_element(&ui.meta.ai);
+            item.insert("name".to_string(), Value::String("textarea".to_string()));
+            item.insert("value".to_string(), Value::String(value.clone()));
+            if let Some(action) = &ui.meta.ai.action {
+                item.insert(
+                    "potentialAction".to_string(),
+                    action_entry(&format!("Set {}", value), action, &ui.meta.ai.params),
+                );
+            }
+            graph.push(Value::Object(item));
+        }
+        NodeKind::Checkbox { label, checked } => {
+            let mut item = web_page_element(&ui.meta.ai);
+            item.insert("name".to_string(), Value::String(label.clone()));
+            item.insert("value".to_string(), Value::Bool(*checked));
+            graph.push(Value::Object(item));
+        }
+        NodeKind::Select { options, selected } => {
+            let mut item = web_page_element(&ui.meta.ai);
+            item.insert("name".to_string(), Value::String("select".to_string()));
+            item.insert("value".to_string(), Value::String(selected.clone()));
+            item.insert(
+                "options".to_string(),
+                Value::Array(options.iter().map(|(v, _)| Value::String(v.clone())).collect()),
+            );
+            graph.push(Value::Object(item));
+        }
+        NodeKind::Radio { name, options, selected } => {
+            let mut item = web_page_element(&ui.meta.ai);
+            item.insert("name".to_string(), Value::String(name.clone()));
+            item.insert("value".to_string(), Value::String(selected.clone()));
+            item.insert(
+                "options".to_string(),
+                Value::Array(options.iter().map(|(v, _)| Value::String(v.clone())).collect()),
+            );
+            graph.push(Value::Object(item));
+        }
         NodeKind::List { items } => {
             let mut item = web_page_element(&ui.meta.ai);
             let elements: Vec<Value> = items
@@ -97,6 +135,11 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
                 .collect();
             item.insert("rows".to_string(), Value::Array(row_values));
             graph.push(Value::Object(item));
+        }
+        NodeKind::Portal { content, .. } => {
+            // Portals are rendered into an overlay layer; surface their content
+            // in the graph so AI consumers still see the portal's elements.
+            walk(content, graph);
         }
     }
 }
