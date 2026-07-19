@@ -14,4 +14,4 @@ See the [workspace README](https://github.com/tpt-solutions/tpt-appfront#readme)
 
 ## License
 
-Apache-2.0
+MIT OR Apache-2.0

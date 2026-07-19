@@ -12,7 +12,7 @@
 //! secret) auto-granted through the ACL.
 
 use anyhow::Result;
-use tpt_appfront_webview::{run, WebviewOptions};
+use tpt_appfront_webview::{AppBuilder, WebviewOptions};
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
@@ -35,8 +35,8 @@ fn main() -> Result<()> {
         width: 480,
         height: 360,
         dist_dir: dist.clone(),
-        acl: appfront_webview::Acl {
-            capabilities: vec![appfront_webview::Capability {
+        acl: tpt_appfront_webview::Acl {
+            capabilities: vec![tpt_appfront_webview::Capability {
                 action: "increment".into(),
                 params: vec![],
             }],
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     };
 
     AppBuilder::new("tpt-counter-webview")
-        .with_window(appfront_webview::WindowConfig::from_options("main", &opts))
+        .with_window(tpt_appfront_webview::WindowConfig::from_options("main", &opts))
         .with_acl(opts.acl.clone())
         .with_max_commands_per_second(opts.max_commands_per_second)
         .with_builtin_capabilities()

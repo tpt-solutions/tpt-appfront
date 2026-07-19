@@ -308,7 +308,7 @@ fn build_virtual_list<'a, Msg>(
     measurer: &mut TextMeasurer,
     ui: &'a UITree<Msg>,
     items: &'a [UITree<Msg>],
-    vs: appfront_core::VirtualScroll,
+    vs: tpt_appfront_core::VirtualScroll,
 ) -> RenderNode<'a, Msg> {
     let range = vs.visible_range(items.len());
 
@@ -468,7 +468,7 @@ fn build_grid_row(
 }
 
 /// Styling adapter: a `CanvasStyle` derived from a node's `meta.class`
-/// utility classes (see `appfront_core::styling`). Canvas can't honor every
+/// utility classes (see `tpt_appfront_core::styling`). Canvas can't honor every
 /// CSS utility, but at minimum padding / font-size / color classes map to
 /// `taffy` layout and `egui` paint so `class="..."` is not a silent no-op on
 /// canvas (it is for DOM/HTML already). Unrecognized utilities are ignored.
@@ -496,7 +496,7 @@ pub struct Edge<T> {
 }
 
 /// Parses a node's `meta.class` into a [`CanvasStyle`], reading the utility
-/// names recognized by `appfront_core::styling::UTILITIES`. Returns the
+/// names recognized by `tpt_appfront_core::styling::UTILITIES`. Returns the
 /// default (no-op) style when there is no class or none of the mapped utilities
 /// are present.
 pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn virtual_list_windows_items_and_adds_spacers() {
         // 1000 items, item_height ~ 20px => only a small window built.
-        let vs = appfront_core::VirtualScroll::new(20.0, 200.0);
+        let vs = tpt_appfront_core::VirtualScroll::new(20.0, 200.0);
         let ui: UITree<Msg> = UITree::container(|c| {
             let b = c.list(|l| {
                 for i in 0..1000 {

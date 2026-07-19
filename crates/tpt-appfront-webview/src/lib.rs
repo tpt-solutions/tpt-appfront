@@ -435,15 +435,9 @@ fn new_ipc_rate_limiter(max_commands_per_second: u32) -> IpcRateLimiter {
     RateLimiter::direct(Quota::per_second(n).allow_burst(n))
 }
 
-/// Mirror of `tpt-appfront-server`'s `POST /command` body limit: an IPC message
-/// is fully buffered as a `String` before it is JSON-parsed, so an unbounded
-/// payload lets a hostile/buggy hosted page allocate arbitrarily much memory in
-/// the host process. Reject anything larger up front, before any parse cost.
-const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
-
-/// Parses an IPC message, checks the allowlist and rate limit, and dispatches
+/// Parses an IPC message, checks the ACL and rate limit, and dispatches
 /// to `on_command`.
-fn handle_ipc<F>(allowed: &HashSet<String>, limiter: &IpcRateLimiter, on_command: &F, message: &str)
+fn handle_ipc<F>(acl: &Acl, limiter: &IpcRateLimiter, on_command: &F, message: &str)
 where
     F: Fn(&str, serde_json::Value) -> std::result::Result<(), String>,
 {

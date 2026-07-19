@@ -18,4 +18,4 @@ See [docs/quickstart.md](https://github.com/tpt-solutions/tpt-appfront/blob/main
 
 ## License
 
-Apache-2.0
+MIT OR Apache-2.0

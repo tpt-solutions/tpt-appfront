@@ -27,7 +27,7 @@ cd examples/ssr-page && cargo run          # prints a semantic HTML string
 cd examples/ai-agent-demo && cargo run     # headless query_state/navigate_to/trigger_event demo
 ```
 
-CI (`.github/workflows/ci.yml`) runs five jobs: `native` (build+test+clippy for the workspace), `wasm` (build+clippy for `tpt-appfront-dom`/`tpt-appfront-canvas` on `wasm32-unknown-unknown`), `audit` (`cargo audit`), `deny` (`cargo deny check` against root `deny.toml`), and `examples` (`trunk build` for every `examples/*/index.html`, plus a native `cargo build` pass for non-trunk examples — the webview example is deliberately skipped there since it needs system webview libs and a pre-built `ui/dist`). Mirror these locally before pushing.
+CI (`.github/workflows/ci.yml`) runs six jobs: `native` (build+test+clippy for the workspace), `wasm` (build+clippy for `tpt-appfront-dom`/`tpt-appfront-canvas` on `wasm32-unknown-unknown`), `wasm-tests` (headless-Chromium `wasm-bindgen-test-runner` run of `tpt-appfront-dom`'s browser tests), `audit` (`cargo audit`), `deny` (`cargo deny check` against root `deny.toml`), and `examples` (`trunk build` for every `examples/*/index.html`, plus a native `cargo build` pass for non-trunk examples — the webview example is deliberately skipped there since it needs system webview libs and a pre-built `ui/dist`). Mirror these locally before pushing.
 
 ## Architecture
 
@@ -69,7 +69,7 @@ tpt-appfront-cli    — `tpt-appfront` CLI: init/dev/build/generate/benchmark/op
 
 - **`tpt-appfront-cli`** (`crates/tpt-appfront-cli/src`): `clap`-based `tpt-appfront init/dev/build/generate/benchmark/optimize`. `init` scaffolds a canvas/dom/tui/webview project with path deps back into this checkout; `dev --desktop`/`--web`/`--tui`/`--desktop-webview` shell out to `cargo run`/`trunk serve`; `build --target <canvas|dom|tui|webview|html|ai-schema>` shells out to `cargo build --release`/`trunk build --release` (or prints embedding guidance for the library-only `html`/`ai-schema` targets), with an optional `--bundle` flag that runs `cargo packager` for installers. `generate.rs` is an offline, rule-based `--prompt` UI scaffolder (keyword-matches against known patterns and emits a `view!` snippet) — not a live LLM call. `benchmark`/`optimize` wrap `cargo bench`/release-size reporting. See [docs/quickstart.md](docs/quickstart.md).
 
-- **`examples/`**: excluded from the workspace (`Cargo.toml` `exclude = ["examples"]`) since they need their own dependency resolution (wasm-bindgen versions, `cdylib` crate-type for trunk). All are committed and built in CI: `counter-dom` (trunk), `counter-canvas`/`counter-tui` (native `cargo run`), `counter-webview` (native host + nested `ui/` DOM app, skipped by CI's examples job — needs system webview libs), `ssr-page` (HTML string demo), `ai-agent-demo` (headless AI-agent API demo).
+- **`examples/`**: excluded from the workspace (`Cargo.toml` `exclude = ["examples"]`) since they need their own dependency resolution (wasm-bindgen versions, `cdylib` crate-type for trunk). All are committed and built in CI: `counter-dom`/`todo-app` (trunk), `counter-canvas`/`counter-tui`/`node-graph` (native `cargo run`; `node-graph` is a documented raw-`egui`/`eframe` escape hatch for pan/zoom/drag graph editing that `tpt-appfront-canvas`'s flexbox layout can't express), `counter-webview` (native host + nested `ui/` DOM app, skipped by CI's examples job — needs system webview libs), `ssr-page` (HTML string demo), `ai-agent-demo` (headless AI-agent API demo).
 
 ## Working in this repo
 

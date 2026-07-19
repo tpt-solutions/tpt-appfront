@@ -13,7 +13,7 @@
 //! the logic is backend-agnostic and testable on any target.
 //!
 //! ```ignore
-//! let ui = appfront_core::error_boundary(
+//! let ui = tpt_appfront_core::error_boundary(
 //!     || container(|c| c.button("ok").on_click(Msg::Go)),
 //!     || container(|c| c.text("something went wrong")),
 //! );

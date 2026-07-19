@@ -108,9 +108,8 @@ mod tests {
     #[test]
     fn parses_simple_shortcut() {
         let hk = parse_shortcut("Ctrl+Shift+K").unwrap();
-        assert!(hk.mods.contains(Modifiers::CONTROL));
-        assert!(hk.mods.contains(Modifiers::SHIFT));
-        assert_eq!(hk.key, Code::KeyK);
+        assert!(hk.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyK));
+        assert!(!hk.matches(Modifiers::CONTROL, Code::KeyK));
     }
 
     #[test]

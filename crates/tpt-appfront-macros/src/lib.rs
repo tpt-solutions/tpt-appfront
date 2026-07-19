@@ -143,7 +143,7 @@ fn expand(input: ItemFn, memo: bool) -> syn::Result<proc_macro2::TokenStream> {
         __appfront_ui
     };
 
-    // With `#[component(memo)]`, wrap the build in `appfront_core::memoize`,
+    // With `#[component(memo)]`, wrap the build in `tpt_appfront_core::memoize`,
     // keyed on the first argument (the component's props). When the props are
     // `PartialEq` to the previous render's, the cached `UITree` is returned
     // unchanged — the component's subtree is not rebuilt. The props type must
@@ -157,7 +157,7 @@ fn expand(input: ItemFn, memo: bool) -> syn::Result<proc_macro2::TokenStream> {
         quote! {
             static __appfront_memo_sentinel: u8 = 0;
             let __appfront_memo_id = (&__appfront_memo_sentinel as *const u8) as u64;
-            appfront_core::memoize(
+            tpt_appfront_core::memoize(
                 __appfront_memo_id,
                 #key_ident.clone(),
                 move |#key_ident| {

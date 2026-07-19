@@ -14,4 +14,4 @@ Not published to crates.io yet (`publish = false`) — needs system webview libr
 
 ## License
 
-Apache-2.0
+MIT OR Apache-2.0

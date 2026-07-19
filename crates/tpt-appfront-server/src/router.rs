@@ -103,6 +103,7 @@ pub struct SmartRouter<Msg> {
     /// lazily on first request. See [`caching`] module docs.
     html_cache: std::sync::OnceLock<(String, String)>,
     ai_schema_cache: std::sync::OnceLock<(serde_json::Value, String)>,
+    opengraph_cache: std::sync::OnceLock<(String, String)>,
 }
 
 /// Builder-pattern helper for constructing a [`SmartRouter`] with sensible
@@ -283,6 +284,7 @@ init().catch(e => console.error('appfront init failed', e));
             cors: self.cors,
             html_cache: std::sync::OnceLock::new(),
             ai_schema_cache: std::sync::OnceLock::new(),
+            opengraph_cache: std::sync::OnceLock::new(),
         }
     }
 }
@@ -416,6 +418,7 @@ where
 mod tests {
     use super::*;
     use tpt_appfront_core::ContainerBuilder;
+    use axum::http::HeaderMap;
     use axum::response::Response;
     use crate::router::handlers::{ai_agent_json, crawler_html, human_shell, social_opengraph};
 

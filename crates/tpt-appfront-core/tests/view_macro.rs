@@ -313,7 +313,7 @@ fn if_else_control_flow_selects_children() {
 fn node_expr_child_is_appended_via_with() {
     let ui: UITree<Msg> = view! {
         <Container>
-            { UITree::container(|c: &mut appfront_core::ContainerBuilder<Msg>| { c.text("composed"); }) }
+            { UITree::container(|c: &mut tpt_appfront_core::ContainerBuilder<Msg>| { c.text("composed"); }) }
         </Container>
     };
     let NodeKind::Container { children } = root_kind(&ui) else {
@@ -386,7 +386,7 @@ fn data_grid_rejects_children() {
 // Component model: props, children slots, memo (Phase 16, item #4)
 // ---------------------------------------------------------------------------
 
-use appfront_core::{Children, NodeMeta};
+use tpt_appfront_core::{Children, NodeMeta};
 
 #[derive(Debug, Clone, PartialEq)]
 struct GreetingProps {
@@ -395,7 +395,7 @@ struct GreetingProps {
 
 /// A typed-props component; `#[component]` fills `class`/`ai.description` and
 /// flags `is_dynamic`.
-#[appfront_core::component]
+#[tpt_appfront_core::component]
 fn greeting(props: GreetingProps) -> UITree<Msg> {
     UITree::container(|c| {
         c.heading(1, format!("Hello, {}!", props.name));
@@ -426,7 +426,7 @@ struct CardProps {
 }
 
 /// A component that takes a `children` slot and re-emits it inside its own tree.
-#[appfront_core::component]
+#[tpt_appfront_core::component]
 fn card(props: CardProps, children: Children<Msg>) -> UITree<Msg> {
     UITree::container(|c| {
         c.heading(2, props.title.clone());
@@ -467,7 +467,7 @@ struct CountProps {
 
 /// Memoized component: when `CountProps` is `PartialEq` to the previous render,
 /// the cached tree is returned unchanged.
-#[appfront_core::component(memo)]
+#[tpt_appfront_core::component(memo)]
 fn memoized_label(props: CountProps) -> UITree<Msg> {
     UITree::container(|c| {
         c.text(format!("value={}", props.value));

@@ -300,9 +300,13 @@ fn inject_pwa<Msg>(
     page
 }
 
-pub(crate) async fn crawler_html<Msg>(state: &Arc<SmartRouter<Msg>>) -> Html<String> {
-    let page = tpt_appfront_html::render_page(&state.ui, &state.title, &state.description);
-    Html(page)
+pub(crate) async fn crawler_html<Msg>(
+    state: &Arc<SmartRouter<Msg>>,
+    headers: &HeaderMap,
+) -> Response {
+    caching::cached_html(&state.html_cache, headers, || {
+        tpt_appfront_html::render_page(&state.ui, &state.title, &state.description)
+    })
 }
 
 pub(crate) async fn ai_agent_json<Msg>(
@@ -312,15 +316,20 @@ pub(crate) async fn ai_agent_json<Msg>(
 where
     Msg: serde::Serialize,
 {
-    let (json_ld, ai_schema) = tpt_appfront_ai_schema::both(&state.ui);
-    let body = serde_json::json!({
-        "jsonld": json_ld,
-        "ai_schema": ai_schema,
-    });
-    Json(body)
+    caching::cached_json(&state.ai_schema_cache, headers, || {
+        let (json_ld, ai_schema) = tpt_appfront_ai_schema::both(&state.ui);
+        serde_json::json!({
+            "jsonld": json_ld,
+            "ai_schema": ai_schema,
+        })
+    })
 }
 
-pub(crate) async fn social_opengraph<Msg>(state: &Arc<SmartRouter<Msg>>) -> Html<String> {
-    let page = tpt_appfront_html::render_page(&state.ui, &state.title, &state.description);
-    Html(page)
+pub(crate) async fn social_opengraph<Msg>(
+    state: &Arc<SmartRouter<Msg>>,
+    headers: &HeaderMap,
+) -> Response {
+    caching::cached_html(&state.opengraph_cache, headers, || {
+        tpt_appfront_html::render_page(&state.ui, &state.title, &state.description)
+    })
 }

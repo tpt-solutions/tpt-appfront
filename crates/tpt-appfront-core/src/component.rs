@@ -1,7 +1,7 @@
 //! Component model primitives shared across backends.
 //!
 //! `appfront`'s `#[component]` macro (re-exported as
-//! `appfront_core::component`) builds on these types to give components a
+//! `tpt_appfront_core::component`) builds on these types to give components a
 //! real, React-like shape: typed `Props`, `children` slots, and optional
 //! memoization keyed on props equality.
 
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// subtrees somewhere in its own tree:
 ///
 /// ```ignore
-/// #[appfront_core::component]
+/// #[tpt_appfront_core::component]
 /// fn card(props: CardProps, children: Children<Msg>) -> UITree<Msg> {
 ///     UITree::container(|c| {
 ///         c.heading(2, &props.title);

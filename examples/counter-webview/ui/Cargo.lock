@@ -3,35 +3,6 @@
 version = 4
 
 [[package]]
-name = "appfront-core"
-version = "0.1.0"
-dependencies = [
- "appfront-macros",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "appfront-dom"
-version = "0.1.0"
-dependencies = [
- "appfront-core",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "appfront-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -57,9 +28,9 @@ dependencies = [
 name = "counter-webview-ui"
 version = "0.1.0"
 dependencies = [
- "appfront-core",
- "appfront-dom",
  "console_error_panic_hook",
+ "tpt-appfront-core",
+ "tpt-appfront-dom",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -205,6 +176,36 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tpt-appfront-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-macros",
+ "web-sys",
+]
+
+[[package]]
+name = "tpt-appfront-dom"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-core",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "tpt-appfront-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

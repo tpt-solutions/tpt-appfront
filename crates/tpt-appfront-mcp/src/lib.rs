@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn mcp_command_then_query_state_reflects_updated_app_state() {
-        use appfront_core::signal::Signal;
+        use tpt_appfront_core::signal::Signal;
 
         let task_count = Signal::new(0i32);
         let count_for_ui = task_count.clone();

@@ -13,7 +13,7 @@
 //!
 //! Every mount returns a [`MountedRoot`] whose `unmount()` removes all event
 //! listeners and drops every `EffectHandle` it owns — no leaks. [`render`]
-//! returns an [`EffectHandle`](appfront_core::EffectHandle) that re-renders
+//! returns an [`EffectHandle`](tpt_appfront_core::EffectHandle) that re-renders
 //! only the changed subtrees on each signal change; [`mount_router`] uses it
 //! so navigation reconciles rather than full-replacing the container.
 //!
@@ -27,7 +27,9 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use tpt_appfront_core::{HydrationPayload, NodeKind, UITree};
+use tpt_appfront_core::{
+    create_effect, reconcile_keys, HydrationPayload, KeyedDiff, NodeKind, Router, UITree,
+};
 use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
@@ -52,7 +54,7 @@ struct MountedNode {
     node: Node,
     /// Effect handles (e.g. `reactive_text` subscriptions) this subtree owns
     /// and must drop on unmount.
-    handles: Vec<appfront_core::EffectHandle>,
+    handles: Vec<tpt_appfront_core::EffectHandle>,
     /// Child records, in document order.
     children: Vec<MountedNode>,
 }
@@ -78,10 +80,10 @@ impl MountedNode {
     }
 }
 
-/// Drops an [`EffectHandle`](appfront_core::EffectHandle) — `EffectHandle` is
+/// Drops an [`EffectHandle`](tpt_appfront_core::EffectHandle) — `EffectHandle` is
 /// `#[must_use]` and `Drop`s to stop the effect, so dropping here is the
 /// explicit cleanup the old `.forget()`-leak path lacked.
-fn drop_handle(handle: &appfront_core::EffectHandle) {
+fn drop_handle(handle: &tpt_appfront_core::EffectHandle) {
     let _ = handle;
 }
 
@@ -121,7 +123,7 @@ where
 /// unmounted leak-free. `dispatch` routes `Msg`s from the rendered view back
 /// to the app.
 ///
-/// Returns an [`EffectHandle`](appfront_core::EffectHandle); keep it alive for
+/// Returns an [`EffectHandle`](tpt_appfront_core::EffectHandle); keep it alive for
 /// the lifetime of the page (it is intentionally leaked on first mount).
 pub fn mount_router<Msg>(
     container: &Element,
@@ -201,6 +203,10 @@ fn kind_matches_dom<Msg>(node: &Node, ui: &UITree<Msg>) -> bool {
         NodeKind::Text { .. } => node.node_type() == web_sys::Node::TEXT_NODE,
         NodeKind::Button { .. } => tag == "button",
         NodeKind::Input { .. } => tag == "input",
+        NodeKind::Textarea { .. } => tag == "textarea",
+        NodeKind::Checkbox { .. } => tag == "label",
+        NodeKind::Select { .. } => tag == "select",
+        NodeKind::Radio { .. } => tag == "div",
         NodeKind::DataGrid { .. } => tag == "table",
         NodeKind::Portal { .. } => true,
     }
@@ -327,7 +333,7 @@ pub fn render<Msg>(
     container: &Element,
     view: Rc<dyn Fn() -> UITree<Msg>>,
     dispatch: Rc<dyn Fn(Msg)>,
-) -> Result<appfront_core::EffectHandle, wasm_bindgen::JsValue>
+) -> Result<tpt_appfront_core::EffectHandle, wasm_bindgen::JsValue>
 where
     Msg: Clone + 'static,
 {
@@ -423,6 +429,40 @@ where
                         if input_el.value() != *value {
                             input_el.set_value(value);
                         }
+                    }
+                }
+                NodeKind::Textarea { value } => {
+                    if el.text_content().as_deref() != Some(value) {
+                        el.set_text_content(Some(value));
+                    }
+                }
+                NodeKind::Checkbox { checked, .. } => {
+                    if let Some(input_el) = el
+                        .query_selector("input[type=checkbox]")
+                        .ok()
+                        .flatten()
+                        .and_then(|i| i.dyn_into::<web_sys::HtmlInputElement>().ok())
+                    {
+                        if input_el.checked() != *checked {
+                            input_el.set_checked(*checked);
+                        }
+                    }
+                }
+                NodeKind::Select { selected, .. } => {
+                    if let Some(select_el) = el.dyn_ref::<web_sys::HtmlSelectElement>() {
+                        if select_el.value().as_str() != selected.as_str() {
+                            select_el.set_value(selected);
+                        }
+                    }
+                }
+                NodeKind::Radio { selected, .. } => {
+                    if let Some(input_el) = el
+                        .query_selector(&format!("input[type=radio][value=\"{}\"]", selected))
+                        .ok()
+                        .flatten()
+                        .and_then(|i| i.dyn_into::<web_sys::HtmlInputElement>().ok())
+                    {
+                        input_el.set_checked(true);
                     }
                 }
                 NodeKind::DataGrid { columns, rows } => {
@@ -753,7 +793,7 @@ fn apply_meta_to_element<Msg>(el: Option<&Element>, ui: &UITree<Msg>) {
 }
 
 /// Identity used to match a `List` item across renders: the explicit
-/// [`appfront_core::NodeMeta::key`] if set, otherwise the item's position.
+/// [`tpt_appfront_core::NodeMeta::key`] if set, otherwise the item's position.
 /// Falling back to position means unkeyed lists still diff correctly for
 /// pure appends/truncations, but a reorder of unkeyed items is indistinguishable
 /// from in-place content changes — callers that reorder should set `.key(..)`.
@@ -822,6 +862,56 @@ where
         NodeKind::Input { value } => {
             let el = document.create_element("input")?;
             el.set_attribute("value", value)?;
+            el.into()
+        }
+        NodeKind::Textarea { value } => {
+            let el = document.create_element("textarea")?;
+            el.set_text_content(Some(value));
+            el.into()
+        }
+        NodeKind::Checkbox { label, checked } => {
+            let el = document.create_element("label")?;
+            let input = document.create_element("input")?;
+            input.set_attribute("type", "checkbox")?;
+            if *checked {
+                input.set_attribute("checked", "")?;
+            }
+            el.append_child(&input)?;
+            let span = document.create_element("span")?;
+            span.set_text_content(Some(label));
+            el.append_child(&span)?;
+            el.into()
+        }
+        NodeKind::Select { options, selected } => {
+            let el = document.create_element("select")?;
+            for (value, label) in options {
+                let opt = document.create_element("option")?;
+                opt.set_attribute("value", value)?;
+                if value == selected {
+                    opt.set_attribute("selected", "")?;
+                }
+                opt.set_text_content(Some(label));
+                el.append_child(&opt)?;
+            }
+            el.into()
+        }
+        NodeKind::Radio { name, options, selected } => {
+            let el = document.create_element("div")?;
+            for (value, label) in options {
+                let label_el = document.create_element("label")?;
+                let input = document.create_element("input")?;
+                input.set_attribute("type", "radio")?;
+                input.set_attribute("name", name)?;
+                input.set_attribute("value", value)?;
+                if value == selected {
+                    input.set_attribute("checked", "")?;
+                }
+                label_el.append_child(&input)?;
+                let span = document.create_element("span")?;
+                span.set_text_content(Some(label));
+                label_el.append_child(&span)?;
+                el.append_child(&label_el)?;
+            }
             el.into()
         }
         NodeKind::DataGrid { columns, rows } => {
@@ -903,6 +993,36 @@ where
             });
             input_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
             track_closure(&node, closure);
+        } else if let Some(ta_el) = node.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+            let target = ta_el.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                dispatch(on_input(target.value()));
+            });
+            ta_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
+            track_closure(&node, closure);
+        } else if let Some(select_el) = node.dyn_ref::<web_sys::HtmlSelectElement>() {
+            let target = select_el.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                dispatch(on_input(target.value()));
+            });
+            select_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
+            track_closure(&node, closure);
+        }
+    }
+
+    if let Some(on_toggle) = ui.meta.on_toggle.clone() {
+        let dispatch = Rc::clone(dispatch);
+        if let Some(label_el) = node.dyn_ref::<web_sys::HtmlLabelElement>() {
+            if let Some(input_el) = label_el.query_selector("input[type=checkbox]").ok().flatten() {
+                if let Some(checkbox_el) = input_el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    let target = checkbox_el.clone();
+                    let closure = Closure::<dyn FnMut()>::new(move || {
+                        dispatch(on_toggle(target.checked()));
+                    });
+                    checkbox_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
+                    track_closure(&node, closure);
+                }
+            }
         }
     }
 
@@ -928,13 +1048,14 @@ fn track_closure(node: &Node, closure: Closure<dyn FnMut()>) {
     LIVE_CLOSURES.with(|m| m.borrow_mut().entry(id).or_default().push(closure));
 }
 
-/// Identity used to match a `List` item across renders: the explicit
-/// [`tpt_appfront_core::NodeMeta::key`] if set, otherwise the item's position.
-/// Falling back to position means unkeyed lists still diff correctly for
-/// pure appends/truncations, but a reorder of unkeyed items is indistinguishable
-/// from in-place content changes — callers that reorder should set `.key(..)`.
-fn item_key<Msg>(item: &UITree<Msg>, index: usize) -> String {
-    item.meta.key.clone().unwrap_or_else(|| index.to_string())
+/// Drops and forgets every event `Closure` tracked for `node`, so its
+/// listeners don't outlive the DOM node once it's removed (on `unmount` or
+/// when a keyed list item is dropped from the DOM).
+fn drop_closures_for(node: &Node) {
+    let id = node_id(node);
+    LIVE_CLOSURES.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
 }
 
 /// Reconciles a rendered `<ul>` against a new `List`'s items, reusing
@@ -1206,6 +1327,10 @@ where
         | NodeKind::Text { .. }
         | NodeKind::Button { .. }
         | NodeKind::Input { .. }
+        | NodeKind::Textarea { .. }
+        | NodeKind::Checkbox { .. }
+        | NodeKind::Select { .. }
+        | NodeKind::Radio { .. }
         | NodeKind::Portal { .. } => {}
     }
 
@@ -1248,6 +1373,36 @@ where
             });
             input_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
             track_closure(&el.clone().into(), closure);
+        } else if let Some(ta_el) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+            let target = ta_el.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                dispatch(on_input(target.value()));
+            });
+            ta_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
+            track_closure(&el.clone().into(), closure);
+        } else if let Some(select_el) = el.dyn_ref::<web_sys::HtmlSelectElement>() {
+            let target = select_el.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                dispatch(on_input(target.value()));
+            });
+            select_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
+            track_closure(&el.clone().into(), closure);
+        }
+    }
+
+    if let Some(on_toggle) = ui.meta.on_toggle.clone() {
+        let dispatch = Rc::clone(dispatch);
+        if let Some(label_el) = el.dyn_ref::<web_sys::HtmlLabelElement>() {
+            if let Some(input_el) = label_el.query_selector("input[type=checkbox]").ok().flatten() {
+                if let Some(checkbox_el) = input_el.dyn_ref::<web_sys::HtmlInputElement>() {
+                    let target = checkbox_el.clone();
+                    let closure = Closure::<dyn FnMut()>::new(move || {
+                        dispatch(on_toggle(target.checked()));
+                    });
+                    checkbox_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
+                    track_closure(&el.clone().into(), closure);
+                }
+            }
         }
     }
 

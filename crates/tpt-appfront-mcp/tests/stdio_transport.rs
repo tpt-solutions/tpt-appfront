@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 fn start_server() -> (std::process::Child, BufReader<std::process::ChildStdout>, std::process::ChildStdin) {
-    let exe = env!("CARGO_BIN_EXE_appfront-mcp-e2e-helper");
+    let exe = env!("CARGO_BIN_EXE_tpt-appfront-mcp-e2e-helper");
     let mut child = Command::new(exe)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -13,3 +13,6 @@ repository.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 tpt-appfront-macros = { path = "../tpt-appfront-macros" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Storage"] }

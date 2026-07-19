@@ -3,8 +3,8 @@
 //! `on_command` that echoes the action, and runs the blocking `run_stdio`
 //! loop. The integration test drives it over OS pipes.
 
-use appfront_core::{ContainerBuilder, UITree};
-use appfront_mcp::{McpCommand, McpCommandResult, McpServer};
+use tpt_appfront_core::{ContainerBuilder, UITree};
+use tpt_appfront_mcp::{McpCommand, McpCommandResult, McpServer};
 
 #[derive(Debug, Clone)]
 enum Msg {

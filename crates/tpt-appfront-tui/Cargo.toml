@@ -12,5 +12,5 @@ repository.workspace = true
 [dependencies]
 tpt-appfront-core = { path = "../tpt-appfront-core" }
 ratatui = "0.30"
-crossterm = "0.28"
+crossterm = "0.29"
 anyhow = "1"

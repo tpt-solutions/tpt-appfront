@@ -6,12 +6,31 @@ keywords = ["webview", "desktop", "wry", "tao", "gui"]
 categories = ["gui", "os"]
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core" }
 anyhow = "1"
+serde = { workspace = true }
 serde_json = "1"
 wry = "0.24"
 governor = "0.6"
+arboard = "3"
+dirs = "5"
+notify-rust = "4"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+keyring = "3"
+global-hotkey = "0.2"
+crossbeam-channel = "0.5"
+fs4 = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.52", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[features]
+tray = ["dep:windows-sys"]

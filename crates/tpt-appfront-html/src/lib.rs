@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn renders_form_controls() {
-        let ui = appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
+        let ui = tpt_appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
             c.textarea("notes");
             c.checkbox("Agree", true);
             c.select([("a", "Alpha"), ("b", "Beta")], "b");
@@ -437,8 +437,8 @@ mod tests {
         );
     }
 
-    fn ui_tree() -> appfront_core::UITree<Msg> {
-        appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
+    fn ui_tree() -> tpt_appfront_core::UITree<Msg> {
+        tpt_appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
             c.heading(1, "Dashboard").class("title");
             c.button("Submit")
                 .ai_action("submit")

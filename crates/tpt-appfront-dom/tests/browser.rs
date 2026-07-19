@@ -1,18 +1,18 @@
-//! Real-browser tests for `appfront-dom` (see todo.md Phase 16, item #3).
+//! Real-browser tests for `tpt-appfront-dom` (see todo.md Phase 16, item #3).
 //!
 //! These run under `wasm-bindgen-test-runner` (a headless browser), not the
 //! native test harness — the crate compiles to an empty stub on non-wasm
-//! targets. CI's wasm job installs the runner and executes them; locally run:
+//! targets. CI's wasm-tests job installs the runner and executes them; locally run:
 //!
 //! ```sh
-//! cargo test -p appfront-dom --target wasm32-unknown-unknown
-//! wasm-bindgen-test-runner target/wasm32-unknown-unknown/debug/deps/appfront_dom-*.wasm
+//! cargo test -p tpt-appfront-dom --target wasm32-unknown-unknown
+//! wasm-bindgen-test-runner target/wasm32-unknown-unknown/debug/deps/tpt_appfront_dom-*.wasm
 //! ```
 
 #![cfg(target_arch = "wasm32")]
 
-use appfront_core::{create_effect, Signal, UITree};
-use appfront_dom::{mount, reactive_text};
+use tpt_appfront_core::{create_effect, Signal, UITree};
+use tpt_appfront_dom::{mount, reactive_text};
 use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;

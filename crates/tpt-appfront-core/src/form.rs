@@ -15,10 +15,12 @@ use std::rc::Rc;
 
 use crate::signal::Signal;
 
+type FieldValidator = dyn Fn(&str) -> Option<String>;
+
 struct StringField {
     value: Signal<String>,
     error: Signal<Option<String>>,
-    validator: Option<Rc<dyn Fn(&str) -> Option<String>>>,
+    validator: Option<Rc<FieldValidator>>,
 }
 
 /// A controlled-form helper. Create one per form (typically stored in a

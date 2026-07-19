@@ -12,9 +12,9 @@
 //!   in a [`Router`]/[`RouteTable`], navigate, and assert the resolved tree
 //!   swaps and still contains the expected nodes.
 
-use appfront_core::reconcile::{reconcile_keys, ListEdit};
-use appfront_core::signal::{create_effect, Signal};
-use appfront_core::ui_tree::{NodeKind, UITree};
+use tpt_appfront_core::reconcile::{reconcile_keys, ListEdit};
+use tpt_appfront_core::signal::{create_effect, Signal};
+use tpt_appfront_core::ui_tree::{NodeKind, UITree};
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,8 +159,8 @@ fn signal_effect_rebuilds_view_on_click() {
 }
 
 mod view_router {
-    use appfront_core::ui_tree::{NodeKind, UITree};
-    use appfront_core::{view, RouteTable, Router};
+    use tpt_appfront_core::ui_tree::{NodeKind, UITree};
+    use tpt_appfront_core::{view, RouteTable, Router};
 
     #[derive(Debug, Clone, PartialEq)]
     enum Route {

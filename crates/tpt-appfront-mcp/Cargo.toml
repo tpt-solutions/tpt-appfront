@@ -11,5 +11,10 @@ repository.workspace = true
 
 [dependencies]
 tpt-appfront-core = { path = "../tpt-appfront-core" }
-serde = { workspace = true }
 serde_json = { workspace = true }
+
+[[bin]]
+name = "tpt-appfront-mcp-e2e-helper"
+path = "src/e2e_helper.rs"
+test = false
+doc = false

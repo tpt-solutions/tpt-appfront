@@ -14,4 +14,4 @@ Only compiles under `wasm32-unknown-unknown` (an empty crate on native). See the
 
 ## License
 
-Apache-2.0
+MIT OR Apache-2.0

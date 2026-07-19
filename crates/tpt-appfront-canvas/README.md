@@ -14,4 +14,4 @@ Optional features: `full-text-shaping` (real text shaping via `cosmic-text`) and
 
 ## License
 
-Apache-2.0
+MIT OR Apache-2.0
