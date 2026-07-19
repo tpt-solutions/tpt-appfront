@@ -1,0 +1,15 @@
+[package]
+name = "tpt-appfront-mcp"
+description = "MCP server exposing a TPT AppFront app's AI-agent API as JSON-RPC tools over stdio."
+readme = "README.md"
+keywords = ["mcp", "json-rpc", "ai-agent", "llm", "tools"]
+categories = ["web-programming", "development-tools"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,10 +1,10 @@
 //! Demonstrates the Phase 10 programmatic AI agent API end to end: a plain
 //! Rust "agent" loop (standing in for an LLM tool-calling loop) discovers
-//! actions via [`appfront_core::query_state`], picks one, and drives the UI
-//! via [`appfront_core::trigger_event`] — no browser, no canvas, headless.
+//! actions via [`tpt_appfront_core::query_state`], picks one, and drives the UI
+//! via [`tpt_appfront_core::trigger_event`] — no browser, no canvas, headless.
 //! Also prints the JSON-LD / AI-Schema representation an AI agent hitting
-//! `GET /ai-schema.json` on `appfront-server` would receive.
-use appfront_core::{navigate_to, query_state, trigger_event, ContainerBuilder, Signal, UITree};
+//! `GET /ai-schema.json` on `tpt-appfront-server` would receive.
+use tpt_appfront_core::{navigate_to, query_state, trigger_event, ContainerBuilder, Signal, UITree};
 
 #[derive(Debug, Clone)]
 enum Msg {
@@ -52,7 +52,7 @@ fn dispatch(tasks: &Signal<Vec<String>>, msg: Msg) {
 
 /// Stands in for an LLM's tool-selection step: given the discovered
 /// interactive elements, pick which `ai_action` to invoke next.
-fn agent_choose_action(state: &appfront_core::AgentState, step: usize) -> Option<String> {
+fn agent_choose_action(state: &tpt_appfront_core::AgentState, step: usize) -> Option<String> {
     if step < 3 {
         // Prefer add_task for the first few steps to grow the list...
         state
@@ -108,7 +108,7 @@ fn main() {
     println!("\n=== What GET /ai-schema.json would return for the final UI ===");
     let mut final_ui = build_ui(&tasks);
     final_ui.assign_ids();
-    let (json_ld, ai_schema) = appfront_ai_schema::both(&final_ui);
+    let (json_ld, ai_schema) = tpt_appfront_ai_schema::both(&final_ui);
     println!(
         "JSON-LD:\n{}",
         serde_json::to_string_pretty(&json_ld).unwrap()

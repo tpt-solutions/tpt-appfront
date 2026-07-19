@@ -1,0 +1,18 @@
+[package]
+name = "tpt-appfront-macros"
+description = "#[component] attribute macro and the view!/rsx! templating macro for TPT AppFront."
+readme = "README.md"
+keywords = ["macro", "proc-macro", "view", "rsx", "jsx"]
+categories = ["development-tools::procedural-macro-helpers"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

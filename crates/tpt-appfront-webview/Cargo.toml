@@ -1,0 +1,17 @@
+[package]
+name = "tpt-appfront-webview"
+description = "Thin OS-webview desktop shell (wry + tao) for TPT AppFront, hosting the DOM WASM bundle with no Electron/Node."
+readme = "README.md"
+keywords = ["webview", "desktop", "wry", "tao", "gui"]
+categories = ["gui", "os"]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }
+anyhow = "1"
+serde_json = "1"
+wry = "0.24"
+governor = "0.6"

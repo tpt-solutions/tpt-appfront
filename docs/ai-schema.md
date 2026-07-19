@@ -1,7 +1,7 @@
 # AI Schema Format Reference
 
-Two machine-readable output formats that backends `appfront-ai-schema` and
-`appfront-html` produce from the abstract `UITree`. The formats are designed
+Two machine-readable output formats that backends `tpt-appfront-ai-schema` and
+`tpt-appfront-html` produce from the abstract `UITree`. The formats are designed
 for crawlers (Googlebot, social-media bots) and AI agents respectively.
 
 ---
@@ -115,7 +115,7 @@ rendering it.
 
 ## 3. HTML data attributes
 
-The `appfront-html` backend embeds the same metadata in the DOM so any
+The `tpt-appfront-html` backend embeds the same metadata in the DOM so any
 HTML-aware crawler or agent can recover it by scraping:
 
 ```html

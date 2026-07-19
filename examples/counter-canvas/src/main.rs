@@ -1,4 +1,4 @@
-use appfront_core::{Signal, UITree};
+use tpt_appfront_core::{Signal, UITree};
 
 #[derive(Debug, Clone)]
 enum Msg {
@@ -21,6 +21,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Msg::Increment => count.set(count.get() + 1),
     };
 
-    appfront_canvas::run_native("Counter", build_ui, dispatch)?;
+    tpt_appfront_canvas::run_native("Counter", build_ui, dispatch)?;
     Ok(())
 }

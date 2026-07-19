@@ -1,0 +1,13 @@
+[package]
+name = "tpt-appfront-html"
+description = "Semantic HTML (SSR/SSG) backend for TPT AppFront, with data-ai-* and OpenGraph tags for crawlers."
+readme = "README.md"
+keywords = ["ssr", "html", "ssg", "seo", "ui"]
+categories = ["web-programming", "template-engine"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }

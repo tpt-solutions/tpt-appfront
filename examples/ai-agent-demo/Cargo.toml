@@ -5,6 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
-appfront-core = { path = "../../crates/appfront-core" }
-appfront-ai-schema = { path = "../../crates/appfront-ai-schema" }
+tpt-appfront-core = { path = "../../crates/tpt-appfront-core" }
+tpt-appfront-ai-schema = { path = "../../crates/tpt-appfront-ai-schema" }
 serde_json = "1"

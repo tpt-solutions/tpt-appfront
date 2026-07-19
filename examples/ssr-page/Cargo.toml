@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-appfront-core = { path = "../../crates/appfront-core" }
-appfront-server = { path = "../../crates/appfront-server" }
+tpt-appfront-core = { path = "../../crates/tpt-appfront-core" }
+tpt-appfront-server = { path = "../../crates/tpt-appfront-server" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

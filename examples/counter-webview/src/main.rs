@@ -1,4 +1,4 @@
-//! Desktop webview shell hosting the `ui/` `appfront-dom` counter app.
+//! Desktop webview shell hosting the `ui/` `tpt-appfront-dom` counter app.
 //!
 //! Build/run:
 //! ```text
@@ -8,7 +8,7 @@
 //! Or use the CLI: `appfront dev --desktop-webview` (from this directory).
 
 use anyhow::Result;
-use appfront_webview::{run, WebviewOptions};
+use tpt_appfront_webview::{run, WebviewOptions};
 use std::path::PathBuf;
 
 fn main() -> Result<()> {

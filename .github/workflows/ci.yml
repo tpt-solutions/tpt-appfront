@@ -32,8 +32,8 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p appfront-dom -p appfront-canvas --target wasm32-unknown-unknown
-      - run: cargo clippy -p appfront-dom -p appfront-canvas --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: cargo build -p tpt-appfront-dom -p tpt-appfront-canvas --target wasm32-unknown-unknown
+      - run: cargo clippy -p tpt-appfront-dom -p tpt-appfront-canvas --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   audit:
     name: Dependency vulnerability scan

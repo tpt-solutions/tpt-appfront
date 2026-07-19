@@ -1,0 +1,16 @@
+[package]
+name = "tpt-appfront-tui"
+description = "Terminal UI backend for TPT AppFront (ratatui/crossterm), keyboard-driven focus and dispatch."
+readme = "README.md"
+keywords = ["tui", "ratatui", "terminal", "ui", "crossterm"]
+categories = ["command-line-interface", "gui"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }
+ratatui = "0.30"
+crossterm = "0.28"
+anyhow = "1"

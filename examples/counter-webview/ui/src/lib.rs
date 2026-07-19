@@ -1,4 +1,4 @@
-use appfront_core::{create_effect, Signal, UITree};
+use tpt_appfront_core::{create_effect, Signal, UITree};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
@@ -43,9 +43,9 @@ pub fn start() -> Result<(), JsValue> {
         Msg::Increment => count_for_dispatch.set(count_for_dispatch.get() + 1),
     });
 
-    appfront_dom::mount(&container, &ui, dispatch)?;
+    tpt_appfront_dom::mount(&container, &ui, dispatch)?;
 
-    let (text_node, text_handle) = appfront_dom::reactive_text(&document, display)?;
+    let (text_node, text_handle) = tpt_appfront_dom::reactive_text(&document, display)?;
     container.append_child(&text_node)?;
     // Whole-process root mount: forgetting is an explicit choice here, not
     // reactive_text's default behavior.

@@ -1,4 +1,4 @@
-use appfront_core::{Signal, UITree};
+use tpt_appfront_core::{Signal, UITree};
 
 #[derive(Debug, Clone)]
 enum Msg {
@@ -22,6 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Tab/Arrows move focus, Enter/Space activate the focused button, Esc quits.
-    appfront_tui::run(build_ui, dispatch)?;
+    tpt_appfront_tui::run(build_ui, dispatch)?;
     Ok(())
 }

@@ -1,11 +1,11 @@
 //! Proof-of-concept node-graph / visual workflow builder demo.
 //!
-//! This intentionally bypasses `appfront_canvas::run_native`/`CanvasApp`: that
+//! This intentionally bypasses `tpt_appfront_canvas::run_native`/`CanvasApp`: that
 //! pipeline renders a generic `UITree<Msg>` through a strictly flexbox (taffy)
 //! layout with no pan/zoom/absolute-transform primitive and no drag support,
 //! so it can't express an infinite pannable node-graph canvas. This example
 //! is a raw `egui`/`eframe` sibling demonstrating what such an editor would
-//! need, not an extension of `appfront-canvas`.
+//! need, not an extension of `tpt-appfront-canvas`.
 
 use eframe::egui;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Vec2};
@@ -89,7 +89,7 @@ impl GraphState {
 }
 
 /// World-space <-> screen-space camera transform. Nothing in
-/// `appfront-canvas`'s taffy layout offers this; it's hand-rolled here since
+/// `tpt-appfront-canvas`'s taffy layout offers this; it's hand-rolled here since
 /// it's the core primitive an infinite pannable canvas needs.
 struct Camera {
     pan: Vec2,

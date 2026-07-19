@@ -1,0 +1,15 @@
+[package]
+name = "tpt-appfront-ai-schema"
+description = "JSON-LD (schema.org) and custom AI Schema output backend for TPT AppFront, for AI-agent clients."
+readme = "README.md"
+keywords = ["json-ld", "schema-org", "ai", "llm", "seo"]
+categories = ["web-programming", "encoding"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }

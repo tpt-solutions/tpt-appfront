@@ -1,8 +1,8 @@
 //! Minimal SSR/SSG example: no WASM, no client-side hydration — just
-//! `appfront-server` serving a static `UITree` as semantic HTML to any
+//! `tpt-appfront-server` serving a static `UITree` as semantic HTML to any
 //! client (crawlers, browsers, AI agents each get their preferred format).
-use appfront_core::{ContainerBuilder, UITree};
-use appfront_server::SmartRouterBuilder;
+use tpt_appfront_core::{ContainerBuilder, UITree};
+use tpt_appfront_server::SmartRouterBuilder;
 
 #[derive(Debug, Clone, serde::Serialize)]
 enum Msg {}
@@ -28,5 +28,5 @@ async fn main() {
 
     let addr = "127.0.0.1:3000".parse().unwrap();
     println!("Serving on http://{addr}");
-    appfront_server::serve(router, addr).await;
+    tpt_appfront_server::serve(router, addr).await;
 }

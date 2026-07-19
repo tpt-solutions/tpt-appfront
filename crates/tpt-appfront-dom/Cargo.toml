@@ -1,0 +1,30 @@
+[package]
+name = "tpt-appfront-dom"
+description = "Fine-grained-reactive real DOM backend for TPT AppFront (web-sys), wasm32-only, no virtual DOM."
+readme = "README.md"
+keywords = ["dom", "wasm", "web-sys", "reactive", "ui"]
+categories = ["wasm", "web-programming", "gui"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "Node",
+    "Text",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Event",
+    "NodeList",
+    "HtmlCollection",
+] }

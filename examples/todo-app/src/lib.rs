@@ -1,4 +1,4 @@
-use appfront_core::{create_effect, view, Signal, UITree};
+use tpt_appfront_core::{create_effect, view, Signal, UITree};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::JsCast;
@@ -91,7 +91,7 @@ pub fn start() -> Result<(), JsValue> {
             </List>
         </Container>
     };
-    appfront_dom::mount(&form, &form_ui, dispatch.clone())?;
+    tpt_appfront_dom::mount(&form, &form_ui, dispatch.clone())?;
 
     if let Some(el) = form.query_selector("input")? {
         if let Ok(input) = el.dyn_into::<web_sys::HtmlInputElement>() {
@@ -100,7 +100,7 @@ pub fn start() -> Result<(), JsValue> {
     }
 
     // Live "X tasks remaining" line: a reactive text node bound to `remaining`.
-    let (remaining_node, remaining_handle) = appfront_dom::reactive_text(&document, remaining.clone())?;
+    let (remaining_node, remaining_handle) = tpt_appfront_dom::reactive_text(&document, remaining.clone())?;
     form.append_child(&remaining_node)?;
     // Whole-process root mount: forgetting is an explicit choice here, not
     // reactive_text's default behavior.
@@ -154,7 +154,7 @@ pub fn start() -> Result<(), JsValue> {
                 </Container>
             };
             panel.set_inner_html("");
-            let _ = appfront_dom::mount(&panel, &grid_ui, dispatch.clone());
+            let _ = tpt_appfront_dom::mount(&panel, &grid_ui, dispatch.clone());
         })
     };
 

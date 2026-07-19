@@ -231,122 +231,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "appfront-ai-schema"
-version = "0.1.0"
-dependencies = [
- "appfront-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "appfront-canvas"
-version = "0.1.0"
-dependencies = [
- "appfront-core",
- "console_error_panic_hook",
- "cosmic-text",
- "eframe",
- "egui",
- "taffy",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "appfront-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
-]
-
-[[package]]
-name = "appfront-core"
-version = "0.1.0"
-dependencies = [
- "appfront-macros",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "appfront-dom"
-version = "0.1.0"
-dependencies = [
- "appfront-core",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "appfront-html"
-version = "0.1.0"
-dependencies = [
- "appfront-core",
-]
-
-[[package]]
-name = "appfront-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "appfront-mcp"
-version = "0.1.0"
-dependencies = [
- "appfront-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "appfront-server"
-version = "0.1.0"
-dependencies = [
- "appfront-ai-schema",
- "appfront-core",
- "appfront-html",
- "axum",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.4.13",
- "tower-http",
- "tower_governor",
- "tracing",
- "ureq",
-]
-
-[[package]]
-name = "appfront-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "appfront-core",
- "crossterm 0.28.1",
- "ratatui",
-]
-
-[[package]]
-name = "appfront-webview"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "appfront-core",
- "governor",
- "serde_json",
- "wry",
-]
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5987,6 +5871,122 @@ dependencies = [
  "thiserror 1.0.69",
  "tower 0.5.3",
  "tracing",
+]
+
+[[package]]
+name = "tpt-appfront-ai-schema"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-core",
+]
+
+[[package]]
+name = "tpt-appfront-canvas"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "cosmic-text",
+ "eframe",
+ "egui",
+ "taffy",
+ "tpt-appfront-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "tpt-appfront-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+]
+
+[[package]]
+name = "tpt-appfront-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-macros",
+]
+
+[[package]]
+name = "tpt-appfront-dom"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-core",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "tpt-appfront-html"
+version = "0.1.0"
+dependencies = [
+ "tpt-appfront-core",
+]
+
+[[package]]
+name = "tpt-appfront-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "tpt-appfront-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-core",
+]
+
+[[package]]
+name = "tpt-appfront-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.4.13",
+ "tower-http",
+ "tower_governor",
+ "tpt-appfront-ai-schema",
+ "tpt-appfront-core",
+ "tpt-appfront-html",
+ "tracing",
+ "ureq",
+]
+
+[[package]]
+name = "tpt-appfront-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm 0.28.1",
+ "ratatui",
+ "tpt-appfront-core",
+]
+
+[[package]]
+name = "tpt-appfront-webview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "governor",
+ "serde_json",
+ "tpt-appfront-core",
+ "wry",
 ]
 
 [[package]]

@@ -1,0 +1,15 @@
+[package]
+name = "tpt-appfront-core"
+description = "UITree AST and the reactive Signal system for TPT AppFront: virtual scroll, styling utilities, devtools inspector, and static-tree caching, shared by every backend."
+readme = "README.md"
+keywords = ["ui", "reactive", "signal", "gui", "wasm"]
+categories = ["gui", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tpt-appfront-macros = { path = "../tpt-appfront-macros" }

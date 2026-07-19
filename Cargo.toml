@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/appfront-core",
-    "crates/appfront-dom",
-    "crates/appfront-canvas",
-    "crates/appfront-html",
-    "crates/appfront-ai-schema",
-    "crates/appfront-macros",
-    "crates/appfront-cli",
-    "crates/appfront-server",
-    "crates/appfront-mcp",
-    "crates/appfront-tui",
-    "crates/appfront-webview",
+    "crates/tpt-appfront-core",
+    "crates/tpt-appfront-dom",
+    "crates/tpt-appfront-canvas",
+    "crates/tpt-appfront-html",
+    "crates/tpt-appfront-ai-schema",
+    "crates/tpt-appfront-macros",
+    "crates/tpt-appfront-cli",
+    "crates/tpt-appfront-server",
+    "crates/tpt-appfront-mcp",
+    "crates/tpt-appfront-tui",
+    "crates/tpt-appfront-webview",
 ]
 exclude = ["examples"]
 
@@ -19,7 +19,7 @@ exclude = ["examples"]
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/REPLACE_ME/tpt-appfront"
+repository = "https://github.com/tpt-solutions/tpt-appfront"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
