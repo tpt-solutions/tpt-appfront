@@ -27,6 +27,11 @@ use tower_http::trace::TraceLayer;
 
 use crate::pwa::PwaConfig;
 
+/// An optional auth predicate over incoming request headers, used to gate
+/// protected routes. `Send + Sync` so it can live behind the shared
+/// `SmartRouter<Msg>` across Axum's worker threads.
+type AuthHook = dyn Fn(&axum::http::HeaderMap) -> bool + Send + Sync;
+
 // Re-export the public command/CORS types so the crate's documented API and
 // the inline `mod tests` (which `use super::*`) resolve them unchanged.
 pub use command::{Command, CommandHandler, CommandResponse, RateLimitConfig};
@@ -98,7 +103,7 @@ pub struct SmartRouter<Msg> {
     /// Optional gate invoked before `command_handler` runs; return `false`
     /// to reject the request with `401 Unauthorized`. Lets an app plug in
     /// its own session/token check without the router prescribing one.
-    pub auth_hook: Option<std::sync::Arc<dyn Fn(&axum::http::HeaderMap) -> bool + Send + Sync>>,
+    pub auth_hook: Option<std::sync::Arc<AuthHook>>,
     /// Rendered-content cache for the deterministic read routes; populated
     /// lazily on first request. See [`caching`] module docs.
     html_cache: std::sync::OnceLock<(String, String)>,
@@ -120,7 +125,7 @@ pub struct SmartRouterBuilder<Msg> {
     allowed_actions: Option<Vec<String>>,
     csrf: bool,
     read_rate_limit: RateLimitConfig,
-    auth_hook: Option<std::sync::Arc<dyn Fn(&axum::http::HeaderMap) -> bool + Send + Sync>>,
+    auth_hook: Option<std::sync::Arc<AuthHook>>,
     rate_limit: RateLimitConfig,
     pwa: Option<PwaConfig>,
     cors: CorsPolicy,

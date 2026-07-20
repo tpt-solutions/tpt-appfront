@@ -263,6 +263,63 @@ Scaffolded by `tpt-appfront init`. See `tpt-appfront dev --help` / `tpt-appfront
     }
 }
 
+/// Skeleton for `tpt-appfront add component <name>`: a `view!`-based reusable
+/// UI fragment that takes a `Msg` dispatch closure and returns a `UITree<Msg>`.
+/// The component name is kebab-cased into the root node's class.
+pub fn component_rs(name: &str, kebab: &str) -> String {
+    format!(
+        r#"//! Component `{name}` — scaffolded by `tpt-appfront add component`.
+
+use tpt_appfront_core::{{UITree, view}};
+use std::rc::Rc;
+
+#[derive(Debug, Clone)]
+pub enum Msg {{
+    Activated,
+}}
+
+/// Builds the component's `UITree`. Wire `dispatch` into your app's `Msg`.
+pub fn {name}() -> UITree<Msg> {{
+    let dispatch: Rc<dyn Fn(Msg)> = Rc::new(|msg| match msg {{
+        Msg::Activated => {{ /* TODO: handle activation */ }}
+    }});
+    view! {{
+        <Container class="{kebab}">
+            <Heading level={{1u8}}>"{name}"</Heading>
+            <Button on_click={{ move |_| dispatch(Msg::Activated) }}>"Activate"</Button>
+        </Container>
+    }}
+}}
+"#
+    )
+}
+
+/// Skeleton for `tpt-appfront add page <name>`: a route-sized `view!` screen
+/// that fills the content area of a `dashboard_shell`/`AppBuilder` host.
+pub fn page_rs(name: &str, kebab: &str) -> String {
+    format!(
+        r#"//! Page `{name}` — scaffolded by `tpt-appfront add page`.
+
+use tpt_appfront_core::{{UITree, view}};
+
+#[derive(Debug, Clone)]
+pub enum Msg {{
+    Navigated,
+}}
+
+/// Builds the page's `UITree` for route `{kebab}`.
+pub fn {name}() -> UITree<Msg> {{
+    view! {{
+        <Container class="{kebab}">
+            <Heading level={{1u8}}>"{name}"</Heading>
+            <Text>"This page was scaffolded by `tpt-appfront add page`."</Text>
+        </Container>
+    }}
+}}
+"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,5 +410,23 @@ mod tests {
         let out = readme("my-app", false);
         assert!(out.contains("# my-app"));
         assert!(!out.contains("canvas/"));
+    }
+
+    #[test]
+    fn component_rs_is_view_macro_shaped() {
+        let out = component_rs("UserBadge", "user-badge");
+        assert!(out.contains("pub fn UserBadge() -> UITree<Msg>"));
+        assert!(out.contains("class=\"user-badge\""));
+        assert!(out.contains("view!"));
+        assert!(!out.contains("{{"));
+        assert!(!out.contains("}}"));
+    }
+
+    #[test]
+    fn page_rs_is_view_macro_shaped() {
+        let out = page_rs("Settings", "settings");
+        assert!(out.contains("pub fn Settings() -> UITree<Msg>"));
+        assert!(out.contains("class=\"settings\""));
+        assert!(out.contains("view!"));
     }
 }

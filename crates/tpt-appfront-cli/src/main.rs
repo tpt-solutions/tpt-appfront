@@ -1,4 +1,5 @@
 mod generate;
+mod ingest;
 mod templates;
 
 use std::fs;
@@ -114,6 +115,44 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Ingest existing static / server-rendered HTML and emit a `view!`
+    /// builder skeleton (structure + classes only; inline event handlers
+    /// become `todo!()` stubs). Pipe the output into an existing project.
+    Ingest {
+        /// Path to the HTML file to ingest.
+        input: PathBuf,
+        /// Write the generated skeleton to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Grow an existing project: scaffold a new reusable `view!` component or
+    /// route-sized page inside it and wire it into the module tree.
+    Add {
+        /// What to add: `component` or `page`.
+        #[command(subcommand)]
+        kind: AddKind,
+    },
+}
+
+/// The sub-kind of `tpt-appfront add`.
+#[derive(Subcommand)]
+enum AddKind {
+    /// Add a reusable `view!` component under `src/components/`.
+    Component {
+        /// Component name (PascalCase, e.g. `UserBadge`).
+        name: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Add a route-sized `view!` page under `src/pages/`.
+    Page {
+        /// Page name (PascalCase, e.g. `Settings`).
+        name: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -131,6 +170,11 @@ fn main() -> anyhow::Result<()> {
             optimize(&target, &project, auto, bundle)
         }
         Command::Generate { prompt, out } => generate_ui(&prompt, out.as_deref()),
+        Command::Ingest { input, out } => ingest::ingest_file(&input, out.as_deref()),
+        Command::Add { kind } => match kind {
+            AddKind::Component { name, project } => add_component(&name, &project),
+            AddKind::Page { name, project } => add_page(&name, &project),
+        },
     }
 }
 
@@ -285,6 +329,97 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
         templates::tui_cargo_toml(pkg_name, &dep_ref("tpt-appfront-core"), &dep_ref("tpt-appfront-tui")),
     )?;
     fs::write(dir.join("src").join("main.rs"), templates::tui_main_rs(app_title))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// add
+// ---------------------------------------------------------------------------
+
+/// Converts a PascalCase `name` to a kebab-case `class`/`route` slug.
+fn kebab_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    let mut prev_lower = false;
+    for ch in name.chars() {
+        if ch.is_uppercase() && prev_lower {
+            out.push('-');
+        }
+        out.push(ch.to_ascii_lowercase());
+        prev_lower = ch.is_lowercase() || ch.is_numeric();
+    }
+    out
+}
+
+/// Picks the project's root source file (where `mod` declarations live), or
+/// `None` so the caller can skip module-tree wiring. Prefers `src/lib.rs`,
+/// then `src/main.rs`.
+fn root_src_file(project: &Path) -> Option<PathBuf> {
+    for name in ["lib.rs", "main.rs"] {
+        let p = project.join("src").join(name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Appends `mod <dir>;` to the project's root source file if a `src/<dir>`
+/// module isn't already declared there.
+fn declare_module(project: &Path, dir: &str) -> anyhow::Result<()> {
+    let Some(root) = root_src_file(project) else {
+        return Ok(());
+    };
+    let decl = format!("mod {dir};");
+    let content = fs::read_to_string(&root).unwrap_or_default();
+    if content.contains(&decl) {
+        return Ok(());
+    }
+    let mut appended = content;
+    if !appended.ends_with('\n') {
+        appended.push('\n');
+    }
+    appended.push_str(&decl);
+    appended.push('\n');
+    fs::write(&root, appended).with_context(|| format!("updating {}", root.display()))
+}
+
+fn add_component(name: &str, project: &Path) -> anyhow::Result<()> {
+    validate_identifier(name)?;
+    let dir = project.join("src").join("components");
+    fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let file = dir.join(format!("{}.rs", name.to_ascii_lowercase()));
+    if file.exists() {
+        bail!("component `{}` already exists at {}", name, file.display());
+    }
+    fs::write(&file, templates::component_rs(name, &kebab_case(name)))?;
+    declare_module(project, "components")?;
+    println!("Created component `{}` at {}", name, file.display());
+    Ok(())
+}
+
+fn add_page(name: &str, project: &Path) -> anyhow::Result<()> {
+    validate_identifier(name)?;
+    let dir = project.join("src").join("pages");
+    fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let file = dir.join(format!("{}.rs", name.to_ascii_lowercase()));
+    if file.exists() {
+        bail!("page `{}` already exists at {}", name, file.display());
+    }
+    fs::write(&file, templates::page_rs(name, &kebab_case(name)))?;
+    declare_module(project, "pages")?;
+    println!("Created page `{}` at {}", name, file.display());
+    Ok(())
+}
+
+/// Rejects names that aren't usable as a Rust identifier root (PascalCase
+/// component/page names become both a file name and a `mod` segment).
+fn validate_identifier(name: &str) -> anyhow::Result<()> {
+    if name.is_empty()
+        || name.contains(['/', '\\', '.', '-', ' '])
+        || !name.chars().next().unwrap().is_alphabetic()
+    {
+        bail!("invalid name `{name}`: use a PascalCase identifier (e.g. `UserBadge`)");
+    }
     Ok(())
 }
 
@@ -959,6 +1094,85 @@ mod tests {
         fs::write(&lock, "version = 3\n# cargo rewrote this\n").unwrap();
         assert!(!w.changed(&mut snap), "editing Cargo.lock alone does not reload");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_subcommands_parse() {
+        assert!(Cli::try_parse_from([
+            "tpt-appfront", "add", "component", "UserBadge", "--project", "."
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "tpt-appfront", "add", "page", "Settings", "--project", "."
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn add_component_scaffolds_file_and_declares_module() {
+        let dir = std::env::temp_dir().join(format!("tpt-add-component-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src").join("lib.rs"), "// root\n").unwrap();
+
+        assert!(add_component("UserBadge", &dir).is_ok());
+
+        let file = dir.join("src").join("components").join("userbadge.rs");
+        assert!(file.exists(), "component file created");
+        let src = fs::read_to_string(&file).unwrap();
+        assert!(src.contains("pub fn UserBadge() -> UITree<Msg>"));
+        assert!(src.contains("class=\"user-badge\""));
+
+        let root = fs::read_to_string(dir.join("src").join("lib.rs")).unwrap();
+        assert!(root.contains("mod components;"), "module decl appended: {root}");
+
+        assert!(add_component("UserBadge", &dir).is_err(), "duplicate rejected");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_page_scaffolds_file_and_declares_module() {
+        let dir = std::env::temp_dir().join(format!("tpt-add-page-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src").join("main.rs"), "// root\n").unwrap();
+
+        assert!(add_page("Settings", &dir).is_ok());
+
+        let file = dir.join("src").join("pages").join("settings.rs");
+        assert!(file.exists(), "page file created");
+        let src = fs::read_to_string(&file).unwrap();
+        assert!(src.contains("pub fn Settings() -> UITree<Msg>"));
+        assert!(src.contains("class=\"settings\""));
+
+        let root = fs::read_to_string(dir.join("src").join("main.rs")).unwrap();
+        assert!(root.contains("mod pages;"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_rejects_non_identifier_names() {
+        let dir = std::env::temp_dir().join(format!("tpt-add-bad-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        assert!(add_component("user-badge", &dir).is_err());
+        assert!(add_component("1bad", &dir).is_err());
+        assert!(add_page("", &dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_declares_module_only_once() {
+        let dir = std::env::temp_dir().join(format!("tpt-add-dup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src").join("lib.rs"), "mod components;\n").unwrap();
+        assert!(add_component("Widget", &dir).is_ok());
+        let root = fs::read_to_string(dir.join("src").join("lib.rs")).unwrap();
+        assert_eq!(root.matches("mod components;").count(), 1, "no duplicate decl");
         let _ = fs::remove_dir_all(&dir);
     }
 }

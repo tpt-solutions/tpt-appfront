@@ -32,10 +32,29 @@ pub struct RenderNode<'a, Msg> {
     pub taffy_id: NodeId,
     pub ui: &'a UITree<Msg>,
     pub children: Vec<RenderNode<'a, Msg>>,
-    /// Set only for `DataGrid` nodes: the `taffy` node id of every cell,
-    /// laid out as `[header_row, data_row_0, data_row_1, ...]` so
-    /// `paint.rs` can look up each cell's computed rect individually.
-    pub grid_cells: Option<Vec<Vec<NodeId>>>,
+    /// Set only for `DataGrid` nodes: one entry per taffy row child (in the
+    /// same order as `TaffyTree::children(taffy_id)`), pairing that row's
+    /// source (`GridRowKind` — header/spacer/which `rows` index) with the
+    /// `taffy` node id of every cell in it, so `paint.rs` can look up each
+    /// cell's computed rect and its correct source text without assuming
+    /// rows are laid out with no gaps (virtualized grids insert spacer rows).
+    pub grid_cells: Option<Vec<GridRow>>,
+}
+
+/// Identifies what a `DataGrid` taffy row actually renders, since virtualized
+/// grids interleave spacer rows between windowed data rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridRowKind {
+    Header,
+    /// A zero-content spacer standing in for skipped-over rows; not painted.
+    Spacer,
+    /// Index into the original (unwindowed) `rows` slice.
+    Data(usize),
+}
+
+pub struct GridRow {
+    pub kind: GridRowKind,
+    pub cells: Vec<NodeId>,
 }
 
 /// Builds the `taffy` tree for `ui` and returns its root `RenderNode`.
@@ -187,7 +206,16 @@ pub fn build<'a, Msg>(
                 grid_cells: None,
             }
         }
-        NodeKind::DataGrid { columns, rows } => build_data_grid(tree, measurer, ui, columns, rows),
+        NodeKind::DataGrid { columns, rows } => {
+            // Virtual scrolling: window the data rows (header always rendered)
+            // like the `List` path, so a grid with thousands of rows lays out
+            // and paints only the rows in view plus top/bottom spacer rows.
+            if let Some(vs) = ui.meta.virtual_scroll {
+                build_virtual_data_grid(tree, measurer, ui, columns, rows, vs)
+            } else {
+                build_data_grid(tree, measurer, ui, columns, rows)
+            }
+        }
         // Canvas has no overlay layer; render the portal content inline as a
         // column flex container (its `target` is metadata for hosts that
         // collect portals via `UITree::collect_portals`).
@@ -292,7 +320,7 @@ fn build_text_leaf<'a, Msg>(
 fn build_spacer(tree: &mut TaffyTree<()>, height: f32) -> NodeId {
     tree.new_leaf(Style {
         size: Size {
-            width: length(0.0),
+            width: length(0.0_f32),
             height: length(height),
         },
         ..Default::default()
@@ -378,6 +406,89 @@ fn build_virtual_list<'a, Msg>(
     }
 }
 
+/// Windowed `DataGrid` layout: always renders the header row, but only the
+/// data rows currently in view (plus overscan). Prepends/appends zero-height
+/// spacer rows (sized to the skipped rows' total pixel height) so the overall
+/// scroll height still matches the full row count. Mirrors `build_virtual_list`.
+fn build_virtual_data_grid<'a, Msg>(
+    tree: &mut TaffyTree<()>,
+    measurer: &mut TextMeasurer,
+    ui: &'a UITree<Msg>,
+    columns: &[String],
+    rows: &[Vec<String>],
+    vs: tpt_appfront_core::VirtualScroll,
+) -> RenderNode<'a, Msg> {
+    let range = vs.visible_range(rows.len());
+
+    let mut col_widths: Vec<f32> = columns
+        .iter()
+        .map(|c| measurer.measure(c, TEXT_FONT_SIZE).0)
+        .collect();
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            let w = measurer.measure(cell, TEXT_FONT_SIZE).0;
+            if let Some(slot) = col_widths.get_mut(i) {
+                *slot = slot.max(w);
+            }
+        }
+    }
+
+    let mut row_ids: Vec<NodeId> = Vec::with_capacity(rows.len() + 3);
+    let mut grid_cells: Vec<GridRow> = Vec::with_capacity(rows.len() + 3);
+
+    let (header_row_id, header_cells) = build_grid_row(tree, columns, &col_widths);
+    row_ids.push(header_row_id);
+    grid_cells.push(GridRow {
+        kind: GridRowKind::Header,
+        cells: header_cells,
+    });
+
+    if range.top_spacer > 0.0 {
+        let id = build_spacer(tree, range.top_spacer);
+        row_ids.push(id);
+        grid_cells.push(GridRow {
+            kind: GridRowKind::Spacer,
+            cells: Vec::new(),
+        });
+    }
+
+    for (offset, row) in rows[range.start..range.end].iter().enumerate() {
+        let (row_id, cells) = build_grid_row(tree, row, &col_widths);
+        row_ids.push(row_id);
+        grid_cells.push(GridRow {
+            kind: GridRowKind::Data(range.start + offset),
+            cells,
+        });
+    }
+
+    if range.bottom_spacer > 0.0 {
+        let id = build_spacer(tree, range.bottom_spacer);
+        row_ids.push(id);
+        grid_cells.push(GridRow {
+            kind: GridRowKind::Spacer,
+            cells: Vec::new(),
+        });
+    }
+
+    let taffy_id = tree
+        .new_with_children(
+            Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            },
+            &row_ids,
+        )
+        .expect("taffy grid");
+
+    RenderNode {
+        taffy_id,
+        ui,
+        children: Vec::new(),
+        grid_cells: Some(grid_cells),
+    }
+}
+
 /// Renders a `DataGrid` as a column of flex rows (header + data rows),
 /// with every cell in a column sized to that column's widest cell. `taffy`
 /// has a native CSS Grid mode, but this flex-of-flex-rows approach reuses
@@ -403,15 +514,21 @@ fn build_data_grid<'a, Msg>(
     }
 
     let mut row_ids: Vec<NodeId> = Vec::with_capacity(rows.len() + 1);
-    let mut grid_cells: Vec<Vec<NodeId>> = Vec::with_capacity(rows.len() + 1);
+    let mut grid_cells: Vec<GridRow> = Vec::with_capacity(rows.len() + 1);
 
     let (header_row_id, header_cells) = build_grid_row(tree, columns, &col_widths);
     row_ids.push(header_row_id);
-    grid_cells.push(header_cells);
-    for row in rows {
+    grid_cells.push(GridRow {
+        kind: GridRowKind::Header,
+        cells: header_cells,
+    });
+    for (idx, row) in rows.iter().enumerate() {
         let (row_id, cells) = build_grid_row(tree, row, &col_widths);
         row_ids.push(row_id);
-        grid_cells.push(cells);
+        grid_cells.push(GridRow {
+            kind: GridRowKind::Data(idx),
+            cells,
+        });
     }
 
     let taffy_id = tree
@@ -623,7 +740,10 @@ mod tests {
         let grid_cells = grid_node.grid_cells.as_ref().expect("data grid has cells");
         // header + 2 data rows
         assert_eq!(grid_cells.len(), 3);
-        assert_eq!(grid_cells[0].len(), 2);
+        assert_eq!(grid_cells[0].cells.len(), 2);
+        assert_eq!(grid_cells[0].kind, GridRowKind::Header);
+        assert_eq!(grid_cells[1].kind, GridRowKind::Data(0));
+        assert_eq!(grid_cells[2].kind, GridRowKind::Data(1));
         assert_eq!(tree.child_count(grid_node.taffy_id), 3);
     }
 
@@ -638,10 +758,41 @@ mod tests {
         let grid_node = &root.children[0];
         let grid_cells = grid_node.grid_cells.as_ref().unwrap();
 
-        let header_cell_style = tree.style(grid_cells[0][0]).unwrap();
-        let row2_cell_style = tree.style(grid_cells[2][0]).unwrap();
+        let header_cell_style = tree.style(grid_cells[0].cells[0]).unwrap();
+        let row2_cell_style = tree.style(grid_cells[2].cells[0]).unwrap();
         // Every cell in a column shares the same (widest-cell) width.
         assert_eq!(header_cell_style.size.width, row2_cell_style.size.width);
+    }
+
+    #[test]
+    fn virtual_data_grid_maps_rows_to_correct_source_index_after_scroll() {
+        // 500 rows, row_height 20px, viewport 100px => window starts well
+        // past row 0 once scrolled, so a top spacer is present.
+        let mut vs = tpt_appfront_core::VirtualScroll::new(20.0, 100.0);
+        vs.scroll_offset = 2000.0; // scrolled ~100 rows down
+        let rows: Vec<[String; 1]> = (0..500).map(|i| [format!("row {i}")]).collect();
+        let ui: UITree<Msg> = UITree::container(|c| {
+            let b = c.data_grid(["N"], rows.clone());
+            b.virtual_scroll(vs);
+        });
+        let mut tree: TaffyTree<()> = TaffyTree::new();
+        let mut measurer = TextMeasurer::new();
+        let root = build(&mut tree, &mut measurer, &ui);
+        let grid_node = &root.children[0];
+        let grid_cells = grid_node.grid_cells.as_ref().expect("virtual grid has cells");
+
+        assert_eq!(grid_cells[0].kind, GridRowKind::Header);
+        // With a nonzero scroll offset there must be a spacer before the
+        // first data row, and that data row's kind must carry the real
+        // (non-zero) source index rather than assuming taffy position - 1.
+        let first_data_row = grid_cells
+            .iter()
+            .find(|r| matches!(r.kind, GridRowKind::Data(_)))
+            .expect("at least one data row in the window");
+        match first_data_row.kind {
+            GridRowKind::Data(idx) => assert!(idx > 0, "expected a scrolled-past window, got row {idx}"),
+            _ => unreachable!(),
+        }
     }
 
     #[test]

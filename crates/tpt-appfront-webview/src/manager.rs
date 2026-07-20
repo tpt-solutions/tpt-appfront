@@ -378,7 +378,6 @@ impl AppBuilder {
 
             if let Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
-                window_id: _,
                 ..
             } = event
             {

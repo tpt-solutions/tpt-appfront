@@ -1,0 +1,13 @@
+[package]
+name = "tpt-appfront-templates"
+description = "Backend-agnostic starter UI templates for TPT AppFront (login form, dashboard shell, settings list)."
+readme = "README.md"
+keywords = ["ui", "templates", "appfront"]
+categories = ["gui"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core" }

@@ -7,16 +7,26 @@
 
 use std::rc::Rc;
 
-use tpt_appfront_core::{ContainerBuilder, NodeKind, UITree};
-use tpt_appfront_dom::{mount, render_node};
+use tpt_appfront_core::{ContainerBuilder, UITree};
+use tpt_appfront_dom::mount;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-use web_sys::{Document, HtmlElement};
+use web_sys::Document;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
 fn document() -> Document {
     web_sys::window().unwrap().document().unwrap()
+}
+
+/// Mounts `ui` into a fresh host `<div>` appended to the document body and
+/// returns the host, so assertions can walk the produced DOM.
+fn mount_to_host(ui: &UITree<FormMsg>) -> web_sys::Element {
+    let doc = document();
+    let host = doc.create_element("div").unwrap();
+    doc.body().unwrap().append_child(&host).unwrap();
+    mount(&host, ui, Rc::new(|_| {})).unwrap();
+    host
 }
 
 /// Builds a tree exercising every form-control node kind so we can assert the
@@ -45,12 +55,8 @@ enum FormMsg {
 
 #[wasm_bindgen_test]
 fn renders_all_form_controls() {
-    let doc = document();
     let ui = form_ui();
-    let node = render_node(&doc, &ui, &Rc::new(|_| {})).unwrap();
-
-    let container = node.dyn_ref::<web_sys::Element>().unwrap();
-    assert_eq!(container.tag_name().to_ascii_lowercase(), "div");
+    let container = mount_to_host(&ui);
 
     // Input
     assert!(container.query_selector("input[type=text]").ok().flatten().is_some()
@@ -178,11 +184,4 @@ fn on_toggle_fires_for_checkbox() {
         .unwrap();
 
     assert_eq!(*received.borrow(), Some(FormMsg::Toggled(true)));
-}
-
-// Keeps `mount`/`NodeKind` imports referenced on native-style builds.
-#[allow(unused)]
-fn _assert_imports() {
-    let _ = HtmlElement::class_list;
-    let _ = NodeKind::Text { text: String::new() };
 }

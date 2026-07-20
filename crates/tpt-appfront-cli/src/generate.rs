@@ -71,6 +71,42 @@ const PATTERNS: &[Pattern] = &[
     </Container>
 }"#,
     },
+    Pattern {
+        name: "settings list",
+        keywords: &["settings", "crud list", "list of items", "manage items"],
+        snippet: r#"// Prefer the prebuilt `tpt_appfront_templates::settings_list` for a
+// keyed CRUD list. Inline `view!` equivalent:
+tpt_appfront_core::view! {
+    <Container class="settings">
+        <Heading level={1u8}>"Settings"</Heading>
+        <List>
+            <Container class="row flex items-center">
+                <Text>"Item 1"</Text>
+                <Button on_click={Msg::Edit(1)}>"Edit"</Button>
+                <Button on_click={Msg::Delete(1)}>"Delete"</Button>
+            </Container>
+        </List>
+    </Container>
+}"#,
+    },
+    Pattern {
+        name: "dashboard",
+        keywords: &["dashboard", "admin panel", "app shell", "nav and content"],
+        snippet: r#"// Prefer the prebuilt `tpt_appfront_templates::dashboard_shell`
+// (sidebar nav + content area) and fill its `content` with a template.
+tpt_appfront_core::view! {
+    <Container class="flex h-screen">
+        <Container class="w-64 bg-gray-50 p-4">
+            <Heading level={2u8}>"App"</Heading>
+            <Button on_click={Msg::NavHome}>"Home"</Button>
+            <Button on_click={Msg::NavSettings}>"Settings"</Button>
+        </Container>
+        <Container class="flex-1 p-6">
+            <Text>"Content goes here"</Text>
+        </Container>
+    </Container>
+}"#,
+    },
 ];
 
 const FALLBACK_SNIPPET: &str = r#"tpt_appfront_core::view! {
@@ -131,6 +167,12 @@ mod tests {
     fn matches_card_and_nav() {
         assert!(generate("a product card").contains("Matched pattern: card"));
         assert!(generate("top navbar with links").contains("Matched pattern: nav bar"));
+    }
+
+    #[test]
+    fn matches_settings_and_dashboard() {
+        assert!(generate("a settings page").contains("Matched pattern: settings list"));
+        assert!(generate("admin dashboard shell").contains("Matched pattern: dashboard"));
     }
 
     #[test]

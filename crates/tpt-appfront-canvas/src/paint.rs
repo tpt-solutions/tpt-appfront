@@ -3,9 +3,9 @@
 //! mapping from `spec.txt` (`Container`→plain area, `Button`→`Button`,
 //! etc.), kept separate from the layout math itself.
 
-use crate::layout::{self, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
+use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
 use tpt_appfront_core::NodeKind;
-use egui::{Align2, FontId, Pos2, Rect, Sense, Vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use std::rc::Rc;
 use taffy::TaffyTree;
 
@@ -209,14 +209,15 @@ fn paint_data_grid<Msg>(
         .expect("data grid built with grid_cells");
 
     for (row_idx, row_id) in row_ids.iter().enumerate() {
+        let grid_row = &grid_cells[row_idx];
+        let texts: &[String] = match grid_row.kind {
+            GridRowKind::Header => columns,
+            GridRowKind::Spacer => continue,
+            GridRowKind::Data(source_idx) => &rows[source_idx],
+        };
         let row_layout = tree.layout(*row_id).expect("row layout");
         let row_origin = grid_origin + Vec2::new(row_layout.location.x, row_layout.location.y);
-        let cell_ids = &grid_cells[row_idx];
-        let texts: &[String] = if row_idx == 0 {
-            columns
-        } else {
-            &rows[row_idx - 1]
-        };
+        let cell_ids = &grid_row.cells;
 
         for (cell_idx, cell_id) in cell_ids.iter().enumerate() {
             let Some(text) = texts.get(cell_idx) else {

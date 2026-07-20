@@ -417,6 +417,7 @@ fn not_found() -> Response<Cow<'static, [u8]>> {
 /// above this ceiling before `serde_json::from_str` runs. Messages are plain
 /// `{action, params, requestId}` JSON, so 16 KiB is ample for any realistic
 /// command while keeping the worst-case parse cost bounded.
+#[allow(dead_code)]
 const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
 
 /// Direct (unkeyed) in-process rate limiter for the IPC bridge — there's no
@@ -437,6 +438,7 @@ fn new_ipc_rate_limiter(max_commands_per_second: u32) -> IpcRateLimiter {
 
 /// Parses an IPC message, checks the ACL and rate limit, and dispatches
 /// to `on_command`.
+#[cfg_attr(not(test), allow(dead_code))]
 fn handle_ipc<F>(acl: &Acl, limiter: &IpcRateLimiter, on_command: &F, message: &str)
 where
     F: Fn(&str, serde_json::Value) -> std::result::Result<(), String>,
