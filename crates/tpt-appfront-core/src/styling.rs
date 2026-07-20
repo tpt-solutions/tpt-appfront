@@ -87,6 +87,12 @@ pub fn is_utility(name: &str) -> bool {
 /// unstyled. `const fn` so it can run in a `const` block at macro-expansion.
 ///
 /// `&str::==` is not yet const-stable, so we compare bytes by hand.
+///
+/// NOTE: this only runs at compile time, over string *literals* authored in
+/// source. It is never reached with runtime/untusted input, so it is not a
+/// crash vector for AI-agent-driven or user-editable UI. Runtime consumers of
+/// arbitrary class strings should use [`class_value`] / [`inline_style`], both
+/// of which pass unrecognized names through unchanged instead of panicking.
 pub const fn class_macro_check(name: &str) {
     let mut i = 0;
     while i < UTILITIES.len() {

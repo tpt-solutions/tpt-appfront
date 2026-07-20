@@ -25,9 +25,10 @@ See [docs/quickstart.md](docs/quickstart.md): install the CLI, `tpt-appfront ini
 - `crates/tpt-appfront-webview` — thin OS-webview desktop shell (wry + tao) hosting the `tpt-appfront-dom` WASM bundle, no Electron/Node required
 - `crates/tpt-appfront-mcp` — MCP server exposing the programmatic AI-agent API as JSON-RPC tools over stdio
 - `crates/tpt-appfront-macros` — `#[appfront::component]` helper macro and the `view!`/`rsx!` templating macro
-- `crates/tpt-appfront-cli` — the `tpt-appfront` CLI (`init`/`dev`/`build`/`generate`/`benchmark`/`optimize`)
+- `crates/tpt-appfront-cli` — the `tpt-appfront` CLI (`init`/`dev`/`build`/`generate`/`ingest`/`benchmark`/`optimize`/`doctor`/`add`)
+- `crates/tpt-appfront-templates` — backend-agnostic starter UI templates (`login_form`, `dashboard_shell`, `settings_list`) as stateless `UITree` builder functions, usable from any backend
 
-Examples (`examples/counter-dom`, `counter-canvas`, `counter-tui`, `counter-webview`, `ssr-page`, `ai-agent-demo`) live outside the workspace — each has its own `Cargo.toml` so it can resolve wasm-bindgen/trunk dependencies independently. All are committed and built in CI (see `.github/workflows/ci.yml`); scaffold new ones locally with `tpt-appfront init` (see [docs/quickstart.md](docs/quickstart.md)).
+Examples (`examples/counter-dom`, `counter-canvas`, `counter-tui`, `counter-webview`, `ssr-page`, `ai-agent-demo`, `todo-app`, `templates-demo`, `node-graph`) live outside the workspace — each has its own `Cargo.toml` so it can resolve wasm-bindgen/trunk dependencies independently. All are committed and built in CI (see `.github/workflows/ci.yml`); scaffold new ones locally with `tpt-appfront init` (see [docs/quickstart.md](docs/quickstart.md)). `templates-demo` composes the `tpt-appfront-templates` starter UIs; `node-graph` shows the recommended raw-`egui` escape hatch for GPU/canvas-style interactions the `UITree` flexbox can't express.
 
 ## License
 
