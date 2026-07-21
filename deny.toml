@@ -2,7 +2,30 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # GTK3 bindings (tpt-appfront-webview → wry 0.24 → tao → gtk): all are
+    # unmaintained but no safe upgrade path exists while wry 0.24 requires them.
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0429", # glib unsound VariantStrIter — not used by our code
+    # Other transitive deps with no available upgrade
+    "RUSTSEC-2024-0370", # proc-macro-error (used by glib-macros / gtk3-macros)
+    "RUSTSEC-2024-0384", # instant (used by older governor/tokio compat layer)
+    "RUSTSEC-2025-0057", # fxhash (transitive; no upstream fix)
+    "RUSTSEC-2026-0097", # rand 0.7 unsound — not exposed to our call sites
+    "RUSTSEC-2026-0192", # ttf-parser (cosmic-text dep; no upstream upgrade yet)
+    # quick-xml DoS (wayland-scanner build dep only — parses trusted Wayland
+    # protocol .xml files, never untrusted network input)
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
 
 [licenses]
 allow = [
@@ -16,12 +39,19 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "CC0-1.0",
+    # clipboard-win and error-code (arboard transitive dep via tpt-appfront-webview)
+    "BSL-1.0",
+    # epaint_default_fonts (bundled fonts in egui/eframe via tpt-appfront-canvas)
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
 ]
 confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace path-deps don't have a version field; exempt them from the wildcard check.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

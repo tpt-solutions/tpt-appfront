@@ -10,6 +10,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core" }
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
 serde = { workspace = true }
 serde_json = { workspace = true }
