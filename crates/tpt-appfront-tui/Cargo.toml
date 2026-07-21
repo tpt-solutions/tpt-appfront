@@ -10,7 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core" }
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1.0" }
 ratatui = "0.30"
 crossterm = "0.29"
 anyhow = "1"

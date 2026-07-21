@@ -10,9 +10,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core" }
-tpt-appfront-html = { path = "../tpt-appfront-html" }
-tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema" }
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1.0" }
+tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1.0" }
+tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema", version = "0.1.0" }
 axum = { version = "0.7", features = ["macros"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "trace", "timeout", "set-header", "cors"] }

@@ -10,7 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core" }
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1.0" }
 # glow (raw GL/GLES) instead of the default wgpu renderer: layout is CPU-side
 # via taffy, so wgpu's GPU-compute capability isn't in use yet (Phase 11
 # stretch), and glow avoids shader-pipeline compilation at startup, links
