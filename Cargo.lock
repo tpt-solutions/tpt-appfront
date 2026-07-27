@@ -6195,7 +6195,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-ai-schema"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6204,7 +6204,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-canvas"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cosmic-text",
  "eframe",
@@ -6217,7 +6217,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -6226,7 +6226,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6236,7 +6236,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-dom"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6248,14 +6248,14 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-html"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tpt-appfront-core",
 ]
 
 [[package]]
 name = "tpt-appfront-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6264,7 +6264,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "tpt-appfront-core",
@@ -6272,7 +6272,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "serde",
@@ -6289,14 +6289,14 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-templates"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tpt-appfront-core",
 ]
 
 [[package]]
 name = "tpt-appfront-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -6306,7 +6306,7 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-webview"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arboard",
