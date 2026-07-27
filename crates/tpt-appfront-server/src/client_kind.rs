@@ -111,7 +111,10 @@ mod tests {
     #[test]
     fn normal_browser_is_human() {
         assert_eq!(
-            detect(Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120"), None),
+            detect(
+                Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120"),
+                None
+            ),
             ClientKind::Human
         );
     }
@@ -119,17 +122,17 @@ mod tests {
     #[test]
     fn googlebot_is_crawler() {
         assert_eq!(
-            detect(Some("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"), None),
+            detect(
+                Some("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"),
+                None
+            ),
             ClientKind::Crawler
         );
     }
 
     #[test]
     fn twitterbot_is_social() {
-        assert_eq!(
-            detect(Some("Twitterbot/1.0"), None),
-            ClientKind::SocialBot
-        );
+        assert_eq!(detect(Some("Twitterbot/1.0"), None), ClientKind::SocialBot);
     }
 
     #[test]
@@ -142,10 +145,7 @@ mod tests {
 
     #[test]
     fn claude_is_ai() {
-        assert_eq!(
-            detect(Some("Claude-Web"), None),
-            ClientKind::AiAgent
-        );
+        assert_eq!(detect(Some("Claude-Web"), None), ClientKind::AiAgent);
     }
 
     #[test]

@@ -37,11 +37,17 @@ pub struct McpCommandResult {
 
 impl McpCommandResult {
     pub fn ok(message: impl Into<String>) -> Self {
-        McpCommandResult { ok: true, message: message.into() }
+        McpCommandResult {
+            ok: true,
+            message: message.into(),
+        }
     }
 
     pub fn err(message: impl Into<String>) -> Self {
-        McpCommandResult { ok: false, message: message.into() }
+        McpCommandResult {
+            ok: false,
+            message: message.into(),
+        }
     }
 }
 
@@ -199,7 +205,10 @@ impl<Msg> McpServer<Msg> {
             "query_state" => {
                 let ui = (self.build_ui)();
                 let state = query_state(&ui);
-                (false, serde_json::to_string_pretty(&state).unwrap_or_default())
+                (
+                    false,
+                    serde_json::to_string_pretty(&state).unwrap_or_default(),
+                )
             }
             "navigate" => match arguments.get("route").and_then(Value::as_str) {
                 Some(route) => {

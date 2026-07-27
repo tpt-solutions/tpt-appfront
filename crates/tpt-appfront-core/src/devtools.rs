@@ -52,7 +52,12 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
         ),
         NodeKind::List { items } => format!("List ({}) items", items.len()),
         NodeKind::DataGrid { columns, rows } => {
-            format!("DataGrid [{}] {}x{}", columns.join(", "), columns.len(), rows.len())
+            format!(
+                "DataGrid [{}] {}x{}",
+                columns.join(", "),
+                columns.len(),
+                rows.len()
+            )
         }
         NodeKind::Portal { target, .. } => format!("Portal -> \"{target}\""),
     }
@@ -144,11 +149,7 @@ fn element_line(el: &ElementSummary) -> String {
     if let Some(action) = &el.action {
         s.push_str(&format!(" action={action}"));
     }
-    let params: Vec<String> = el
-        .params
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let params: Vec<String> = el.params.iter().map(|(k, v)| format!("{k}={v}")).collect();
     if !params.is_empty() {
         s.push_str(&format!(" ({})", params.join(", ")));
     }
@@ -236,7 +237,10 @@ mod tests {
         assert!(out.contains("on_click"), "on_click annotation");
         assert!(out.contains("Input value=\"hello world\""), "input node");
         // Nested container should be indented under the root.
-        assert!(out.contains("│  ") || out.contains("   "), "has indentation");
+        assert!(
+            out.contains("│  ") || out.contains("   "),
+            "has indentation"
+        );
     }
 
     #[test]
@@ -286,6 +290,10 @@ mod tests {
         let ui = sample_ui();
         let state = query_state(&ui);
         let report = render(&ui, &state);
-        assert!(report.signals.contains("count: 3 write(s)"), "got: {}", report.signals);
+        assert!(
+            report.signals.contains("count: 3 write(s)"),
+            "got: {}",
+            report.signals
+        );
     }
 }

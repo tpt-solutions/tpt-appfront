@@ -34,11 +34,17 @@ pub struct CommandResponse {
 
 impl CommandResponse {
     pub fn ok(message: impl Into<String>) -> Self {
-        CommandResponse { ok: true, message: message.into() }
+        CommandResponse {
+            ok: true,
+            message: message.into(),
+        }
     }
 
     pub fn err(message: impl Into<String>) -> Self {
-        CommandResponse { ok: false, message: message.into() }
+        CommandResponse {
+            ok: false,
+            message: message.into(),
+        }
     }
 }
 

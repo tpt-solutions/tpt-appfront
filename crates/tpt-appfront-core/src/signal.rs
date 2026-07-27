@@ -85,8 +85,10 @@ fn flush() {
     loop {
         let batch: Vec<Rc<EffectNode>> = PENDING.with(|pending| {
             let mut pending = pending.borrow_mut();
-            let mut batch: Vec<Rc<EffectNode>> =
-                std::mem::take(&mut *pending).into_iter().filter_map(|w| w.upgrade()).collect();
+            let mut batch: Vec<Rc<EffectNode>> = std::mem::take(&mut *pending)
+                .into_iter()
+                .filter_map(|w| w.upgrade())
+                .collect();
             batch.sort_by_key(|e| e.rank.get());
             batch
         });
@@ -280,9 +282,7 @@ impl<T: Clone + 'static> Signal<T> {
                         .borrow_mut()
                         .subscribers
                         .push(Rc::downgrade(node));
-                    node.deps
-                        .borrow_mut()
-                        .push(Rc::new(Rc::clone(&self.inner)));
+                    node.deps.borrow_mut().push(Rc::new(Rc::clone(&self.inner)));
                 }
             }
         });
@@ -526,7 +526,11 @@ mod tests {
 
         // State is still available (not consumed on read) for subsequent calls.
         let s2: Signal<i32> = Signal::hydrated("count", 0);
-        assert_eq!(s2.get(), 42, "state is not consumed until take_hydration_state");
+        assert_eq!(
+            s2.get(),
+            42,
+            "state is not consumed until take_hydration_state"
+        );
 
         // After explicit take, new signals fall back to default.
         let _taken = super::take_hydration_state();
@@ -575,10 +579,18 @@ mod tests {
         assert_eq!(m.get(), 2);
 
         b.set(20);
-        assert_eq!(computes.get(), 1, "unrelated signal must not trigger recompute");
+        assert_eq!(
+            computes.get(),
+            1,
+            "unrelated signal must not trigger recompute"
+        );
 
         a.set(5);
-        assert_eq!(computes.get(), 2, "dependency update must trigger recompute");
+        assert_eq!(
+            computes.get(),
+            2,
+            "dependency update must trigger recompute"
+        );
         assert_eq!(m.get(), 10);
     }
 

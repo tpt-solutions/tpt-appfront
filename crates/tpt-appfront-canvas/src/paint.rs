@@ -200,9 +200,7 @@ fn paint_data_grid<Msg>(
     columns: &[String],
     rows: &[Vec<String>],
 ) {
-    let row_ids = tree
-        .children(node.taffy_id)
-        .expect("data grid rows");
+    let row_ids = tree.children(node.taffy_id).expect("data grid rows");
     let grid_cells = node
         .grid_cells
         .as_ref()

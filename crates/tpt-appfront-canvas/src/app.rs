@@ -72,7 +72,8 @@ impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
 
         // Feed the measured per-frame work into the profiler. `record_frame`
         // is a no-op cost (an EMA update) and safe to call unconditionally.
-        self.optimizer.record_frame(start.elapsed().as_secs_f64() * 1000.0);
+        self.optimizer
+            .record_frame(start.elapsed().as_secs_f64() * 1000.0);
     }
 
     #[cfg(target_arch = "wasm32")]

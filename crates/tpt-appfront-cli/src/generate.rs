@@ -120,7 +120,9 @@ const FALLBACK_SNIPPET: &str = r#"tpt_appfront_core::view! {
 /// hits — the caller falls back to [`FALLBACK_SNIPPET`] in that case.
 fn match_pattern(prompt: &str) -> Option<&'static Pattern> {
     let lower = prompt.to_lowercase();
-    PATTERNS.iter().find(|p| p.keywords.iter().any(|kw| lower.contains(kw)))
+    PATTERNS
+        .iter()
+        .find(|p| p.keywords.iter().any(|kw| lower.contains(kw)))
 }
 
 /// Generates a `view!`-macro Rust snippet for `prompt`. Always succeeds:

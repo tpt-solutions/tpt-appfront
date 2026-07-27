@@ -14,11 +14,7 @@ pub fn render<Msg>(ui: &UITree<Msg>) -> String {
 }
 
 /// Renders a full HTML5 page with OpenGraph tags.
-pub fn render_page<Msg>(
-    ui: &UITree<Msg>,
-    title: &str,
-    description: &str,
-) -> String {
+pub fn render_page<Msg>(ui: &UITree<Msg>, title: &str, description: &str) -> String {
     let body = render(ui);
     format!(
         r#"<!DOCTYPE html>
@@ -238,9 +234,7 @@ fn attr(buf: &mut String, name: &str, value: &str) {
 }
 
 fn has_attrs<Msg>(ui: &UITree<Msg>) -> bool {
-    ui.meta.class.is_some()
-        || ui.meta.data_appfront_id.is_some()
-        || ui.meta.ai.action.is_some()
+    ui.meta.class.is_some() || ui.meta.data_appfront_id.is_some() || ui.meta.ai.action.is_some()
 }
 
 fn params_to_json(pairs: &[(String, String)]) -> String {
@@ -343,7 +337,10 @@ mod tests {
     fn renders_heading() {
         let ui = ui_tree();
         let html = render(&ui);
-        assert!(html.contains("<h1 class=\"title\">Dashboard</h1>"), "{html}");
+        assert!(
+            html.contains("<h1 class=\"title\">Dashboard</h1>"),
+            "{html}"
+        );
     }
 
     #[test]

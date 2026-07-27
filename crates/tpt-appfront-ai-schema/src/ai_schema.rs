@@ -158,10 +158,7 @@ fn collect<Msg>(
                 collect(child, interactive, data);
             }
         }
-        NodeKind::DataGrid {
-            columns,
-            rows,
-        } => {
+        NodeKind::DataGrid { columns, rows } => {
             data.push(DataElement {
                 kind: "data_grid".to_string(),
                 columns: Some(columns.clone()),
@@ -250,10 +247,9 @@ mod tests {
 
     #[test]
     fn data_grid_produces_data_grid_element() {
-        let ui: UITree<Msg> =
-            UITree::container(|c| {
-                c.data_grid(["Name", "Age"], [["Alice", "30"]]);
-            });
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.data_grid(["Name", "Age"], [["Alice", "30"]]);
+        });
         let schema = to_ai_schema(&ui);
         assert_eq!(schema.data.len(), 1);
         assert_eq!(schema.data[0].kind, "data_grid");

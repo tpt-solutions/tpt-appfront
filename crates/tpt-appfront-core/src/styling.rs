@@ -144,10 +144,7 @@ pub fn class_value(classes: &str) -> String {
 /// `classes`. Returns an empty string when none are recognized, so callers can
 /// skip emitting a `style` attribute entirely.
 pub fn inline_style(classes: &str) -> String {
-    let decls: Vec<&str> = classes
-        .split_whitespace()
-        .filter_map(lookup)
-        .collect();
+    let decls: Vec<&str> = classes.split_whitespace().filter_map(lookup).collect();
     if decls.is_empty() {
         String::new()
     } else {

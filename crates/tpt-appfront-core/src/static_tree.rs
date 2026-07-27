@@ -90,8 +90,16 @@ mod tests {
 
     #[test]
     fn distinct_ids_cache_independently() {
-        let a = static_node(100, || UITree::<()>::container(|c| { c.text("a"); }));
-        let b = static_node(200, || UITree::<()>::container(|c| { c.text("b"); }));
+        let a = static_node(100, || {
+            UITree::<()>::container(|c| {
+                c.text("a");
+            })
+        });
+        let b = static_node(200, || {
+            UITree::<()>::container(|c| {
+                c.text("b");
+            })
+        });
         match (&a.kind, &b.kind) {
             (NodeKind::Container { children: ca }, NodeKind::Container { children: cb }) => {
                 match (&ca[0].kind, &cb[0].kind) {
@@ -108,15 +116,20 @@ mod tests {
 
     #[test]
     fn cached_tree_is_independent_clone() {
-        let first = static_node(300, || UITree::<()>::container(|c| { c.text("x"); }));
+        let first = static_node(300, || {
+            UITree::<()>::container(|c| {
+                c.text("x");
+            })
+        });
         let second = static_node(300, || {
             panic!("build must not run again for a cached id");
             #[allow(unreachable_code)]
-            UITree::<()>::container(|c| { c.text("should-not-build"); })
+            UITree::<()>::container(|c| {
+                c.text("should-not-build");
+            })
         });
         // Both reference the same cached instance's data after cloning, so the
         // content matches the first build, not the (never-run) second closure.
         assert_eq!(format!("{first:?}"), format!("{second:?}"));
     }
 }
-

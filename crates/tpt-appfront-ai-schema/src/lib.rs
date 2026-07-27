@@ -5,7 +5,9 @@
 mod ai_schema;
 mod json_ld;
 
-pub use ai_schema::{to_ai_schema, to_ai_schema_value, AiSchemaOutput, DataElement, InteractiveElement};
+pub use ai_schema::{
+    to_ai_schema, to_ai_schema_value, AiSchemaOutput, DataElement, InteractiveElement,
+};
 pub use json_ld::to_json_ld;
 
 use tpt_appfront_core::UITree;

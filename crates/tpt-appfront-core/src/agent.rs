@@ -222,11 +222,7 @@ fn walk<Msg>(
             data.push(ElementSummary {
                 id,
                 kind: "data_grid".into(),
-                label: Some(format!(
-                    "[{}] — {} rows",
-                    columns.join(", "),
-                    rows.len()
-                )),
+                label: Some(format!("[{}] — {} rows", columns.join(", "), rows.len())),
                 value: None,
                 action: None,
                 params: Vec::new(),
@@ -249,22 +245,14 @@ fn walk<Msg>(
 ///
 /// Returns `true` if a matching node with a message handler was found and
 /// dispatched; returns `false` otherwise.
-pub fn trigger_event<Msg>(
-    ui: &UITree<Msg>,
-    action: &str,
-    dispatch: &dyn Fn(Msg),
-) -> bool
+pub fn trigger_event<Msg>(ui: &UITree<Msg>, action: &str, dispatch: &dyn Fn(Msg)) -> bool
 where
     Msg: Clone,
 {
     find_and_dispatch(ui, action, dispatch)
 }
 
-fn find_and_dispatch<Msg>(
-    node: &UITree<Msg>,
-    action: &str,
-    dispatch: &dyn Fn(Msg),
-) -> bool
+fn find_and_dispatch<Msg>(node: &UITree<Msg>, action: &str, dispatch: &dyn Fn(Msg)) -> bool
 where
     Msg: Clone,
 {
@@ -298,7 +286,6 @@ where
 mod tests {
     use super::*;
 
-
     #[derive(Debug, Clone, PartialEq)]
     enum TestMsg {
         Submit,
@@ -312,7 +299,9 @@ mod tests {
                 .ai_action("export_data")
                 .ai_param("format", "csv")
                 .ai_description("Export the data as CSV");
-            c.input("hello").ai_action("search").ai_param("key", "query");
+            c.input("hello")
+                .ai_action("search")
+                .ai_param("key", "query");
             c.list(|l| {
                 l.text("Item A");
                 l.text("Item B");
@@ -459,7 +448,13 @@ mod tests {
 
         // Should find both buttons (one nested in container, one in list)
         assert_eq!(state.interactive_elements.len(), 2);
-        assert_eq!(state.interactive_elements[0].action.as_deref(), Some("nested_btn"));
-        assert_eq!(state.interactive_elements[1].action.as_deref(), Some("list_btn"));
+        assert_eq!(
+            state.interactive_elements[0].action.as_deref(),
+            Some("nested_btn")
+        );
+        assert_eq!(
+            state.interactive_elements[1].action.as_deref(),
+            Some("list_btn")
+        );
     }
 }

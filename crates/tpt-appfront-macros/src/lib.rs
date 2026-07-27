@@ -121,7 +121,11 @@ fn expand(input: ItemFn, memo: bool) -> syn::Result<proc_macro2::TokenStream> {
     let component_name = kebab_case(&sig.ident.to_string());
     let is_dynamic = body_reads_signal(&quote!(#block));
 
-    let inner_ident = format_ident!("__appfront_component_inner_{}", sig.ident, span = Span::call_site());
+    let inner_ident = format_ident!(
+        "__appfront_component_inner_{}",
+        sig.ident,
+        span = Span::call_site()
+    );
     let mut inner_sig = sig.clone();
     inner_sig.ident = inner_ident.clone();
 

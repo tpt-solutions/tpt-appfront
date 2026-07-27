@@ -53,11 +53,7 @@ where
         .enumerate()
         .filter(|(_, k)| new.contains(k))
         .collect();
-    let removed: Vec<K> = old
-        .iter()
-        .filter(|&k| !new.contains(k))
-        .cloned()
-        .collect();
+    let removed: Vec<K> = old.iter().filter(|&k| !new.contains(k)).cloned().collect();
 
     let mut edits = Vec::with_capacity(new.len());
     for k in new {
@@ -242,9 +238,7 @@ mod tests {
         let owned_old: Vec<String> = old.iter().map(|s| s.to_string()).collect();
         let owned_new: Vec<String> = new.iter().map(|s| s.to_string()).collect();
         let diff = reconcile_keys(&owned_old, &owned_new);
-        apply_edits(&owned_old, &diff)
-            .into_iter()
-            .collect()
+        apply_edits(&owned_old, &diff).into_iter().collect()
     }
 
     #[test]
@@ -255,9 +249,15 @@ mod tests {
         assert_eq!(
             diff.edits,
             vec![
-                ListEdit::Keep { key: "a".to_string() },
-                ListEdit::Keep { key: "b".to_string() },
-                ListEdit::Keep { key: "c".to_string() },
+                ListEdit::Keep {
+                    key: "a".to_string()
+                },
+                ListEdit::Keep {
+                    key: "b".to_string()
+                },
+                ListEdit::Keep {
+                    key: "c".to_string()
+                },
             ]
         );
     }
@@ -283,12 +283,25 @@ mod tests {
         let out = diff_and_apply(&["a", "b", "c", "d"], &["d", "c", "b", "a"]);
         assert_eq!(out, vec!["d", "c", "b", "a"]);
 
-        let old = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
-        let new = vec!["d".to_string(), "c".to_string(), "b".to_string(), "a".to_string()];
+        let old = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
+        let new = vec![
+            "d".to_string(),
+            "c".to_string(),
+            "b".to_string(),
+            "a".to_string(),
+        ];
         let diff = reconcile_keys(&old, &new);
         assert!(diff.removed.is_empty());
         // No inserts: every key already existed.
-        assert!(diff.edits.iter().all(|e| !matches!(e, ListEdit::Insert { .. })));
+        assert!(diff
+            .edits
+            .iter()
+            .all(|e| !matches!(e, ListEdit::Insert { .. })));
     }
 
     #[test]
@@ -296,11 +309,31 @@ mod tests {
         // Inserting "x" between "a" and "b": a stays, x inserted, b and c are
         // now already in their correct (shifted) positions so they stay Keep.
         let old = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        let new = vec!["a".to_string(), "x".to_string(), "b".to_string(), "c".to_string()];
+        let new = vec![
+            "a".to_string(),
+            "x".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+        ];
         let diff = reconcile_keys(&old, &new);
-        assert_eq!(diff.edits[0], ListEdit::Keep { key: "a".to_string() });
-        assert_eq!(diff.edits[1], ListEdit::Insert { key: "x".to_string() });
-        assert_eq!(diff.edits[2], ListEdit::Keep { key: "b".to_string() });
+        assert_eq!(
+            diff.edits[0],
+            ListEdit::Keep {
+                key: "a".to_string()
+            }
+        );
+        assert_eq!(
+            diff.edits[1],
+            ListEdit::Insert {
+                key: "x".to_string()
+            }
+        );
+        assert_eq!(
+            diff.edits[2],
+            ListEdit::Keep {
+                key: "b".to_string()
+            }
+        );
         let out = apply_edits(&old, &diff);
         assert_eq!(out, new);
     }
@@ -312,16 +345,23 @@ mod tests {
         let diff = reconcile_keys(&old, &new);
         assert_eq!(diff.removed, vec!["b".to_string()]);
         // a kept, c kept (still in order, just shifted left).
-        assert_eq!(diff.edits[0], ListEdit::Keep { key: "a".to_string() });
-        assert_eq!(diff.edits[1], ListEdit::Keep { key: "c".to_string() });
+        assert_eq!(
+            diff.edits[0],
+            ListEdit::Keep {
+                key: "a".to_string()
+            }
+        );
+        assert_eq!(
+            diff.edits[1],
+            ListEdit::Keep {
+                key: "c".to_string()
+            }
+        );
     }
 
     #[test]
     fn mixed_add_remove_reorder_reproduces_new() {
-        let out = diff_and_apply(
-            &["a", "b", "c", "d", "e"],
-            &["e", "b", "f", "d"],
-        );
+        let out = diff_and_apply(&["a", "b", "c", "d", "e"], &["e", "b", "f", "d"]);
         assert_eq!(out, vec!["e", "b", "f", "d"]);
     }
 
@@ -334,8 +374,12 @@ mod tests {
         assert_eq!(
             diff.edits,
             vec![
-                ListEdit::Insert { key: "a".to_string() },
-                ListEdit::Insert { key: "b".to_string() },
+                ListEdit::Insert {
+                    key: "a".to_string()
+                },
+                ListEdit::Insert {
+                    key: "b".to_string()
+                },
             ]
         );
     }

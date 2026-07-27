@@ -123,15 +123,11 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
             item.insert("about".to_string(), Value::String(columns.join(", ")));
             item.insert(
                 "columnList".to_string(),
-                Value::Array(
-                    columns.iter().map(|c| Value::String(c.clone())).collect(),
-                ),
+                Value::Array(columns.iter().map(|c| Value::String(c.clone())).collect()),
             );
             let row_values: Vec<Value> = rows
                 .iter()
-                .map(|r| {
-                    Value::Array(r.iter().map(|c| Value::String(c.clone())).collect())
-                })
+                .map(|r| Value::Array(r.iter().map(|c| Value::String(c.clone())).collect()))
                 .collect();
             item.insert("rows".to_string(), Value::Array(row_values));
             graph.push(Value::Object(item));
@@ -146,7 +142,10 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
 
 fn web_page_element(ai: &AiMeta) -> Map<String, Value> {
     let mut m = Map::new();
-    m.insert("@type".to_string(), Value::String("WebPageElement".to_string()));
+    m.insert(
+        "@type".to_string(),
+        Value::String("WebPageElement".to_string()),
+    );
     if let Some(desc) = &ai.description {
         m.insert("description".to_string(), Value::String(desc.clone()));
     }
@@ -155,10 +154,7 @@ fn web_page_element(ai: &AiMeta) -> Map<String, Value> {
 
 fn action_entry(name: &str, action: &str, params: &[(String, String)]) -> Value {
     let mut target = Map::new();
-    target.insert(
-        "@type".to_string(),
-        Value::String("EntryPoint".to_string()),
-    );
+    target.insert("@type".to_string(), Value::String("EntryPoint".to_string()));
     target.insert("action".to_string(), Value::String(action.to_string()));
 
     if !params.is_empty() {
@@ -213,7 +209,9 @@ mod tests {
     #[test]
     fn button_with_ai_action_produces_action_entry() {
         let ui: UITree<Msg> = UITree::container(|c| {
-            c.button("Add").ai_action("add_to_cart").ai_param("qty", "1");
+            c.button("Add")
+                .ai_action("add_to_cart")
+                .ai_param("qty", "1");
         });
         let json = to_json_ld(&ui);
         let graph = json["@graph"].as_array().unwrap();
@@ -276,10 +274,9 @@ mod tests {
 
     #[test]
     fn data_grid_reports_table_shape() {
-        let ui: UITree<Msg> =
-            UITree::container(|c| {
-                c.data_grid(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]]);
-            });
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.data_grid(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]]);
+        });
         let json = to_json_ld(&ui);
         let entry = &json["@graph"].as_array().unwrap()[1];
         assert_eq!(entry["@type"], "Table");

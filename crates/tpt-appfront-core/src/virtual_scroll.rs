@@ -51,7 +51,12 @@ impl VirtualScroll {
     /// scrollbar behavior) still matches the full, unvirtualized list.
     pub fn visible_range(&self, total_items: usize) -> VisibleRange {
         if total_items == 0 || self.item_height <= 0.0 {
-            return VisibleRange { start: 0, end: 0, top_spacer: 0.0, bottom_spacer: 0.0 };
+            return VisibleRange {
+                start: 0,
+                end: 0,
+                top_spacer: 0.0,
+                bottom_spacer: 0.0,
+            };
         }
 
         let first_visible = (self.scroll_offset / self.item_height).floor() as usize;
@@ -63,7 +68,12 @@ impl VirtualScroll {
         let top_spacer = start as f32 * self.item_height;
         let bottom_spacer = (total_items - end) as f32 * self.item_height;
 
-        VisibleRange { start, end, top_spacer, bottom_spacer }
+        VisibleRange {
+            start,
+            end,
+            top_spacer,
+            bottom_spacer,
+        }
     }
 }
 
@@ -89,7 +99,15 @@ mod tests {
     fn empty_list_has_empty_range() {
         let vs = VirtualScroll::new(20.0, 200.0);
         let range = vs.visible_range(0);
-        assert_eq!(range, VisibleRange { start: 0, end: 0, top_spacer: 0.0, bottom_spacer: 0.0 });
+        assert_eq!(
+            range,
+            VisibleRange {
+                start: 0,
+                end: 0,
+                top_spacer: 0.0,
+                bottom_spacer: 0.0
+            }
+        );
     }
 
     #[test]
