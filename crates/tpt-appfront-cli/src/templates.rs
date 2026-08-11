@@ -393,6 +393,155 @@ pub fn preset_lib_rs(preset: &crate::presets::Preset, app_title: &str) -> String
     }
 }
 
+/// `lib.rs` for an `init --with <a,b,c>` scaffold. Like the presets it's a DOM
+/// app that composes selected `tpt_appfront_templates` pieces into one project:
+/// a `dashboard` piece hosts the other selected pieces in its content area;
+/// without `dashboard`, the selected pieces stack vertically. All pieces share
+/// one `Signal`-backed state and a single `Msg` union (`todo.md` Phase cross-cutting).
+pub fn with_lib_rs(pieces: &[crate::presets::WithPiece], app_title: &str) -> String {
+    use crate::presets::WithPiece;
+    let has_dashboard = pieces.contains(&WithPiece::Dashboard);
+    let has_login = pieces.contains(&WithPiece::Login);
+    let has_settings = pieces.contains(&WithPiece::Settings);
+
+    // Only pull in the `tpt_appfront_templates` pieces actually selected, so a
+    // generated project has no unused-import warnings.
+    let mut imports = String::new();
+    if has_dashboard {
+        imports.push_str("    dashboard_shell, DashboardShellConfig,\n");
+    }
+    if has_settings {
+        imports.push_str("    settings_list, SettingsListConfig,\n");
+    }
+    if has_login {
+        imports.push_str("    login_form, LoginFormConfig,\n");
+    }
+    // The imported symbols above are always used (each selected piece emits a
+    // `c.with(piece(&PieceConfig { .. }))` call below), so the trailing comma
+    // after the last one is fine.
+
+    // Each selected piece's contribution to the tree (dashboard content area,
+    // or the stacked container when `dashboard` isn't selected).
+    let mut content_calls = String::new();
+    if has_settings {
+        content_calls.push_str(
+            r#"
+            c.with(settings_list(&SettingsListConfig {
+                title: "Settings".to_string(),
+                rows: rows_for_ui.get(),
+                on_edit: Box::new(Msg::Edit),
+                on_delete: Box::new(Msg::Delete),
+            }));"#,
+        );
+    }
+    if has_login {
+        content_calls.push_str(
+            r#"
+            c.with(login_form(&LoginFormConfig {
+                title: "Sign in".to_string(),
+                username: username_for_ui.get(),
+                on_submit: Box::new(|u, p| Msg::Submit(u, p)),
+            }));"#,
+        );
+    }
+
+    // Only declare the state clones each selected piece actually uses, so a
+    // generated project stays warning-free.
+    let mut content_lets = String::new();
+    if has_settings || has_login {
+        content_lets.push_str("\n            let rows_for_ui = rows_for_ui.clone();");
+    }
+    if has_login {
+        content_lets.push_str("\n            let username_for_ui = username_for_ui.clone();");
+    }
+
+    let ui_build = if has_dashboard {
+        format!(
+            r#"dashboard_shell(&DashboardShellConfig {{
+        title: "{app_title}".to_string(),
+        nav_items: vec!["Overview".to_string(), "Settings".to_string(), "Help".to_string()],
+        content: Box::new(move |c| {{{content_lets}
+{content_calls}
+        }}),
+        on_nav: Box::new(Msg::Nav),
+    }})"#
+        )
+    } else {
+        format!(
+            r#"UITree::container(|c| {{{content_calls}
+    }})"#
+        )
+    };
+
+    format!(
+        r#"//! Composed starter — scaffolded by `tpt-appfront init --with {pieces_csv}`.
+//! Combines the requested `tpt_appfront_templates` pieces ({pieces_list}) into a
+//! single DOM app wired to shared `Signal`-backed state.
+
+use tpt_appfront_core::{{Signal, UITree}};
+use tpt_appfront_templates::{{
+{imports}}};
+use wasm_bindgen::prelude::*;
+
+#[derive(Debug, Clone)]
+enum Msg {{
+    Nav(String),
+    Edit(String),
+    Delete(String),
+    Submit(String, String),
+}}
+
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {{
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().expect("no window");
+    let document = window.document().expect("no document");
+    let body = document.body().expect("no body");
+
+    let rows = Signal::new(vec![
+        ("1".to_string(), "Profile".to_string()),
+        ("2".to_string(), "Billing".to_string()),
+        ("3".to_string(), "Notifications".to_string()),
+    ]);
+    let username = Signal::new(String::new());
+    let password = Signal::new(String::new());
+
+    let dispatch: std::rc::Rc<dyn Fn(Msg)> = {{
+        let rows = rows.clone();
+        std::rc::Rc::new(move |msg| match msg {{
+            Msg::Nav(page) => {{ let _ = page; }}
+            Msg::Edit(id) => {{
+                let v: Vec<(String, String)> =
+                    rows.get().into_iter().filter(|(r, _)| r != &id).collect();
+                rows.set(v);
+            }}
+            Msg::Delete(id) => {{
+                let v: Vec<(String, String)> =
+                    rows.get().into_iter().filter(|(r, _)| r != &id).collect();
+                rows.set(v);
+            }}
+            Msg::Submit(_u, _p) => {{}}
+        }})
+    }};
+
+    let root = document.create_element("div")?;
+    body.append_child(&root)?;
+
+    let rows_for_ui = rows.clone();
+    let username_for_ui = username.clone();
+    let ui: UITree<Msg> = {ui_build};
+
+    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    std::mem::forget(handle);
+    Ok(())
+}}
+"#,
+        pieces_csv = pieces.iter().map(|p| p.name()).collect::<Vec<_>>().join(","),
+        pieces_list = pieces.iter().map(|p| p.name()).collect::<Vec<_>>().join(", "),
+    )
+}
+
 fn login_preset_lib_rs(app_title: &str) -> String {
     format!(
         r#"//! Login preset — scaffolded by `tpt-appfront init --preset login`.

@@ -16,3 +16,6 @@ tpt-appfront-macros = { path = "../tpt-appfront-macros", version = "0.1" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
+
+[dev-dependencies]
+tpt-appfront-templates = { path = "../tpt-appfront-templates" }

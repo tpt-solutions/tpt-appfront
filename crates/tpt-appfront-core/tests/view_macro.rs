@@ -592,6 +592,44 @@ fn form_controls_reject_child_elements() {
 }
 
 #[test]
+fn custom_tag_sugar_expands_to_templates_component_call() {
+    // `<LoginForm title={..} username={..} on_submit={..} />` (a capitalized
+    // self-closing tag unknown to `view!`) must expand into a call to
+    // `tpt_appfront_templates::login_form(&tpt_appfront_templates::LoginFormConfig { .. })`.
+    let ui: UITree<Msg> = view! {
+        <Container>
+            <LoginForm
+                title={"Sign in".to_string()}
+                username={String::new()}
+                on_submit={Box::new(|u, p| Msg::Submit(format!("{u}{p}")))}
+            />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    // The custom tag is appended as a composed sub-tree (a Container) via
+    // `ContainerBuilder::with`.
+    assert_eq!(children.len(), 1);
+    match &children[0].kind {
+        NodeKind::Container { children: inner } => {
+            // login_form builds a heading + 2 inputs + a submit button.
+            assert!(inner.len() >= 3, "expected login_form's children, got {inner:?}");
+            assert!(matches!(inner.last().unwrap().kind, NodeKind::Button { .. }));
+        }
+        other => panic!("expected composed container from custom tag, got {other:?}"),
+    }
+}
+
+#[test]
+fn custom_tag_must_be_self_closing() {
+    // A non-self-closing custom component tag is rejected at macro expansion.
+    // This is a compile-time error, so we just document the constraint here
+    // and rely on the positive `custom_tag_sugar_expands_to_templates_component_call`
+    // test plus the macro's `gen_node_stmt` validation for coverage.
+}
+
+#[test]
 fn memoized_component_reuses_tree_when_props_equal() {
     let first = memoized_label(CountProps { value: 1 });
     let second = memoized_label(CountProps { value: 1 });

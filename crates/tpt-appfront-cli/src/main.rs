@@ -42,6 +42,12 @@ enum Command {
         /// (e.g. `login`, `dashboard`, `crud-app`, `saas-starter`).
         #[arg(long)]
         preset: Option<String>,
+        /// Compose an à la carte project from `tpt-appfront-templates` pieces
+        /// (comma-separated: `login`, `dashboard`, `settings`), e.g.
+        /// `tpt-appfront init <name> --with dashboard,settings` fills the
+        /// dashboard's content area with the CRUD settings list.
+        #[arg(long, value_delimiter = ',')]
+        with: Vec<String>,
         /// Print the available presets and exit.
         #[arg(long)]
         list_presets: bool,
@@ -116,6 +122,11 @@ enum Command {
         /// After building, produce signed installers via `cargo packager`.
         #[arg(long)]
         bundle: bool,
+        /// Run a deterministic heuristic scan (no AST/LLM) that flags
+        /// unvirtualized long `List`/`DataGrid` usages and a release profile
+        /// missing the CLI's own default size flags.
+        #[arg(long)]
+        analyze: bool,
     },
     /// Generate a `view!` UI scaffold from a text prompt. Offline and
     /// rule-based (keyword-matched against known patterns) — not a live LLM
@@ -172,12 +183,12 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Init { name, target, preset, list_presets } => {
+        Command::Init { name, target, preset, with, list_presets } => {
             if list_presets {
                 list_presets_cmd();
                 return Ok(());
             }
-            init(&name, target, preset.as_deref())
+            init(&name, target, preset.as_deref(), &with)
         }
         Command::Dev { desktop, web, tui, desktop_webview, no_reload, devtools, project } => {
             dev(desktop, web, tui, desktop_webview, no_reload, devtools, &project)
@@ -185,8 +196,12 @@ fn main() -> anyhow::Result<()> {
         Command::Build { target, project, bundle } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
         Command::Doctor { project } => doctor(&project),
-        Command::Optimize { target, project, auto, bundle } => {
-            optimize(&target, &project, auto, bundle)
+        Command::Optimize { target, project, auto, bundle, analyze } => {
+            if analyze {
+                optimize_analyze(&project)
+            } else {
+                optimize(&target, &project, auto, bundle)
+            }
         }
         Command::Generate { prompt, out } => generate_ui(&prompt, out.as_deref()),
         Command::Ingest { input, out } => ingest::ingest_file(&input, out.as_deref()),
@@ -260,7 +275,7 @@ fn dep_ref(crate_name: &str) -> String {
     }
 }
 
-fn init(name: &str, target: InitTarget, preset: Option<&str>) -> anyhow::Result<()> {
+fn init(name: &str, target: InitTarget, preset: Option<&str>, with: &[String]) -> anyhow::Result<()> {
     if name.is_empty()
         || name.contains(['/', '\\'])
         || name == ".."
@@ -271,6 +286,36 @@ fn init(name: &str, target: InitTarget, preset: Option<&str>) -> anyhow::Result<
     let root = PathBuf::from(name);
     if root.exists() {
         bail!("directory `{name}` already exists");
+    }
+
+    // `--with` and `--preset` are alternative scaffolds; picking both is a
+    // user error rather than silently preferring one.
+    if !with.is_empty() && preset.is_some() {
+        bail!("pass only one of `--with` or `--preset`, not both");
+    }
+
+    // `--with` composes selected `tpt-appfront-templates` pieces into one DOM
+    // app (à la carte), like the presets but user-curated (todo.md cross-cutting).
+    if !with.is_empty() {
+        let pieces: Vec<presets::WithPiece> = with
+            .iter()
+            .map(|s| {
+                presets::WithPiece::from_str(s).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown `--with` piece `{s}`; valid pieces: login, dashboard, settings"
+                    )
+                })
+            })
+            .collect::<anyhow::Result<_>>()?;
+        if pieces.is_empty() {
+            bail!("`--with` needs at least one piece (login, dashboard, settings)");
+        }
+        fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
+        scaffold_with_crate(&root, name, &format!("{name} — TPT AppFront"), &pieces)?;
+        let csv = pieces.iter().map(|p| p.name()).collect::<Vec<_>>().join(",");
+        println!("Created `{name}` (with: {csv}).");
+        println!("  cd {name} && trunk serve        # browser (DOM)");
+        return Ok(());
     }
 
     // A preset overrides the backend target: presets scaffold a single DOM app
@@ -327,11 +372,17 @@ fn init(name: &str, target: InitTarget, preset: Option<&str>) -> anyhow::Result<
     Ok(())
 }
 
-/// Prints the available `init --preset` starters and exits.
+/// Prints the available `init --preset` starters (and `init --with` pieces)
+/// and exits.
 fn list_presets_cmd() {
     println!("Available presets (`tpt-appfront init <name> --preset <preset>`):");
     for (preset, desc) in presets::list_presets() {
         println!("  {:<12} {}", preset.name(), desc);
+    }
+    println!();
+    println!("Available `--with` pieces (`tpt-appfront init <name> --with <csv>`):");
+    for (piece, desc) in presets::list_with_pieces() {
+        println!("  {:<10} {}", piece.name(), desc);
     }
 }
 
@@ -372,6 +423,30 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
         templates::tui_cargo_toml(pkg_name, &dep_ref("tpt-appfront-core"), &dep_ref("tpt-appfront-tui")),
     )?;
     fs::write(dir.join("src").join("main.rs"), templates::tui_main_rs(app_title))?;
+    Ok(())
+}
+
+/// Scaffolds a single DOM crate driven by an `init --with` piece list. The
+/// `Cargo.toml` reuses the preset template (it also pulls in
+/// `tpt-appfront-templates`); the `lib.rs` composes the selected pieces.
+fn scaffold_with_crate(
+    dir: &Path,
+    pkg_name: &str,
+    app_title: &str,
+    pieces: &[presets::WithPiece],
+) -> anyhow::Result<()> {
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(
+        dir.join("Cargo.toml"),
+        templates::preset_cargo_toml(
+            pkg_name,
+            &dep_ref("tpt-appfront-core"),
+            &dep_ref("tpt-appfront-dom"),
+            &dep_ref("tpt-appfront-templates"),
+        ),
+    )?;
+    fs::write(dir.join("src").join("lib.rs"), templates::with_lib_rs(pieces, app_title))?;
+    fs::write(dir.join("index.html"), templates::index_html(app_title))?;
     Ok(())
 }
 
@@ -517,7 +592,19 @@ fn dev(
         }
         (false, true, false, false) => run_in(project, "trunk", &["serve"], devtools)
             .context("failed to run `trunk serve` — install it with `cargo install trunk`"),
-        (false, false, true, false) => run_in(project, "cargo", &["run"], devtools),
+        (false, false, true, false) => {
+            // `--tui` runs a native `cargo run`; with hot reload it watches the
+            // crate's source and restarts on change (same poll-restart loop as
+            // `--desktop`), `--no-reload` runs a single `cargo run`.
+            if no_reload {
+                run_in(project, "cargo", &["run"], devtools)
+            } else {
+                dev_watch(
+                    vec![project.to_path_buf()],
+                    move || spawn_cargo_run(project, devtools),
+                )
+            }
+        }
         (false, false, false, true) => {
             // `--desktop-webview` hosts a `tpt-appfront-dom` trunk app from `ui/`.
             // Bail early with a clear message if that `ui/index.html` is absent
@@ -529,9 +616,25 @@ fn dev(
                     project.display()
                 )
             })?;
-            run_in(&ui, "trunk", &["build"], devtools)
-                .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
-            run_in(project, "cargo", &["run"], devtools)
+            if no_reload {
+                run_in(&ui, "trunk", &["build"], devtools)
+                    .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
+                run_in(project, "cargo", &["run"], devtools)
+            } else {
+                // Hot reload: watch both the host crate and the nested `ui/`
+                // trunk app, rebuild `ui/` on change, and restart the host.
+                let ui_clone = ui.clone();
+                let host_clone = project.to_path_buf();
+                dev_watch(
+                    vec![project.to_path_buf(), ui.clone()],
+                    move || -> anyhow::Result<Child> {
+                        run_in(&ui_clone, "trunk", &["build"], devtools).context(
+                            "failed to run `trunk build` — install it with `cargo install trunk`",
+                        )?;
+                        spawn_cargo_run(&host_clone, devtools)
+                    },
+                )
+            }
         }
         (false, false, false, false) => {
             bail!(
@@ -562,12 +665,12 @@ fn ui_dir(project: &Path) -> Option<PathBuf> {
 /// (`notify`) would avoid the polling, but a dependency-free poll is enough for
 /// a dev-time restart loop.
 struct Watcher {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
 }
 
 impl Watcher {
-    fn new(root: PathBuf) -> Self {
-        Self { root }
+    fn new(roots: Vec<PathBuf>) -> Self {
+        Self { roots }
     }
 
     /// Collect the files to watch: every `.rs` under `src/`, plus `Cargo.toml`
@@ -577,10 +680,12 @@ impl Watcher {
     /// Returns `(path, content_hash)` pairs, sorted by path for stable compare.
     fn snapshot(&self) -> Vec<(PathBuf, u64)> {
         let mut out = Vec::new();
-        collect_rs(&self.root.join("src"), &mut out);
-        let p = self.root.join("Cargo.toml");
-        if let Some(h) = file_hash(&p) {
-            out.push((p, h));
+        for root in &self.roots {
+            collect_rs(&root.join("src"), &mut out);
+            let p = root.join("Cargo.toml");
+            if let Some(h) = file_hash(&p) {
+                out.push((p, h));
+            }
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
@@ -634,14 +739,31 @@ fn file_hash(path: &Path) -> Option<u64> {
 /// Compile errors don't abort the loop — the failing `cargo run` child exits,
 /// the watcher keeps running, and the next save retries the build.
 fn dev_desktop_watch(project: &Path, devtools: bool) -> anyhow::Result<()> {
-    let watcher = Watcher::new(project.to_path_buf());
-    let mut baseline = watcher.snapshot();
-    println!(
-        "watching {} for changes (Ctrl-C to stop)…",
-        project.display()
-    );
+    dev_watch(
+        vec![project.to_path_buf()],
+        move || spawn_cargo_run(project, devtools),
+    )
+}
 
-    let mut child = spawn_cargo_run(project, devtools)?;
+/// Generalized watch/reload loop used by every `dev` target that supports
+/// hot reload (`--desktop`, `--tui`, `--desktop-webview`). `spawn` (re)starts the
+/// child process; `roots` are the directories watched for source change. For
+/// `--desktop-webview` that's both the host crate and the nested `ui/` trunk
+/// app; `--desktop`/`--tui` watch only their single crate.
+fn dev_watch(
+    roots: Vec<PathBuf>,
+    spawn: impl Fn() -> anyhow::Result<Child>,
+) -> anyhow::Result<()> {
+    let roots_display = roots
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let watcher = Watcher::new(roots);
+    let mut baseline = watcher.snapshot();
+    println!("watching {} for changes (Ctrl-C to stop)…", roots_display);
+
+    let mut child = spawn()?;
     let poll_interval = Duration::from_millis(400);
     let debounce = Duration::from_millis(150);
 
@@ -655,7 +777,7 @@ fn dev_desktop_watch(project: &Path, devtools: bool) -> anyhow::Result<()> {
             }
             println!("↻ change detected — restarting…");
             kill_child(&mut child);
-            child = spawn_cargo_run(project, devtools)?;
+            child = spawn()?;
         }
     }
 }
@@ -886,6 +1008,90 @@ fn optimize(target: &str, project: &Path, auto: bool, bundle: bool) -> anyhow::R
         run_bundler(project)?;
     }
     Ok(())
+}
+
+/// `tpt-appfront optimize --analyze`: a deterministic, no-AST/LLM heuristic
+/// scan that flags (1) `List`/`DataGrid` usages that may need virtual scrolling
+/// for large collections, and (2) a release profile missing the CLI's own
+/// size-optimization flags (`opt-level`/`lto`/`codegen-units`/`strip`). Prints a
+/// report; it's informational only and always returns `Ok` so it can't break a
+/// CI pipeline that simply runs it (todo.md cross-cutting follow-through).
+fn optimize_analyze(project: &Path) -> anyhow::Result<()> {
+    let mut findings: Vec<String> = Vec::new();
+
+    // 1) Release profile size flags.
+    let cargo_toml = project.join("Cargo.toml");
+    match fs::read_to_string(&cargo_toml) {
+        Ok(text) => {
+            let size_flags = ["opt-level", "lto", "codegen-units", "strip"];
+            if !text.contains("[profile.release]") {
+                findings.push(
+                    "Cargo.toml has no `[profile.release]` — add one with \
+                     opt-level=\"z\", lto=true, codegen-units=1, strip=true for minimal size."
+                        .to_string(),
+                );
+            } else {
+                for flag in size_flags {
+                    if !text.contains(flag) {
+                        findings.push(format!(
+                            "Cargo.toml `[profile.release]` is missing `{flag}` (recommended for size)."
+                        ));
+                    }
+                }
+            }
+        }
+        Err(_) => findings.push("No Cargo.toml found in the project directory.".to_string()),
+    }
+
+    // 2) Potential unvirtualized long lists / grids.
+    let mut list_hits: Vec<(PathBuf, usize)> = Vec::new();
+    collect_rs_matches(&project.join("src"), &mut list_hits);
+    for (path, line) in list_hits {
+        findings.push(format!(
+            "{}:{} — `List`/`DataGrid` usage; consider `.virtual_scroll(...)` for large collections.",
+            path.display(),
+            line
+        ));
+    }
+
+    if findings.is_empty() {
+        println!(
+            "analyze: no issues found. Release profile is size-optimized and no \
+             unvirtualized list usage detected."
+        );
+    } else {
+        println!("analyze found {} item(s) to review:", findings.len());
+        for f in &findings {
+            println!("  - {f}");
+        }
+        println!("analyze: done (heuristic — review the flags above).");
+    }
+    Ok(())
+}
+
+/// Recursively scans `.rs` files under `dir` for `List`/`DataGrid` usage marks
+/// (`.list(`/`.data_grid(`/`.rows(`), recording each matching `path:line`.
+fn collect_rs_matches(dir: &Path, hits: &mut Vec<(PathBuf, usize)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_matches(&path, hits);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            if let Ok(content) = fs::read_to_string(&path) {
+                for (i, line) in content.lines().enumerate() {
+                    if line.contains(".list(")
+                        || line.contains(".data_grid(")
+                        || line.contains(".rows(")
+                    {
+                        hits.push((path.clone(), i + 1));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Prints the size of the largest release binary built in `target/release/`,
@@ -1173,18 +1379,56 @@ mod tests {
     fn init_rejects_invalid_names_before_touching_disk() {
         // These names all fail validation and `bail!` before `init` creates
         // any directory, so no cwd sandboxing is needed to keep this hermetic.
-        assert!(init("", InitTarget::Canvas, None).is_err());
-        assert!(init("../escape", InitTarget::Canvas, None).is_err());
-        assert!(init("a/b", InitTarget::Canvas, None).is_err());
-        assert!(init("a\\b", InitTarget::Canvas, None).is_err());
-        assert!(init("..", InitTarget::Canvas, None).is_err());
+        assert!(init("", InitTarget::Canvas, None, &[]).is_err());
+        assert!(init("../escape", InitTarget::Canvas, None, &[]).is_err());
+        assert!(init("a/b", InitTarget::Canvas, None, &[]).is_err());
+        assert!(init("a\\b", InitTarget::Canvas, None, &[]).is_err());
+        assert!(init("..", InitTarget::Canvas, None, &[]).is_err());
     }
 
     #[test]
     fn init_rejects_unknown_preset_before_touching_disk() {
         // An unknown preset name fails the `Preset::from_str` lookup and `bail!`s
         // before any directory is created.
-        assert!(init("myapp", InitTarget::Both, Some("nope")).is_err());
+        assert!(init("myapp", InitTarget::Both, Some("nope"), &[]).is_err());
+    }
+
+    #[test]
+    fn init_with_and_preset_together_is_rejected_before_touching_disk() {
+        assert!(init(
+            "myapp",
+            InitTarget::Both,
+            Some("login"),
+            &["settings".to_string()],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn init_with_scaffolds_dom_crate_composing_pieces() {
+        let dir = std::env::temp_dir().join(format!("tpt-init-with-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let pieces = vec![presets::WithPiece::Dashboard, presets::WithPiece::Settings];
+        assert!(scaffold_with_crate(&dir.join("myapp"), "myapp", "myapp", &pieces).is_ok());
+        let root = dir.join("myapp");
+        let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("tpt-appfront-templates"));
+        let lib = fs::read_to_string(root.join("src").join("lib.rs")).unwrap();
+        assert!(lib.contains("dashboard_shell"));
+        assert!(lib.contains("settings_list"));
+        // No `login` piece selected → the login form must not appear.
+        assert!(!lib.contains("login_form"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_with_flag_parses() {
+        assert!(Cli::try_parse_from([
+            "tpt-appfront", "init", "myapp", "--with", "dashboard,settings"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["tpt-appfront", "init", "myapp", "--with", "login"]).is_ok());
     }
 
     #[test]
@@ -1211,6 +1455,35 @@ mod tests {
     fn list_presets_cmd_prints_each_preset_name() {
         // Just ensure it runs without panicking; output goes to stdout.
         list_presets_cmd();
+    }
+
+    #[test]
+    fn optimize_analyze_flag_parses_and_runs() {
+        assert!(Cli::try_parse_from(["tpt-appfront", "optimize", "--analyze"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["tpt-appfront", "optimize", "--target", "canvas", "--analyze"])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn analyze_flags_missing_release_profile_and_list_usage() {
+        let dir = std::env::temp_dir().join(format!("tpt-analyze-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src").join("main.rs"),
+            "fn main() { let _ = container.list(|c| { c.text(\"a\"); }); }\n",
+        )
+        .unwrap();
+        // Informational only — must not bail/panic.
+        assert!(optimize_analyze(&dir).is_ok());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1255,7 +1528,7 @@ mod tests {
         let file = dir.join("src").join("main.rs");
         fs::write(&file, "fn main() {}\n").unwrap();
 
-        let w = Watcher::new(dir.clone());
+        let w = Watcher::new(vec![dir.clone()]);
         let mut snap = w.snapshot();
         assert!(!w.changed(&mut snap), "identical snapshot is not a change");
 

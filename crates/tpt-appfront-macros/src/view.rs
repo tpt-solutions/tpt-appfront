@@ -116,6 +116,11 @@ struct Node {
     attrs: Vec<(Ident, Expr)>,
     children: Vec<Child>,
     self_closing: bool,
+    /// True when this tag is an unknown **capitalized** self-closing tag that
+    /// the macro expands into a component call via the `tpt-appfront-templates`
+    /// convention (`{Tag}Config` struct + `snake_case` builder fn), rather than
+    /// one of the built-in `TAGS`.
+    custom: bool,
 }
 
 struct Cursor<'a> {
@@ -203,12 +208,35 @@ fn parse_node(cur: &mut Cursor) -> Result<Node, Error> {
         Some(other) => return Err(Error::new(other.span(), "expected tag name")),
         None => return Err(Error::new(Span::call_site(), "unexpected end of input")),
     };
-    if !TAGS.contains(&tag.to_string().as_str()) {
+    let tag_str = tag.to_string();
+    // Built-in tag → plain node. Unknown tag handling:
+    //  - a capitalized name is treated as a custom component (expanded into a
+    //    `tpt_appfront_templates::{tag}Config` + `{snake_case}` call below),
+    //    unless it's within edit distance 2 of a built-in tag (then it's a typo
+    //    and we keep the friendly "unknown tag" error instead of generating a
+    //    bogus component call);
+    //  - any other unknown name is a plain unknown-tag error.
+    let custom = if TAGS.contains(&tag_str.as_str()) {
+        false
+    } else if is_custom_tag(&tag) {
+        let min_d = TAGS
+            .iter()
+            .map(|t| edit_distance(&tag_str, t))
+            .min()
+            .unwrap_or(usize::MAX);
+        if min_d <= 2 {
+            return Err(Error::new(
+                tag.span(),
+                format!("unknown tag `<{}>`; v1 supports: {}", tag, TAGS.join(", ")),
+            ));
+        }
+        true
+    } else {
         return Err(Error::new(
             tag.span(),
             format!("unknown tag `<{}>`; v1 supports: {}", tag, TAGS.join(", ")),
         ));
-    }
+    };
 
     let mut attrs = Vec::new();
     loop {
@@ -221,6 +249,7 @@ fn parse_node(cur: &mut Cursor) -> Result<Node, Error> {
                     attrs,
                     children: vec![],
                     self_closing: true,
+                    custom,
                 });
             }
             Some(TokenTree::Punct(p)) if p.as_char() == '>' => {
@@ -232,6 +261,7 @@ fn parse_node(cur: &mut Cursor) -> Result<Node, Error> {
                     attrs,
                     children,
                     self_closing: false,
+                    custom,
                 });
             }
             Some(TokenTree::Ident(_)) => {
@@ -533,6 +563,11 @@ fn single_text(node: &Node) -> Result<&Expr, Error> {
 /// can build them once and clone the cached instance — the "compile-time
 /// codegen for static UITree subtrees" differentiator (see `todo.md` Phase 5).
 fn node_is_static(node: &Node) -> bool {
+    // A custom-component call may produce dynamic content, so it can never be
+    // hoisted into the static-cache path.
+    if node.custom {
+        return false;
+    }
     let values_static = node.attrs.iter().all(|(_, e)| is_literal_expr(e))
         && node.children.iter().all(|c| match c {
             Child::Text(e) => is_literal_expr(e),
@@ -559,6 +594,64 @@ fn is_literal_expr(e: &Expr) -> bool {
     matches!(e, Expr::Lit(_))
 }
 
+/// A custom-component tag is one that starts with an ASCII uppercase letter
+/// (e.g. `LoginForm`). Lowercase unknown names are treated as plain unknown-tag
+/// errors, and capitalized names within edit distance 2 of a built-in tag are
+/// treated as typos (see `parse_node`).
+fn is_custom_tag(tag: &Ident) -> bool {
+    tag.to_string()
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false)
+}
+
+/// Levenshtein edit distance between two strings — used to tell "custom
+/// component name" apart from a near-miss typo of a built-in tag.
+fn edit_distance(s1: &str, s2: &str) -> usize {
+    let v1: Vec<char> = s1.chars().collect();
+    let v2: Vec<char> = s2.chars().collect();
+    let n = v1.len();
+    let m = v2.len();
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+    let mut prev: Vec<usize> = (0..=m).collect();
+    let mut cur = vec![0usize; m + 1];
+    for i in 1..=n {
+        cur[0] = i;
+        for j in 1..=m {
+            let cost = if v1[i - 1] == v2[j - 1] { 0 } else { 1 };
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[m]
+}
+
+/// Converts a PascalCase tag (e.g. `LoginForm`) to the snake_case builder fn
+/// name (e.g. `login_form`) the templates convention expects.
+fn to_snake_case(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    let mut prev_lower = false;
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i != 0 && prev_lower {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+            prev_lower = false;
+        } else {
+            out.push(c);
+            prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+        }
+    }
+    out
+}
+
 /// Validates attributes/children and emits a statement that builds this node
 /// as a child of `parent` (a `&mut ContainerBuilder<Msg>`), including any
 /// trailing `.class(..)`/`.key(..)` chain.
@@ -578,6 +671,32 @@ fn gen_node_stmt(
     id: &mut usize,
 ) -> Result<TokenStream, Error> {
     let tag = node.tag.to_string();
+
+    // Custom components (unknown capitalized self-closing tags) expand to a
+    // `tpt_appfront_templates` call: `<LoginForm title={..} />` becomes
+    // `parent.with(tpt_appfront_templates::login_form(
+    //     &tpt_appfront_templates::LoginFormConfig { title: (..), .. }))`.
+    // They are skipped by the static-cache path above and by the attribute
+    // validation below (they accept whatever struct fields their `Config` has).
+    // A non-self-closing custom tag is a hard error — compose those with
+    // `{ expr }` instead (see the macro docs).
+    if node.custom {
+        if !node.self_closing {
+            return Err(Error::new(
+                node.tag.span(),
+                format!(
+                    "`<{}>` must be self-closing (`<{} ... />`); compose a non-self-closing custom component with `{{ expr }}`",
+                    tag, tag
+                ),
+            ));
+        }
+        let fn_name = format_ident!("{}", to_snake_case(&tag));
+        let cfg_ident = format_ident!("{}Config", tag);
+        let fields = node.attrs.iter().map(|(name, expr)| quote! { #name: (#expr) });
+        return Ok(quote! {
+            #parent.with(tpt_appfront_templates::#fn_name(&tpt_appfront_templates::#cfg_ident { #(#fields),* }));
+        });
+    }
 
     // Validate attributes are allowed for this tag.
     for (name, _) in &node.attrs {

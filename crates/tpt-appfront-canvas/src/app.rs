@@ -5,9 +5,17 @@
 use crate::auto_optimizer::{AutoOptimizer, OptimizerState};
 use crate::text::TextMeasurer;
 use crate::{layout, paint};
-use tpt_appfront_core::UITree;
+use tpt_appfront_core::{NodeKind, UITree, VirtualScroll};
 use std::rc::Rc;
 use taffy::TaffyTree;
+
+/// Item count at/above which `auto_optimize` applies a `VirtualScroll` to a
+/// `List`/`DataGrid` that doesn't already configure one. Below this a list is
+/// cheap enough that windowing it would cost more than it saves.
+const AUTO_VSCROLL_THRESHOLD_ITEMS: usize = 50;
+/// Default per-item height (px) assumed when auto-virtualizing a list whose
+/// real item height isn't known until layout.
+const AUTO_VSCROLL_ITEM_HEIGHT: f32 = 24.0;
 
 pub struct CanvasApp<Msg: Clone + 'static> {
     build_ui: Box<dyn FnMut() -> UITree<Msg>>,
@@ -18,6 +26,10 @@ pub struct CanvasApp<Msg: Clone + 'static> {
     /// optimizations; reading its `recommendations()` from app code lets a
     /// canvas app auto-toggle virtual scrolling / texture caching.
     optimizer: AutoOptimizer,
+    /// When enabled, once `optimizer` recommends it, large unconfigured
+    /// `List`/`DataGrid` nodes are auto-windowed via `VirtualScroll` (the
+    /// "applied" half of `AutoOptimizer` for the canvas backend).
+    auto_optimize_enabled: bool,
 }
 
 impl<Msg: Clone + 'static> CanvasApp<Msg> {
@@ -30,7 +42,17 @@ impl<Msg: Clone + 'static> CanvasApp<Msg> {
             dispatch: Rc::new(dispatch),
             measurer: TextMeasurer::new(),
             optimizer: AutoOptimizer::default(),
+            auto_optimize_enabled: false,
         }
+    }
+
+    /// Enables automatic application of `AutoOptimizer`'s `virtual_scrolling`
+    /// recommendation: once the frame profiler decides virtual scrolling would
+    /// help, large `List`/`DataGrid` nodes that don't already configure it get
+    /// windowed automatically (todo.md cross-cutting follow-through).
+    pub fn auto_optimize(mut self, enabled: bool) -> Self {
+        self.auto_optimize_enabled = enabled;
+        self
     }
 
     /// Smoothed per-frame work duration in milliseconds (for an FPS overlay).
@@ -48,12 +70,19 @@ impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let start = std::time::Instant::now();
 
-        let ui_tree = (self.build_ui)();
+        let available = ui.available_size();
+
+        let mut ui_tree = (self.build_ui)();
+
+        // When auto-optimize is on and the profiler has recommended virtual
+        // scrolling, window any large unconfigured `List`/`DataGrid` node.
+        if self.auto_optimize_enabled && self.optimizer.recommendations().virtual_scrolling {
+            apply_auto_virtual_scroll(&mut ui_tree, available.y);
+        }
 
         let mut tree: TaffyTree<()> = TaffyTree::new();
         let root = layout::build(&mut tree, &mut self.measurer, &ui_tree);
 
-        let available = ui.available_size();
         tree.compute_layout(
             root.taffy_id,
             taffy::Size {
@@ -79,5 +108,103 @@ impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
     #[cfg(target_arch = "wasm32")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(&mut *self)
+    }
+}
+
+/// Recursively applies a [`VirtualScroll`] to any `List`/`DataGrid` node that
+/// doesn't already configure one and is large enough to benefit, when
+/// auto-optimize is enabled and the frame profiler recommends it. This is the
+/// "applied" half of the `AutoOptimizer` for the canvas backend (todo.md Phase
+/// 11 stretch follow-through): the profiler decides, and this acts on it.
+fn apply_auto_virtual_scroll<Msg: Clone>(ui: &mut UITree<Msg>, viewport_height: f32) {
+    apply_auto_virtual_scroll_inner(ui, viewport_height);
+}
+
+fn apply_auto_virtual_scroll_inner<Msg: Clone>(ui: &mut UITree<Msg>, viewport_height: f32) {
+    let count = match &ui.kind {
+        NodeKind::List { items } => items.len(),
+        NodeKind::DataGrid { rows, .. } => rows.len(),
+        _ => 0,
+    };
+    if ui.meta.virtual_scroll.is_none() && count >= AUTO_VSCROLL_THRESHOLD_ITEMS {
+        ui.meta.virtual_scroll = Some(VirtualScroll::new(
+            AUTO_VSCROLL_ITEM_HEIGHT,
+            viewport_height.max(1.0),
+        ));
+    }
+
+    match &mut ui.kind {
+        NodeKind::Container { children } => {
+            for child in children {
+                apply_auto_virtual_scroll_inner(child, viewport_height);
+            }
+        }
+        NodeKind::List { items } => {
+            for child in items {
+                apply_auto_virtual_scroll_inner(child, viewport_height);
+            }
+        }
+        NodeKind::Portal { content, .. } => {
+            apply_auto_virtual_scroll_inner(content, viewport_height);
+        }
+        // `DataGrid` rows are plain strings (no nested `UITree`), and the other
+        // node kinds have no recursive children.
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tpt_appfront_core::ContainerBuilder;
+
+    fn big_list(n: usize) -> UITree<()> {
+        let mut b = ContainerBuilder::new();
+        b.list(|items| {
+            for i in 0..n {
+                items.text(format!("item {i}"));
+            }
+        });
+        b.into_only_child().unwrap()
+    }
+
+    fn as_list(ui: &UITree<()>) -> &UITree<()> {
+        match &ui.kind {
+            NodeKind::List { .. } => ui,
+            other => panic!("expected a List node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auto_virtual_scroll_windowizes_large_lists() {
+        let mut ui = big_list(1000);
+        apply_auto_virtual_scroll(&mut ui, 200.0);
+        assert!(as_list(&ui).meta.virtual_scroll.is_some());
+    }
+
+    #[test]
+    fn auto_virtual_scroll_skips_small_lists() {
+        let mut ui = big_list(5);
+        apply_auto_virtual_scroll(&mut ui, 200.0);
+        assert!(as_list(&ui).meta.virtual_scroll.is_none());
+    }
+
+    #[test]
+    fn auto_virtual_scroll_respects_existing_config() {
+        let mut ui = big_list(1000);
+        ui.meta.virtual_scroll = Some(VirtualScroll::new(10.0, 50.0));
+        apply_auto_virtual_scroll(&mut ui, 200.0);
+        // Not overwritten by the heuristic default.
+        assert_eq!(ui.meta.virtual_scroll.unwrap().item_height, 10.0);
+    }
+
+    #[test]
+    fn auto_virtual_scroll_does_not_clobber_meta() {
+        // Applying virtual scroll must not drop other `NodeMeta` fields.
+        let mut ui = big_list(1000);
+        ui.meta.class = Some("big-list".to_string());
+        apply_auto_virtual_scroll(&mut ui, 200.0);
+        assert_eq!(as_list(&ui).meta.class.as_deref(), Some("big-list"));
+        assert!(as_list(&ui).meta.virtual_scroll.is_some());
     }
 }

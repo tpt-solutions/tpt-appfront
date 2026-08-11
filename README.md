@@ -30,6 +30,8 @@ See [docs/quickstart.md](docs/quickstart.md): install the CLI, `tpt-appfront ini
 
 Examples (`examples/counter-dom`, `counter-canvas`, `counter-tui`, `counter-webview`, `ssr-page`, `ai-agent-demo`, `todo-app`, `templates-demo`, `node-graph`) live outside the workspace — each has its own `Cargo.toml` so it can resolve wasm-bindgen/trunk dependencies independently. All are committed and built in CI (see `.github/workflows/ci.yml`); scaffold new ones locally with `tpt-appfront init` (see [docs/quickstart.md](docs/quickstart.md)). `templates-demo` composes the `tpt-appfront-templates` starter UIs; `node-graph` shows the recommended raw-`egui` escape hatch for GPU/canvas-style interactions the `UITree` flexbox can't express.
 
+When the `UITree` model doesn't fit, see [docs/escape-hatches.md](docs/escape-hatches.md) for the `{ expr }`/`ContainerBuilder::with` composition pattern and the raw-`egui` escape hatch.
+
 ## License
 
 Licensed under either of

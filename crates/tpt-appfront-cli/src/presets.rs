@@ -65,6 +65,54 @@ pub fn list_presets() -> &'static [(Preset, &'static str)] {
     &PRESETS
 }
 
+// ---------------------------------------------------------------------------
+// à la carte composition pieces (init --with <a,b,c>)
+// ---------------------------------------------------------------------------
+
+/// A single `tpt_appfront_templates` piece selectable via `tpt-appfront init
+/// --with <list>` (e.g. `dashboard,settings` composes `dashboard_shell` whose
+/// content area holds `settings_list`, matching `examples/templates-demo`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WithPiece {
+    /// `login_form` — a username/password sign-in screen.
+    Login,
+    /// `dashboard_shell` — a nav sidebar + content area.
+    Dashboard,
+    /// `settings_list` — a CRUD list of rows.
+    Settings,
+}
+
+impl WithPiece {
+    /// The `--with` token for this piece.
+    pub fn name(&self) -> &'static str {
+        match self {
+            WithPiece::Login => "login",
+            WithPiece::Dashboard => "dashboard",
+            WithPiece::Settings => "settings",
+        }
+    }
+
+    /// Parses a `--with` token, or `None` if it isn't a known piece.
+    pub fn from_str(s: &str) -> Option<WithPiece> {
+        match s.trim() {
+            "login" => Some(WithPiece::Login),
+            "dashboard" => Some(WithPiece::Dashboard),
+            "settings" => Some(WithPiece::Settings),
+            _ => None,
+        }
+    }
+}
+
+/// `(piece, description)` pairs for documentation/help.
+pub fn list_with_pieces() -> &'static [(WithPiece, &'static str)] {
+    static PIECES: [(WithPiece, &str); 3] = [
+        (WithPiece::Login, "Sign-in form (login_form)"),
+        (WithPiece::Dashboard, "Sidebar nav shell (dashboard_shell)"),
+        (WithPiece::Settings, "CRUD list (settings_list)"),
+    ];
+    &PIECES
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +135,20 @@ mod tests {
     #[test]
     fn crud_alias_resolves() {
         assert_eq!(Preset::from_str("crud"), Some(Preset::CrudApp));
+    }
+
+    #[test]
+    fn with_piece_round_trips_through_name() {
+        for (piece, _) in list_with_pieces() {
+            let parsed = WithPiece::from_str(piece.name())
+                .unwrap_or_else(|| panic!("failed to parse piece `{}`", piece.name()));
+            assert_eq!(*piece, parsed);
+        }
+    }
+
+    #[test]
+    fn unknown_with_piece_is_none() {
+        assert!(WithPiece::from_str("bogus").is_none());
+        assert!(WithPiece::from_str("  settings  ").is_some());
     }
 }

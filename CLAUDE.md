@@ -76,3 +76,4 @@ tpt-appfront-cli    — `tpt-appfront` CLI: init/dev/build/generate/benchmark/op
 - Backends must stay independent consumers of `tpt-appfront-core` — don't add backend-specific fields to `UITree`/`NodeKind`/`NodeMeta`; extend the AST generically and let each backend interpret it.
 - `tpt-appfront-dom` and the wasm side of `tpt-appfront-canvas` only compile under `wasm32-unknown-unknown`; if you touch either, build with `--target wasm32-unknown-unknown` too, not just native.
 - Treat `todo.md` as the source of truth for what phase/feature is actually implemented vs. planned — `spec.txt` describes the eventual full design (including a couple of features, like GPU-compute layout, that are explicitly stretch/future work).
+- When the `UITree` model doesn't fit, see [docs/escape-hatches.md](docs/escape-hatches.md) for the `{ expr }`/`ContainerBuilder::with` composition pattern and the raw-`egui` (`node-graph` style) escape hatch for canvas.
