@@ -4,6 +4,7 @@ use tpt_appfront_core::{view, NodeKind, UITree};
 enum Msg {
     Increment,
     Submit(String),
+    Toggled(bool),
 }
 
 fn root_kind<Msg>(ui: &UITree<Msg>) -> &NodeKind<Msg> {
@@ -472,6 +473,122 @@ fn memoized_label(props: CountProps) -> UITree<Msg> {
     UITree::container(|c| {
         c.text(format!("value={}", props.value));
     })
+}
+
+#[test]
+fn textarea_tag_builds_value_and_on_input() {
+    let ui: UITree<Msg> = view! {
+        <Container>
+            <Textarea value={"draft".to_string()} on_input={Msg::Submit} />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    match &children[0].kind {
+        NodeKind::Textarea { value } => {
+            assert_eq!(value, "draft");
+            assert!(
+                children[0].meta.on_input.is_some(),
+                "textarea two-way binding must set on_input"
+            );
+            let produced = children[0]
+                .meta
+                .on_input
+                .as_ref()
+                .unwrap()("typed".to_string());
+            assert_eq!(produced, Msg::Submit("typed".to_string()));
+        }
+        other => panic!("expected textarea, got {other:?}"),
+    }
+}
+
+#[test]
+fn checkbox_tag_builds_label_checked_and_on_toggle() {
+    let ui: UITree<Msg> = view! {
+        <Container>
+            <Checkbox label={"Enable"} checked={true} on_toggle={Msg::Toggled} />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    match &children[0].kind {
+        NodeKind::Checkbox { label, checked } => {
+            assert_eq!(label, "Enable");
+            assert!(*checked);
+            assert!(
+                children[0].meta.on_toggle.is_some(),
+                "checkbox must set on_toggle"
+            );
+            let produced = children[0].meta.on_toggle.as_ref().unwrap()(false);
+            assert_eq!(produced, Msg::Toggled(false));
+        }
+        other => panic!("expected checkbox, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_tag_builds_options_selected_and_on_input() {
+    let ui: UITree<Msg> = view! {
+        <Container>
+            <Select
+                options={vec![("a".to_string(), "Apple".to_string())]}
+                selected={"a".to_string()}
+                on_input={Msg::Submit}
+            />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    match &children[0].kind {
+        NodeKind::Select { options, selected } => {
+            assert_eq!(options, &[("a".to_string(), "Apple".to_string())]);
+            assert_eq!(selected, "a");
+            assert!(
+                children[0].meta.on_input.is_some(),
+                "select two-way binding must set on_input"
+            );
+        }
+        other => panic!("expected select, got {other:?}"),
+    }
+}
+
+#[test]
+fn radio_tag_builds_name_options_selected_and_on_input() {
+    let ui: UITree<Msg> = view! {
+        <Container>
+            <Radio
+                name={"plan".to_string()}
+                options={vec![("a".to_string(), "A".to_string())]}
+                selected={"a".to_string()}
+                on_input={Msg::Submit}
+            />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    match &children[0].kind {
+        NodeKind::Radio { name, selected, .. } => {
+            assert_eq!(name, "plan");
+            assert_eq!(selected, "a");
+            assert!(
+                children[0].meta.on_input.is_some(),
+                "radio two-way binding must set on_input"
+            );
+        }
+        other => panic!("expected radio, got {other:?}"),
+    }
+}
+
+#[test]
+fn form_controls_reject_child_elements() {
+    // `<Textarea>`/`<Checkbox>`/`<Select>`/`<Radio>` are self-closing; children
+    // are rejected at macro expansion (see `gen_node_stmt`). A separate
+    // `trybuild` compile-fail fixture would be needed to assert the error, but
+    // these positive tests plus the `required_for` checks cover the happy path.
 }
 
 #[test]

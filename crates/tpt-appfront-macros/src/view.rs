@@ -1,17 +1,20 @@
 //! `view!` — a small, HTML-like templating macro for building `UITree`s.
 //!
-//! Scope (per `todo.md` Phase 5 / Phase 14): `Container` / `Heading` / `Text` /
-//! `Button` / `Input` / `List` / `DataGrid`. The macro is purely additive — it
+//! Scope (per `todo.md` Phase 5 / Phase 14 / Phase 19): `Container` /
+//! `Heading` / `Text` / `Button` / `Input` / `Textarea` / `Checkbox` /
+//! `Select` / `Radio` / `List` / `DataGrid`. The macro is purely additive — it
 //! expands to the same `UITree::container(|c| { ... })` builder calls you'd
 //! hand-write, so there's no hidden runtime cost and the resulting tree is
 //! identical to one built manually. Attribute values are Rust expressions in
 //! `{ ... }` (literals are also accepted as sugar), and text children are
 //! either string literals or `{ expr }` expressions.
 //!
-//! Two-way binding is supported on `<Input>` via the `on_input` attribute,
-//! which takes a `Fn(String) -> Msg` (e.g. `on_input={Msg::Set}` or
-//! `on_input={|s| Msg::Set(s)}`); the closure is invoked with the input's new
-//! value on every change, exactly like `NodeRef::on_input`.
+//! Two-way binding is supported on `<Input>`/`<Textarea>`/`<Select>`/`<Radio>`
+//! via the `on_input` attribute, which takes a `Fn(String) -> Msg` (e.g.
+//! `on_input={Msg::Set}` or `on_input={|s| Msg::Set(s)}`); the closure is
+//! invoked with the new value on every change, exactly like
+//! `NodeRef::on_input`. `<Checkbox>` binds via `on_toggle`, a
+//! `Fn(bool) -> Msg`, matching `NodeRef::on_toggle`.
 //!
 //! ```ignore
 //! let ui = tpt_appfront_core::view! {
@@ -35,7 +38,10 @@ use syn::parse::Parser;
 use syn::{Error, Expr, ExprLit, Lit, Pat};
 
 /// Node types the macro understands, with their allowed/required attributes.
-const TAGS: &[&str] = &["Container", "Heading", "Text", "Button", "Input", "List", "DataGrid"];
+const TAGS: &[&str] = &[
+    "Container", "Heading", "Text", "Button", "Input", "Textarea", "Checkbox", "Select", "Radio",
+    "List", "DataGrid",
+];
 
 const ALLOWED: &[(&str, &[&str], &[&str])] = &[
     ("Container", &["class", "key"], &[]),
@@ -46,6 +52,26 @@ const ALLOWED: &[(&str, &[&str], &[&str])] = &[
         "Input",
         &["value", "class", "key", "on_input"],
         &["value"],
+    ),
+    (
+        "Textarea",
+        &["value", "class", "key", "on_input"],
+        &["value"],
+    ),
+    (
+        "Checkbox",
+        &["label", "checked", "class", "key", "on_toggle"],
+        &["label", "checked"],
+    ),
+    (
+        "Select",
+        &["options", "selected", "class", "key", "on_input"],
+        &["options", "selected"],
+    ),
+    (
+        "Radio",
+        &["name", "options", "selected", "class", "key", "on_input"],
+        &["name", "options", "selected"],
     ),
     ("List", &["class", "key"], &[]),
     (
@@ -640,6 +666,50 @@ fn gen_node_stmt(
             }
             Ok(quote! { #parent.input(#value)#chain; })
         }
+        "Textarea" => {
+            let value = attr_expr(node, "value").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Textarea>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.textarea(#value)#chain; })
+        }
+        "Checkbox" => {
+            let label = attr_expr(node, "label").unwrap();
+            let checked = attr_expr(node, "checked").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Checkbox>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.checkbox(#label, #checked)#chain; })
+        }
+        "Select" => {
+            let options = attr_expr(node, "options").unwrap();
+            let selected = attr_expr(node, "selected").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Select>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.select(#options, #selected)#chain; })
+        }
+        "Radio" => {
+            let name = attr_expr(node, "name").unwrap();
+            let options = attr_expr(node, "options").unwrap();
+            let selected = attr_expr(node, "selected").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Radio>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.radio_group(#name, #options, #selected)#chain; })
+        }
         "List" => {
             // `<List>` children are built onto the inner `ContainerBuilder`
             // that `c.list(...)` passes in — same as a nested `Container`, but
@@ -675,9 +745,11 @@ fn gen_node_stmt(
     }
 }
 
-/// Emits `.class(..)`/`.key(..)`/`.on_input(..)` for any of those attributes
-/// present on a node. `.on_input` only appears on `<Input>` (it's not in any
-/// other tag's allowed-attribute list), so it's only ever emitted there.
+/// Emits `.class(..)`/`.key(..)`/`.on_input(..)`/`.on_toggle(..)` for any of
+/// those attributes present on a node. `.on_input` appears on `<Input>`/
+/// `<Textarea>`/`<Select>`/`<Radio>`; `.on_toggle` appears only on `<Checkbox>`
+/// (each is restricted by its tag's allowed-attribute list, so the chain suffix
+/// never emits a method the builder doesn't accept).
 fn chain_suffix(attrs: &[(Ident, Expr)]) -> TokenStream {
     let mut out = TokenStream::new();
     for (name, expr) in attrs {
@@ -685,6 +757,7 @@ fn chain_suffix(attrs: &[(Ident, Expr)]) -> TokenStream {
             "class" => out.extend(quote! { .class(#expr) }),
             "key" => out.extend(quote! { .key(#expr) }),
             "on_input" => out.extend(quote! { .on_input(#expr) }),
+            "on_toggle" => out.extend(quote! { .on_toggle(#expr) }),
             _ => {}
         }
     }

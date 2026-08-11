@@ -1,5 +1,6 @@
 mod generate;
 mod ingest;
+mod presets;
 mod templates;
 
 use std::fs;
@@ -37,6 +38,13 @@ enum Command {
         /// Which backend(s) to scaffold.
         #[arg(long, value_enum, default_value = "both")]
         target: InitTarget,
+        /// Start from a starter preset instead of the bare counter
+        /// (e.g. `login`, `dashboard`, `crud-app`, `saas-starter`).
+        #[arg(long)]
+        preset: Option<String>,
+        /// Print the available presets and exit.
+        #[arg(long)]
+        list_presets: bool,
     },
     /// Start the development server.
     Dev {
@@ -53,14 +61,19 @@ enum Command {
     /// hosting the `ui/` trunk build inside the OS webview.
     #[arg(long)]
     desktop_webview: bool,
-    /// Disable the watch/reload loop for `--desktop` and run a single plain
-    /// `cargo run` (useful when you manage reloading externally).
-    #[arg(long)]
-    no_reload: bool,
-    /// Directory of the crate to run (defaults to the current directory).
-    #[arg(long, default_value = ".")]
-    project: PathBuf,
-},
+        /// Disable the watch/reload loop for `--desktop` and run a single plain
+        /// `cargo run` (useful when you manage reloading externally).
+        #[arg(long)]
+        no_reload: bool,
+        /// Enable the AppFront devtools inspector: sets `TPT_APPFRONT_DEVTOOLS=1`
+        /// on the spawned dev process so the scaffolded app prints its `UITree`
+        /// structure on startup (see `tpt_appfront_core::devtools`).
+        #[arg(long)]
+        devtools: bool,
+        /// Directory of the crate to run (defaults to the current directory).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
     /// Build the application for a target.
     Build {
         /// Target: dom, canvas, html, ai-schema, webview, or all.
@@ -159,9 +172,15 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Init { name, target } => init(&name, target),
-        Command::Dev { desktop, web, tui, desktop_webview, no_reload, project } => {
-            dev(desktop, web, tui, desktop_webview, no_reload, &project)
+        Command::Init { name, target, preset, list_presets } => {
+            if list_presets {
+                list_presets_cmd();
+                return Ok(());
+            }
+            init(&name, target, preset.as_deref())
+        }
+        Command::Dev { desktop, web, tui, desktop_webview, no_reload, devtools, project } => {
+            dev(desktop, web, tui, desktop_webview, no_reload, devtools, &project)
         }
         Command::Build { target, project, bundle } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
@@ -241,7 +260,7 @@ fn dep_ref(crate_name: &str) -> String {
     }
 }
 
-fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
+fn init(name: &str, target: InitTarget, preset: Option<&str>) -> anyhow::Result<()> {
     if name.is_empty()
         || name.contains(['/', '\\'])
         || name == ".."
@@ -253,6 +272,22 @@ fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
     if root.exists() {
         bail!("directory `{name}` already exists");
     }
+
+    // A preset overrides the backend target: presets scaffold a single DOM app
+    // that uses `tpt-appfront-templates` + `Signal` state (todo.md Phase 19).
+    if let Some(preset_name) = preset {
+        let preset = presets::Preset::from_str(preset_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown preset `{preset_name}`; run `tpt-appfront init --list-presets` for the available presets"
+            )
+        })?;
+        fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
+        scaffold_preset_crate(&root, name, &format!("{name} — TPT AppFront"), preset)?;
+        println!("Created `{name}` (preset: {}).", preset.name());
+        println!("  cd {name} && trunk serve        # browser (DOM)");
+        return Ok(());
+    }
+
     fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
 
     let app_title = format!("{name} — TPT AppFront");
@@ -292,6 +327,14 @@ fn init(name: &str, target: InitTarget) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Prints the available `init --preset` starters and exits.
+fn list_presets_cmd() {
+    println!("Available presets (`tpt-appfront init <name> --preset <preset>`):");
+    for (preset, desc) in presets::list_presets() {
+        println!("  {:<12} {}", preset.name(), desc);
+    }
+}
+
 fn target_label(target: InitTarget) -> &'static str {
     match target {
         InitTarget::Dom => "dom",
@@ -329,6 +372,30 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
         templates::tui_cargo_toml(pkg_name, &dep_ref("tpt-appfront-core"), &dep_ref("tpt-appfront-tui")),
     )?;
     fs::write(dir.join("src").join("main.rs"), templates::tui_main_rs(app_title))?;
+    Ok(())
+}
+
+/// Scaffolds a single DOM crate driven by a starter preset. The Cargo.toml pulls
+/// in `tpt-appfront-templates`; the `lib.rs` is generated by
+/// [`templates::preset_lib_rs`].
+fn scaffold_preset_crate(
+    dir: &Path,
+    pkg_name: &str,
+    app_title: &str,
+    preset: presets::Preset,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(
+        dir.join("Cargo.toml"),
+        templates::preset_cargo_toml(
+            pkg_name,
+            &dep_ref("tpt-appfront-core"),
+            &dep_ref("tpt-appfront-dom"),
+            &dep_ref("tpt-appfront-templates"),
+        ),
+    )?;
+    fs::write(dir.join("src").join("lib.rs"), templates::preset_lib_rs(&preset, app_title))?;
+    fs::write(dir.join("index.html"), templates::index_html(app_title))?;
     Ok(())
 }
 
@@ -433,6 +500,7 @@ fn dev(
     tui: bool,
     desktop_webview: bool,
     no_reload: bool,
+    devtools: bool,
     project: &Path,
 ) -> anyhow::Result<()> {
     match (desktop, web, tui, desktop_webview) {
@@ -442,21 +510,28 @@ fn dev(
         }
         (true, false, false, false) => {
             if no_reload {
-                run_in(project, "cargo", &["run"])
+                run_in(project, "cargo", &["run"], devtools)
             } else {
-                dev_desktop_watch(project)
+                dev_desktop_watch(project, devtools)
             }
         }
-        (false, true, false, false) => run_in(project, "trunk", &["serve"])
+        (false, true, false, false) => run_in(project, "trunk", &["serve"], devtools)
             .context("failed to run `trunk serve` — install it with `cargo install trunk`"),
-        (false, false, true, false) => run_in(project, "cargo", &["run"]),
+        (false, false, true, false) => run_in(project, "cargo", &["run"], devtools),
         (false, false, false, true) => {
-            // Build the hosted `ui/` trunk app (if present) then run the host.
-            if let Some(ui) = ui_dir(project) {
-                run_in(&ui, "trunk", &["build"])
-                    .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
-            }
-            run_in(project, "cargo", &["run"])
+            // `--desktop-webview` hosts a `tpt-appfront-dom` trunk app from `ui/`.
+            // Bail early with a clear message if that `ui/index.html` is absent
+            // rather than silently running the host with nothing to display.
+            let ui = ui_dir(project).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} has no `ui/index.html` — `--desktop-webview` needs a trunk app in `ui/`. \
+                     Scaffold one with `tpt-appfront init <name> --target dom` inside `ui/`.",
+                    project.display()
+                )
+            })?;
+            run_in(&ui, "trunk", &["build"], devtools)
+                .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
+            run_in(project, "cargo", &["run"], devtools)
         }
         (false, false, false, false) => {
             bail!(
@@ -558,7 +633,7 @@ fn file_hash(path: &Path) -> Option<u64> {
 /// source for changes, and restart the child process on a debounced change.
 /// Compile errors don't abort the loop — the failing `cargo run` child exits,
 /// the watcher keeps running, and the next save retries the build.
-fn dev_desktop_watch(project: &Path) -> anyhow::Result<()> {
+fn dev_desktop_watch(project: &Path, devtools: bool) -> anyhow::Result<()> {
     let watcher = Watcher::new(project.to_path_buf());
     let mut baseline = watcher.snapshot();
     println!(
@@ -566,7 +641,7 @@ fn dev_desktop_watch(project: &Path) -> anyhow::Result<()> {
         project.display()
     );
 
-    let mut child = spawn_cargo_run(project)?;
+    let mut child = spawn_cargo_run(project, devtools)?;
     let poll_interval = Duration::from_millis(400);
     let debounce = Duration::from_millis(150);
 
@@ -580,20 +655,28 @@ fn dev_desktop_watch(project: &Path) -> anyhow::Result<()> {
             }
             println!("↻ change detected — restarting…");
             kill_child(&mut child);
-            child = spawn_cargo_run(project)?;
+            child = spawn_cargo_run(project, devtools)?;
         }
     }
 }
 
-fn spawn_cargo_run(project: &Path) -> anyhow::Result<Child> {
-    Process::new("cargo")
-        .args(["run"])
+fn spawn_cargo_run(project: &Path, devtools: bool) -> anyhow::Result<Child> {
+    let mut cmd = Process::new("cargo");
+    cmd.args(["run"])
         .current_dir(project)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("failed to spawn `cargo run` in {}", project.display()))
+        .stderr(Stdio::inherit());
+    if devtools {
+        cmd.env("TPT_APPFRONT_DEVTOOLS", "1");
+    }
+    cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!("failed to spawn `cargo run`: {e} — {}", missing_tool_hint("cargo"))
+        } else {
+            anyhow::anyhow!("failed to spawn `cargo run` in {}: {e}", project.display())
+        }
+    })
 }
 
 /// Kill the `cargo run` child and its whole process tree. `cargo run` spawns a
@@ -705,7 +788,7 @@ fn resolve_build_steps(target: &str) -> anyhow::Result<Vec<BuildStep>> {
 fn run_step(project: &Path, step: &BuildStep, strict: bool) -> anyhow::Result<()> {
     if step.builds_ui {
         if let Some(ui) = ui_dir(project) {
-            run_in(&ui, "trunk", &["build", "--release"])
+            run_in(&ui, "trunk", &["build", "--release"], false)
                 .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
         }
     }
@@ -723,7 +806,7 @@ fn run_step(project: &Path, step: &BuildStep, strict: bool) -> anyhow::Result<()
         );
         return Ok(());
     }
-    run_in(project, step.program, step.args)?;
+        run_in(project, step.program, step.args, false)?;
     if step.report_size {
         report_release_size(project);
     }
@@ -743,12 +826,12 @@ fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result
         }
         "all" => {
             println!("== canvas (native) ==");
-            run_in(project, "cargo", &["build", "--release"])?;
+            run_in(project, "cargo", &["build", "--release"], false)?;
             report_release_size(project);
             if project.join("index.html").exists() {
                 println!("== dom (wasm) ==");
-                run_in(project, "trunk", &["build", "--release"])
-                    .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
+            run_in(project, "trunk", &["build", "--release"], false)
+                .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
             }
         }
         t => {
@@ -767,7 +850,7 @@ fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result
 /// the project's own crate(s) (e.g. via `#[bench]`/`criterion`); this command
 /// is just the uniform `tpt-appfront` entry point for the CI pipeline.
 fn benchmark(project: &Path) -> anyhow::Result<()> {
-    run_in(project, "cargo", &["bench"])
+    run_in(project, "cargo", &["bench"], false)
         .context("failed to run `cargo bench` — does this crate define any benchmarks?")
 }
 
@@ -847,7 +930,7 @@ fn run_bundler(project: &Path) -> anyhow::Result<()> {
             .with_context(|| format!("writing {}", config.display()))?;
         println!("wrote {}", config.display());
     }
-    run_in(project, "cargo", &["packager"])
+    run_in(project, "cargo", &["packager"], false)
         .context("failed to run `cargo packager` — install it with `cargo install cargo-packager`")
 }
 
@@ -947,16 +1030,39 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
 // process helper
 // ---------------------------------------------------------------------------
 
-fn run_in(dir: &Path, program: &str, args: &[&str]) -> anyhow::Result<()> {
-    let status = Process::new(program)
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .with_context(|| format!("failed to spawn `{program}` in {}", dir.display()))?;
-    if !status.success() {
-        bail!("`{program} {}` exited with {status}", args.join(" "));
+/// Builds a friendly "is `<tool>` installed?" hint, used when a spawn fails
+/// because the binary isn't on `PATH` (a common, confusing failure mode for
+/// `trunk`/`cargo-packager`).
+fn missing_tool_hint(tool: &str) -> String {
+    match tool {
+        "trunk" => "is `trunk` installed? install it with `cargo install trunk`".to_string(),
+        "cargo" => "is the Rust toolchain on your PATH?".to_string(),
+        "cargo-packager" | "cargo packager" => {
+            "is `cargo-packager` installed? install it with `cargo install cargo-packager`"
+                .to_string()
+        }
+        other => format!("is `{other}` installed and on your PATH?"),
     }
-    Ok(())
+}
+
+fn run_in(dir: &Path, program: &str, args: &[&str], devtools: bool) -> anyhow::Result<()> {
+    let mut cmd = Process::new(program);
+    cmd.args(args).current_dir(dir);
+    if devtools {
+        cmd.env("TPT_APPFRONT_DEVTOOLS", "1");
+    }
+    match cmd.status() {
+        Ok(status) => {
+            if !status.success() {
+                bail!("`{program} {}` exited with {status}", args.join(" "));
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("failed to run `{program}`: {e} — {}", missing_tool_hint(program))
+        }
+        Err(e) => bail!("failed to spawn `{program}` in {}: {e}", dir.display()),
+    }
 }
 
 #[cfg(test)]
@@ -993,18 +1099,59 @@ mod tests {
     #[test]
     fn dev_rejects_conflicting_flags() {
         let dir = PathBuf::from(".");
-        assert!(dev(true, true, false, false, false, &dir).is_err());
-        assert!(dev(true, false, true, false, false, &dir).is_err());
-        assert!(dev(false, true, true, false, false, &dir).is_err());
-        assert!(dev(true, false, false, true, false, &dir).is_err());
-        assert!(dev(false, true, false, true, false, &dir).is_err());
-        assert!(dev(false, false, true, true, false, &dir).is_err());
+        assert!(dev(true, true, false, false, false, false, &dir).is_err());
+        assert!(dev(true, false, true, false, false, false, &dir).is_err());
+        assert!(dev(false, true, true, false, false, false, &dir).is_err());
+        assert!(dev(true, false, false, true, false, false, &dir).is_err());
+        assert!(dev(false, true, false, true, false, false, &dir).is_err());
+        assert!(dev(false, false, true, true, false, false, &dir).is_err());
     }
 
     #[test]
     fn dev_requires_at_least_one_flag() {
         let dir = PathBuf::from(".");
-        assert!(dev(false, false, false, false, false, &dir).is_err());
+        assert!(dev(false, false, false, false, false, false, &dir).is_err());
+    }
+
+    #[test]
+    fn dev_devtools_flag_parses() {
+        assert!(Cli::try_parse_from([
+            "tpt-appfront", "dev", "--desktop", "--devtools"
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn missing_tool_hint_names_the_right_install() {
+        assert!(missing_tool_hint("trunk").contains("cargo install trunk"));
+        assert!(missing_tool_hint("cargo-packager").contains("cargo install cargo-packager"));
+        assert!(missing_tool_hint("cargo").contains("Rust toolchain"));
+    }
+
+    #[test]
+    fn dev_webview_requires_a_ui_trunk_app() {
+        // Without a `ui/index.html`, `--desktop-webview` must bail with a clear
+        // message rather than silently running an empty host.
+        let dir = std::env::temp_dir().join(format!("tpt-dev-webview-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let err = dev(false, false, false, true, false, false, &dir)
+            .expect_err("expected an error for missing ui/ trunk app");
+        assert!(
+            err.to_string().contains("ui/index.html"),
+            "got: {err}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scaffolded_templates_emit_devtools_inspect_block() {
+        // The env-gated devtools inspector must be present in every scaffold so
+        // `tpt-appfront dev --devtools` can print the UITree.
+        assert!(templates::dom_lib_rs("App").contains("TPT_APPFRONT_DEVTOOLS"));
+        assert!(templates::canvas_main_rs("App").contains("TPT_APPFRONT_DEVTOOLS"));
+        assert!(templates::tui_main_rs("App").contains("TPT_APPFRONT_DEVTOOLS"));
+        assert!(templates::dom_lib_rs("App").contains("devtools::inspect_tree"));
     }
 
     #[test]
@@ -1026,11 +1173,44 @@ mod tests {
     fn init_rejects_invalid_names_before_touching_disk() {
         // These names all fail validation and `bail!` before `init` creates
         // any directory, so no cwd sandboxing is needed to keep this hermetic.
-        assert!(init("", InitTarget::Canvas).is_err());
-        assert!(init("../escape", InitTarget::Canvas).is_err());
-        assert!(init("a/b", InitTarget::Canvas).is_err());
-        assert!(init("a\\b", InitTarget::Canvas).is_err());
-        assert!(init("..", InitTarget::Canvas).is_err());
+        assert!(init("", InitTarget::Canvas, None).is_err());
+        assert!(init("../escape", InitTarget::Canvas, None).is_err());
+        assert!(init("a/b", InitTarget::Canvas, None).is_err());
+        assert!(init("a\\b", InitTarget::Canvas, None).is_err());
+        assert!(init("..", InitTarget::Canvas, None).is_err());
+    }
+
+    #[test]
+    fn init_rejects_unknown_preset_before_touching_disk() {
+        // An unknown preset name fails the `Preset::from_str` lookup and `bail!`s
+        // before any directory is created.
+        assert!(init("myapp", InitTarget::Both, Some("nope")).is_err());
+    }
+
+    #[test]
+    fn init_preset_scaffolds_dom_crate_with_templates_dep() {
+        let dir = std::env::temp_dir().join(format!("tpt-init-preset-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert!(scaffold_preset_crate(
+            &dir.join("myapp"),
+            "myapp",
+            "myapp",
+            presets::Preset::Dashboard
+        )
+        .is_ok());
+        let root = dir.join("myapp");
+        let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("tpt-appfront-templates"));
+        let lib = fs::read_to_string(root.join("src").join("lib.rs")).unwrap();
+        assert!(lib.contains("dashboard_shell"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_presets_cmd_prints_each_preset_name() {
+        // Just ensure it runs without panicking; output goes to stdout.
+        list_presets_cmd();
     }
 
     #[test]

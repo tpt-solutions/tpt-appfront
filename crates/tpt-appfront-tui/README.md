@@ -1,8 +1,26 @@
 # tpt-appfront-tui
 
-Terminal UI backend for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront) (ratatui/crossterm), keyboard-driven focus and dispatch.
+The terminal UI backend for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
 
-Maps `UITree<Msg>` nodes to `ratatui` widgets (containers to layout splits, text/headings to paragraphs, buttons to focusable bracketed paragraphs, inputs to editable lines, lists/grids to list/table widgets) and drives Tab/arrow focus, Enter/Space activation, and Esc-to-quit via `TuiDriver` — headless-testable via `ratatui`'s `TestBackend`.
+Proves the "one `UITree`, N renderers" thesis one step further: the same
+`UITree<Msg>` that drives a web app, a native window, or an AI agent also drives a
+terminal app — a claim no DOM-rooted framework (Leptos/Dioxus/Yew) can make
+without a rewrite of their AST.
+
+## Features
+
+- **`NodeKind` → `ratatui` widget** mapping (`Container` → layout split,
+  `Text`/`Heading` → paragraph, `Button` → focusable paragraph, `Input` → editable
+  line, `List` → `ratatui` list, `DataGrid` → `ratatui` table).
+- **Keyboard-driven dispatch** — Tab/↑←/↓→ move focus, Enter/Space activate the
+  focused button, Esc quits, typing edits the focused `Input`. Mirrors the DOM/
+  canvas dispatch closure pattern.
+- **Headless-testable** — rendering is pure; `render`/`render_to_buffer`/
+  `buffer_to_string` work against `ratatui`'s `TestBackend`, so keyboard handling
+  (`TuiDriver::on_key`) is unit-testable without a TTY.
+- **`run`** — the real-terminal entry point (crossterm raw mode + alternate screen).
+
+## Install
 
 ```toml
 [dependencies]
@@ -10,7 +28,22 @@ tpt-appfront-core = "0.1"
 tpt-appfront-tui = "0.1"
 ```
 
-See the [workspace README](https://github.com/tpt-solutions/tpt-appfront#readme) and the [`counter-tui` example](https://github.com/tpt-solutions/tpt-appfront/tree/main/examples/counter-tui).
+## Example
+
+```rust
+use tpt_appfront_core::{Signal, UITree};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let count = Signal::new(0i32);
+    let build_ui = move || -> UITree<Msg> {
+        UITree::container(|c| {
+            c.heading(1, "Counter");
+            c.button("+1").on_click(Msg::Increment);
+        })
+    };
+    tpt_appfront_tui::run(build_ui, |msg| { /* dispatch */ })
+}
+```
 
 ## License
 

@@ -47,6 +47,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         Msg::Increment => count.set(count.get() + 1),
     }};
 
+    // Devtools inspection: when `TPT_APPFRONT_DEVTOOLS=1` (set by
+    // `tpt-appfront dev --devtools`), print the `UITree` structure on startup.
+    if std::env::var("TPT_APPFRONT_DEVTOOLS").is_ok() {{
+        let preview = build_ui();
+        eprintln!("{{}}", tpt_appfront_core::devtools::inspect_tree(&preview));
+    }}
+
     tpt_appfront_canvas::run_native("{app_title}", build_ui, dispatch)?;
     Ok(())
 }}
@@ -124,6 +131,12 @@ pub fn start() -> Result<(), JsValue> {{
         Msg::Increment => count_for_dispatch.set(count_for_dispatch.get() + 1),
     }});
 
+    // Devtools inspection: when `TPT_APPFRONT_DEVTOOLS=1` (set by
+    // `tpt-appfront dev --devtools`), print the `UITree` structure on startup.
+    if std::env::var("TPT_APPFRONT_DEVTOOLS").is_ok() {{
+        eprintln!("{{}}", tpt_appfront_core::devtools::inspect_tree(&ui));
+    }}
+
     tpt_appfront_dom::mount(&container, &ui, dispatch)?;
 
     let (text_node, text_handle) = tpt_appfront_dom::reactive_text(&document, display)?;
@@ -193,6 +206,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let dispatch = move |msg: Msg| match msg {{
         Msg::Increment => count.set(count.get() + 1),
     }};
+
+    // Devtools inspection: when `TPT_APPFRONT_DEVTOOLS=1` (set by
+    // `tpt-appfront dev --devtools`), print the `UITree` structure on startup.
+    if std::env::var("TPT_APPFRONT_DEVTOOLS").is_ok() {{
+        let preview = build_ui();
+        eprintln!("{{}}", tpt_appfront_core::devtools::inspect_tree(&preview));
+    }}
 
     // Tab/Arrows move focus, Enter/Space activate, Esc quits.
     tpt_appfront_tui::run(build_ui, dispatch)?;
@@ -320,6 +340,379 @@ pub fn {name}() -> UITree<Msg> {{
     )
 }
 
+// ---------------------------------------------------------------------------
+// presets (init --preset <name>)
+// ---------------------------------------------------------------------------
+
+/// `Cargo.toml` for a preset-scaffolded DOM app. Adds `tpt-appfront-templates`
+/// on top of the usual `tpt-appfront-core`/`tpt-appfront-dom` deps, and the
+/// `web-sys` features the starter templates read (inputs, elements, nodes).
+pub fn preset_cargo_toml(
+    pkg_name: &str,
+    core_dep: &str,
+    dom_dep: &str,
+    templates_dep: &str,
+) -> String {
+    format!(
+        r#"[package]
+name = "{pkg_name}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tpt-appfront-core = {core_dep}
+tpt-appfront-dom = {dom_dep}
+tpt-appfront-templates = {templates_dep}
+wasm-bindgen = "0.2"
+web-sys = {{ version = "0.3", features = ["Document", "Window", "Element", "HtmlInputElement", "HtmlElement", "Node"] }}
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+"#
+    )
+}
+
+/// `lib.rs` for a preset-scaffolded DOM app. Each preset wires the matching
+/// `tpt_appfront_templates` builder (or, for `login`, a `view!` form) to real
+/// `Signal`-backed state, so the scaffolded app is interactive out of the box.
+pub fn preset_lib_rs(preset: &crate::presets::Preset, app_title: &str) -> String {
+    match preset {
+        crate::presets::Preset::Login => login_preset_lib_rs(app_title),
+        crate::presets::Preset::Dashboard => dashboard_preset_lib_rs(app_title),
+        crate::presets::Preset::CrudApp => crud_app_preset_lib_rs(app_title),
+        crate::presets::Preset::SaasStarter => saas_preset_lib_rs(app_title),
+    }
+}
+
+fn login_preset_lib_rs(app_title: &str) -> String {
+    format!(
+        r#"//! Login preset — scaffolded by `tpt-appfront init --preset login`.
+//! A sign-in form with live, `Signal`-bound username/password fields. Typed
+//! values flow into `Msg`s that mutate shared `Signal` state; the template
+//! demonstrates the `view!` two-way-binding path (`on_input={{Msg::Set..}}`).
+
+use tpt_appfront_core::{{Signal, UITree, view}};
+use wasm_bindgen::prelude::*;
+
+#[derive(Debug, Clone)]
+enum Msg {{
+    SetUsername(String),
+    SetPassword(String),
+    Submit,
+}}
+
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {{
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().expect("no window");
+    let document = window.document().expect("no document");
+    let body = document.body().expect("no body");
+
+    let username = Signal::new(String::new());
+    let password = Signal::new(String::new());
+    let submitted = Signal::new(false);
+
+    let dispatch: std::rc::Rc<dyn Fn(Msg)> = {{
+        let username = username.clone();
+        let password = password.clone();
+        let submitted = submitted.clone();
+        std::rc::Rc::new(move |msg| match msg {{
+            Msg::SetUsername(v) => username.set(v),
+            Msg::SetPassword(v) => password.set(v),
+            Msg::Submit => {{
+                if !username.get().is_empty() && !password.get().is_empty() {{
+                    submitted.set(true);
+                }}
+            }}
+        }})
+    }};
+
+    let username_for_ui = username.clone();
+    let password_for_ui = password.clone();
+    let submitted_for_ui = submitted.clone();
+    let ui: UITree<Msg> = view! {{
+        <Container class="login">
+            <Heading level={{1u8}}>"{app_title}"</Heading>
+            <Input value={{username_for_ui.get()}} on_input={{Msg::SetUsername}} />
+            <Input value={{password_for_ui.get()}} on_input={{Msg::SetPassword}} />
+            <Button on_click={{Msg::Submit}}>"Sign in"</Button>
+            {{if submitted_for_ui.get() {{
+                <Text>"Welcome!"</Text>
+            }} else {{
+                <Text>"Enter your credentials."</Text>
+            }}}}
+        </Container>
+    }};
+
+    let root = document.create_element("div")?;
+    body.append_child(&root)?;
+    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    std::mem::forget(handle);
+    Ok(())
+}}
+"#
+    )
+}
+
+fn dashboard_preset_lib_rs(app_title: &str) -> String {
+    format!(
+        r#"//! Dashboard preset — scaffolded by `tpt-appfront init --preset dashboard`.
+//! A nav sidebar (`dashboard_shell`) whose content area composes a CRUD list
+//! (`settings_list`), both from `tpt_appfront_templates`, wired to `Signal`
+//! state. Navigating the sidebar and editing/deleting rows dispatch `Msg`s.
+
+use tpt_appfront_core::{{Signal, UITree}};
+use tpt_appfront_templates::{{
+    dashboard_shell, settings_list, DashboardShellConfig, SettingsListConfig,
+}};
+use wasm_bindgen::prelude::*;
+
+#[derive(Debug, Clone)]
+enum Msg {{
+    Nav(String),
+    Edit(String),
+    Delete(String),
+}}
+
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {{
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().expect("no window");
+    let document = window.document().expect("no document");
+    let body = document.body().expect("no body");
+
+    let rows = Signal::new(vec![
+        ("1".to_string(), "Profile".to_string()),
+        ("2".to_string(), "Billing".to_string()),
+        ("3".to_string(), "Notifications".to_string()),
+    ]);
+    let current_page = Signal::new("Overview".to_string());
+
+    let dispatch: std::rc::Rc<dyn Fn(Msg)> = {{
+        let rows = rows.clone();
+        let current_page = current_page.clone();
+        std::rc::Rc::new(move |msg| match msg {{
+            Msg::Nav(page) => current_page.set(page),
+            Msg::Edit(id) => current_page.set(format!("Edit {{id}}")),
+            Msg::Delete(id) => {{
+                let v: Vec<(String, String)> =
+                    rows.get().into_iter().filter(|(r, _)| r != &id).collect();
+                rows.set(v);
+            }}
+        }})
+    }};
+
+    let root = document.create_element("div")?;
+    body.append_child(&root)?;
+
+    let rows_for_ui = rows.clone();
+    let current_page_for_ui = current_page.clone();
+    let ui: UITree<Msg> = dashboard_shell(&DashboardShellConfig {{
+        title: "{app_title}".to_string(),
+        nav_items: vec!["Overview".into(), "Settings".into(), "Help".into()],
+        content: Box::new(move |c| {{
+            let rows = rows_for_ui.clone();
+            let current_page = current_page_for_ui.clone();
+            let inner = settings_list(&SettingsListConfig {{
+                title: current_page.get(),
+                rows: rows.get(),
+                on_edit: Box::new(Msg::Edit),
+                on_delete: Box::new(Msg::Delete),
+            }});
+            c.with(inner);
+        }}),
+        on_nav: Box::new(Msg::Nav),
+    }});
+
+    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    std::mem::forget(handle);
+    Ok(())
+}}
+"#
+    )
+}
+
+fn crud_app_preset_lib_rs(app_title: &str) -> String {
+    format!(
+        r#"//! CRUD app preset — scaffolded by `tpt-appfront init --preset crud-app`.
+//! A focused `settings_list` (from `tpt_appfront_templates`) plus an "Add row"
+//! button, all wired to a `Signal`-backed list. Edit/Delete/Add dispatch `Msg`s
+//! that mutate the shared list.
+
+use tpt_appfront_core::{{Signal, UITree}};
+use tpt_appfront_templates::{{settings_list, SettingsListConfig}};
+use wasm_bindgen::prelude::*;
+
+#[derive(Debug, Clone)]
+enum Msg {{
+    Add,
+    Edit(String),
+    Delete(String),
+}}
+
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {{
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().expect("no window");
+    let document = window.document().expect("no document");
+    let body = document.body().expect("no body");
+
+    let rows = Signal::new(vec![
+        ("1".to_string(), "First item".to_string()),
+        ("2".to_string(), "Second item".to_string()),
+    ]);
+
+    let dispatch: std::rc::Rc<dyn Fn(Msg)> = {{
+        let rows = rows.clone();
+        std::rc::Rc::new(move |msg| match msg {{
+            Msg::Add => {{
+                let next: i32 = (rows.get().len() as i32) + 1;
+                let mut v = rows.get();
+                v.push((next.to_string(), format!("New item {{next}}")));
+                rows.set(v);
+            }}
+            Msg::Edit(id) => {{
+                let mut v = rows.get();
+                if let Some(row) = v.iter_mut().find(|(r, _)| r == &id) {{
+                    row.1 = format!("{{}} (edited)", row.1);
+                }}
+                rows.set(v);
+            }}
+            Msg::Delete(id) => {{
+                let v: Vec<(String, String)> =
+                    rows.get().into_iter().filter(|(r, _)| r != &id).collect();
+                rows.set(v);
+            }}
+        }})
+    }};
+
+    let root = document.create_element("div")?;
+    body.append_child(&root)?;
+
+    let rows_for_ui = rows.clone();
+    let ui: UITree<Msg> = UITree::container(|c| {{
+        c.button("Add row").on_click(Msg::Add);
+        let inner = settings_list(&SettingsListConfig {{
+            title: "{app_title}".to_string(),
+            rows: rows_for_ui.get(),
+            on_edit: Box::new(Msg::Edit),
+            on_delete: Box::new(Msg::Delete),
+        }});
+        c.with(inner);
+    }});
+
+    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    std::mem::forget(handle);
+    Ok(())
+}}
+"#
+    )
+}
+
+fn saas_preset_lib_rs(app_title: &str) -> String {
+    format!(
+        r#"//! SaaS starter preset — scaffolded by `tpt-appfront init --preset saas-starter`.
+//! A full app shell (`dashboard_shell`) whose content switches per route, with
+//! a `settings_list` mounted under the Settings route. Mirrors a typical SaaS
+//! dashboard layout, all from `tpt_appfront_templates` + `Signal` state.
+
+use tpt_appfront_core::{{Signal, UITree}};
+use tpt_appfront_templates::{{
+    dashboard_shell, settings_list, DashboardShellConfig, SettingsListConfig,
+}};
+use wasm_bindgen::prelude::*;
+
+#[derive(Debug, Clone)]
+enum Msg {{
+    Nav(String),
+    Edit(String),
+    Delete(String),
+}}
+
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {{
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().expect("no window");
+    let document = window.document().expect("no document");
+    let body = document.body().expect("no body");
+
+    let rows = Signal::new(vec![
+        ("1".to_string(), "Profile".to_string()),
+        ("2".to_string(), "Billing".to_string()),
+        ("3".to_string(), "Team".to_string()),
+    ]);
+    let current_page = Signal::new("Dashboard".to_string());
+
+    let dispatch: std::rc::Rc<dyn Fn(Msg)> = {{
+        let rows = rows.clone();
+        let current_page = current_page.clone();
+        std::rc::Rc::new(move |msg| match msg {{
+            Msg::Nav(page) => current_page.set(page),
+            Msg::Edit(id) => current_page.set(format!("Edit {{id}}")),
+            Msg::Delete(id) => {{
+                let v: Vec<(String, String)> =
+                    rows.get().into_iter().filter(|(r, _)| r != &id).collect();
+                rows.set(v);
+            }}
+        }})
+    }};
+
+    let root = document.create_element("div")?;
+    body.append_child(&root)?;
+
+    let rows_for_ui = rows.clone();
+    let current_page_for_ui = current_page.clone();
+    let ui: UITree<Msg> = dashboard_shell(&DashboardShellConfig {{
+        title: "{app_title}".to_string(),
+        nav_items: vec![
+            "Dashboard".into(),
+            "Customers".into(),
+            "Billing".into(),
+            "Settings".into(),
+        ],
+        content: Box::new(move |c| {{
+            let rows = rows_for_ui.clone();
+            let current_page = current_page_for_ui.clone();
+            match current_page.get().as_str() {{
+                "Settings" => {{
+                    let inner = settings_list(&SettingsListConfig {{
+                        title: "Settings".to_string(),
+                        rows: rows.get(),
+                        on_edit: Box::new(Msg::Edit),
+                        on_delete: Box::new(Msg::Delete),
+                    }});
+                    c.with(inner);
+                }}
+                page => {{
+                    c.heading(2, page.to_string());
+                    c.text(format!("Content for the {{page}} route goes here."));
+                }}
+            }}
+        }}),
+        on_nav: Box::new(Msg::Nav),
+    }});
+
+    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    std::mem::forget(handle);
+    Ok(())
+}}
+"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,5 +821,63 @@ mod tests {
         assert!(out.contains("pub fn Settings() -> UITree<Msg>"));
         assert!(out.contains("class=\"settings\""));
         assert!(out.contains("view!"));
+    }
+
+    #[test]
+    fn preset_cargo_toml_includes_templates_dep_and_is_toml_shaped() {
+        let out = preset_cargo_toml(
+            "my-app",
+            "path = \"/repo/tpt-appfront-core\"",
+            "path = \"/repo/tpt-appfront-dom\"",
+            "path = \"/repo/tpt-appfront-templates\"",
+        );
+        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
+        assert!(out.contains("tpt-appfront-dom = path = \"/repo/tpt-appfront-dom\""));
+        assert!(out.contains("tpt-appfront-templates = path = \"/repo/tpt-appfront-templates\""));
+        assert!(looks_like_toml(&out));
+        assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
+    }
+
+    fn preset_lib_has_no_escaped_braces(out: &str) {
+        // A leftover `{{` would mean a `format!` escape wasn't collapsed — a real
+        // authoring bug. `}}` legitimately appears in generated Rust (two adjacent
+        // closing braces), so only `{{` is checked.
+        assert!(!out.contains("{{"), "leftover escaped brace in:\n{out}");
+    }
+
+    #[test]
+    fn login_preset_lib_uses_view_macro_and_signals() {
+        let out = preset_lib_rs(&crate::presets::Preset::Login, "My App");
+        assert!(out.contains("My App"));
+        assert!(out.contains("use tpt_appfront_core::{Signal, UITree, view}"));
+        assert!(out.contains("on_input={Msg::SetUsername}"));
+        preset_lib_has_no_escaped_braces(&out);
+    }
+
+    #[test]
+    fn dashboard_preset_lib_composes_templates() {
+        let out = preset_lib_rs(&crate::presets::Preset::Dashboard, "My App");
+        assert!(out.contains("dashboard_shell"));
+        assert!(out.contains("settings_list"));
+        assert!(out.contains("My App"));
+        preset_lib_has_no_escaped_braces(&out);
+    }
+
+    #[test]
+    fn crud_app_preset_lib_builds_list() {
+        let out = preset_lib_rs(&crate::presets::Preset::CrudApp, "My App");
+        assert!(out.contains("settings_list"));
+        assert!(out.contains("Msg::Add"));
+        assert!(out.contains("My App"));
+        preset_lib_has_no_escaped_braces(&out);
+    }
+
+    #[test]
+    fn saas_preset_lib_switches_content_per_route() {
+        let out = preset_lib_rs(&crate::presets::Preset::SaasStarter, "My App");
+        assert!(out.contains("dashboard_shell"));
+        assert!(out.contains("\"Settings\""));
+        assert!(out.contains("My App"));
+        preset_lib_has_no_escaped_braces(&out);
     }
 }

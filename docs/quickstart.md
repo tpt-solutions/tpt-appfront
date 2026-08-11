@@ -66,3 +66,156 @@ Scaffold new reusable components or route-sized pages without leaving the CLI:
 tpt-appfront add component Card
 tpt-appfront add page Settings
 ```
+
+## Init presets
+
+Instead of the bare counter, scaffold a "real" UI shape with `--preset`. Presets
+wire `tpt-appfront-templates` (or the `view!` two-way-binding path) to live
+`Signal`-backed state, so the result is interactive out of the box:
+
+```sh
+tpt-appfront init myapp --preset login          # sign-in form, live Signal-bound fields
+tpt-appfront init myapp --preset dashboard      # nav shell composing a CRUD list
+tpt-appfront init myapp --preset crud-app       # standalone CRUD list (add/edit/delete)
+tpt-appfront init myapp --preset saas-starter   # full app shell, per-route content
+```
+
+A preset scaffolds a single DOM crate (`trunk serve` to run it). List them with:
+
+```sh
+tpt-appfront init --list-presets
+```
+
+## Dev: TUI target
+
+`--tui` runs the terminal backend (`tpt-appfront-tui`) via `cargo run`. Tab/Arrows
+move focus, Enter/Space activate, Esc quits:
+
+```sh
+tpt-appfront dev --tui --project myproject
+```
+
+## Dev: Webview desktop shell
+
+`--desktop-webview` builds the hosted `ui/` trunk app (a `tpt-appfront-dom`
+project) and runs the `tpt-appfront-webview` native shell that renders it in the
+OS webview. Requires a `ui/index.html` next to the host crate:
+
+```sh
+tpt-appfront dev --desktop-webview --project mywebviewapp
+```
+
+`build --target webview` does the same as a one-shot release build.
+
+## Dev: devtools inspector
+
+`--devtools` sets `TPT_APPFRONT_DEVTOOLS=1` on the spawned dev process. The
+scaffolded entry point then prints its `UITree` structure (via
+`tpt_appfront_core::devtools::inspect_tree`) on startup — a quick way to inspect
+the tree an app renders without a browser:
+
+```sh
+tpt-appfront dev --desktop --devtools --project myapp/canvas
+```
+
+You can also opt in at runtime by setting the env var yourself:
+
+```sh
+TPT_APPFRONT_DEVTOOLS=1 cargo run
+```
+
+## Smart router
+
+`tpt-appfront-server` is an Axum app that serves the *same* `UITree` to four
+client kinds from one endpoint, detecting the client via `User-Agent`/query param:
+
+- **Human browser** → the WASM/HTML shell (`tpt-appfront-dom`)
+- **Crawler** → semantic HTML (`tpt-appfront-html`)
+- **AI agent** → JSON-LD + custom AI Schema (`tpt-appfront-ai-schema`)
+- **Social bot** → OpenGraph tags (`tpt-appfront-html`)
+
+Build a `SmartRouter` with `tpt_appfront_server::SmartRouterBuilder` (configure
+static dir, wasm path, title/description, PWA, rate limiting, and an
+`allowed_actions` allowlist for `POST /command`). In production, layer a TLS
+terminator / reverse proxy in front — the router itself is not a hardened edge.
+
+## Doctor (pre-flight check)
+
+`doctor` verifies `trunk`, the `wasm32-unknown-unknown` target, and
+`cargo-packager` are available, and reports whether the CLI is running against
+the monorepo checkout (path deps) or a published install (version deps):
+
+```sh
+tpt-appfront doctor
+```
+
+Run it before `init`/`dev`/`build` if a toolchain error looks environment-related.
+
+## Benchmark
+
+`benchmark` is the uniform entry point for a project's own `cargo bench`
+suites:
+
+```sh
+tpt-appfront benchmark --project myproject
+```
+
+## Optimize & bundling
+
+`optimize` builds release artifacts and reports the largest one's size in MiB.
+The DOM/wasm template is already size-optimized (`opt-level = "z"`, `lto`,
+`strip`); native (canvas/webview) builds use the crate's own
+`[profile.release]`.
+
+```sh
+tpt-appfront optimize --target canvas
+tpt-appfront optimize --target all
+```
+
+`--bundle` shells out to [`cargo-packager`](https://github.com/crabnebula-dev/cargo-packager)
+to produce per-OS installers (.msi/.dmg/.appimage/.deb) plus delta auto-update
+artifacts. It writes a `packager.toml` if one isn't present:
+
+```sh
+tpt-appfront build --target webview --bundle
+tpt-appfront optimize --target canvas --bundle
+```
+
+## New `view!` tags
+
+`view!` now covers every `NodeKind`: `Container`, `Heading`, `Text`, `Button`,
+`Input`, `Textarea`, `Checkbox`, `Select`, `Radio`, `List`, and `DataGrid`.
+`Textarea`/`Checkbox`/`Select`/`Radio` are self-closing and support two-way
+binding via `on_input` (text/select/radio) and `on_toggle` (checkbox):
+
+```rust
+use tpt_appfront_core::{UITree, view};
+
+let ui: UITree<Msg> = view! {
+    <Container>
+        <Textarea value={draft.get()} on_input={Msg::SetDraft} />
+        <Checkbox label={"Subscribe"} checked={subscribed.get()} on_toggle={Msg::SetSubscribed} />
+        <Select
+            options={vec![("a".into(), "Apple".into())]}
+            selected={choice.get()}
+            on_input={Msg::Choose}
+        />
+        <Radio
+            name={"plan".into()}
+            options={vec![("free".into(), "Free".into())]}
+            selected={plan.get()}
+            on_input={Msg::PickPlan}
+        />
+    </Container>
+};
+```
+
+It also supports `{if ...}`/`{for ...}` control flow and component-tag
+composition (`{ my_component(props) }`). Statically-known subtrees are hoisted
+into a build-once cache automatically.
+
+## Troubleshooting
+
+See [troubleshooting.md](https://github.com/tpt-solutions/tpt-appfront/blob/main/docs/troubleshooting.md)
+for fixes to common issues (missing `trunk`/wasm target, path-dep vs published
+install, webview toolchain, hydration mismatches).
