@@ -1,3 +1,4 @@
+use tpt_appfront_core::ui_tree::MediaType;
 use tpt_appfront_core::{view, NodeKind, UITree};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5,6 +6,7 @@ enum Msg {
     Increment,
     Submit(String),
     Toggled(bool),
+    Navigate,
 }
 
 fn root_kind<Msg>(ui: &UITree<Msg>) -> &NodeKind<Msg> {
@@ -677,4 +679,66 @@ fn memoized_component_reuses_tree_when_props_equal() {
         }
         other => panic!("expected text, got {other:?}"),
     }
+}
+
+#[test]
+fn image_link_media_tags_build_nodes() {
+    let ui = view! {
+        <Container>
+            <Image src={"/logo.png"} alt={"App logo"} />
+            <Link href={"/home"} text={"Home"} on_click={Msg::Navigate} />
+            <Media src={"/clip.mp4"} alt={"Intro clip"} media_type={MediaType::Video} />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    assert_eq!(children.len(), 3);
+
+    match &children[0].kind {
+        NodeKind::Image { src, alt } => {
+            assert_eq!(src, "/logo.png");
+            assert_eq!(alt, "App logo");
+        }
+        other => panic!("expected image, got {other:?}"),
+    }
+    match &children[1].kind {
+        NodeKind::Link { href, text } => {
+            assert_eq!(href, "/home");
+            assert_eq!(text, "Home");
+        }
+        other => panic!("expected link, got {other:?}"),
+    }
+    assert_eq!(children[1].meta.on_click, Some(Msg::Navigate));
+    match &children[2].kind {
+        NodeKind::Media {
+            src,
+            alt,
+            media_type,
+        } => {
+            assert_eq!(src, "/clip.mp4");
+            assert_eq!(alt, "Intro clip");
+            assert_eq!(*media_type, MediaType::Video);
+        }
+        other => panic!("expected media, got {other:?}"),
+    }
+}
+
+#[test]
+fn image_link_media_tags_are_self_closing() {
+    // A child body on these tags is a build error; assert the tags expand to
+    // the right self-closing node kinds so the contract is locked in.
+    let ui: UITree<Msg> = view! {
+        <Container>
+            <Image src={"a"} alt={"b"} />
+            <Link href={"c"} text={"d"} />
+            <Media src={"e"} alt={"f"} media_type={MediaType::Audio} />
+        </Container>
+    };
+    let NodeKind::Container { children } = root_kind(&ui) else {
+        panic!("expected container root");
+    };
+    assert!(matches!(children[0].kind, NodeKind::Image { .. }));
+    assert!(matches!(children[1].kind, NodeKind::Link { .. }));
+    assert!(matches!(children[2].kind, NodeKind::Media { .. }));
 }

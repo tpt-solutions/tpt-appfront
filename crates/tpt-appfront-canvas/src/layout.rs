@@ -5,7 +5,7 @@
 
 use taffy::prelude::*;
 use taffy::TaffyTree;
-use tpt_appfront_core::{NodeKind, UITree};
+use tpt_appfront_core::{ui_tree::MediaType, NodeKind, UITree};
 
 use crate::text::TextMeasurer;
 
@@ -217,6 +217,26 @@ pub fn build<'a, Msg>(
             } else {
                 build_data_grid(tree, measurer, ui, columns, rows)
             }
+        }
+        NodeKind::Image { alt, .. } => {
+            let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
+            build_text_leaf(tree, measurer, ui, alt, fs, 0.0, 0.0)
+        }
+        NodeKind::Link { text, .. } => {
+            let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
+            build_text_leaf(tree, measurer, ui, text, fs, 0.0, 0.0)
+        }
+        NodeKind::Media { alt, media_type, .. } => {
+            let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
+            let label = format!(
+                "{}: {}",
+                match media_type {
+                    MediaType::Audio => "audio",
+                    MediaType::Video => "video",
+                },
+                alt
+            );
+            build_text_leaf(tree, measurer, ui, &label, fs, 0.0, 0.0)
         }
         // Canvas has no overlay layer; render the portal content inline as a
         // column flex container (its `target` is metadata for hosts that

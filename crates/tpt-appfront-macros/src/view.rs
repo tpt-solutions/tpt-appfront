@@ -50,6 +50,9 @@ const TAGS: &[&str] = &[
     "Radio",
     "List",
     "DataGrid",
+    "Image",
+    "Link",
+    "Media",
 ];
 
 const ALLOWED: &[(&str, &[&str], &[&str])] = &[
@@ -83,6 +86,21 @@ const ALLOWED: &[(&str, &[&str], &[&str])] = &[
         "DataGrid",
         &["columns", "rows", "class", "key"],
         &["columns", "rows"],
+    ),
+    (
+        "Image",
+        &["src", "alt", "class", "key", "on_click"],
+        &["src", "alt"],
+    ),
+    (
+        "Link",
+        &["href", "text", "class", "key", "on_click"],
+        &["href", "text"],
+    ),
+    (
+        "Media",
+        &["src", "alt", "media_type", "class", "key", "on_click"],
+        &["src", "alt", "media_type"],
     ),
 ];
 
@@ -890,6 +908,45 @@ fn gen_node_stmt(
                 ));
             }
             Ok(quote! { #parent.data_grid(#columns, #rows)#chain; })
+        }
+        "Image" => {
+            let src = attr_expr(node, "src").unwrap();
+            let alt = attr_expr(node, "alt").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Image>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.image(#src, #alt)#chain; })
+        }
+        "Link" => {
+            let href = attr_expr(node, "href").unwrap();
+            let text = attr_expr(node, "text").unwrap();
+            let on_click = attr_expr(node, "on_click");
+            let on_click_chain = match on_click {
+                Some(oc) => quote! { .on_click(#oc) },
+                None => quote! {},
+            };
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Link>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.link(#href, #text) #on_click_chain #chain; })
+        }
+        "Media" => {
+            let src = attr_expr(node, "src").unwrap();
+            let alt = attr_expr(node, "alt").unwrap();
+            let media_type = attr_expr(node, "media_type").unwrap();
+            if !node.children.is_empty() {
+                return Err(Error::new(
+                    node.tag.span(),
+                    "`<Media>` is self-closing and must not have children",
+                ));
+            }
+            Ok(quote! { #parent.media(#src, #alt, #media_type)#chain; })
         }
         other => Err(Error::new(
             node.tag.span(),

@@ -31,7 +31,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use tpt_appfront_core::{
-    create_effect, reconcile_keys, HydrationPayload, KeyedDiff, NodeKind, Router, UITree,
+    create_effect, reconcile_keys, ui_tree::MediaType, HydrationPayload, KeyedDiff, NodeKind,
+    Router, UITree,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -209,6 +210,9 @@ fn kind_matches_dom<Msg>(node: &Node, ui: &UITree<Msg>) -> bool {
         NodeKind::Select { .. } => tag == "select",
         NodeKind::Radio { .. } => tag == "div",
         NodeKind::DataGrid { .. } => tag == "table",
+        NodeKind::Image { .. } => tag == "img",
+        NodeKind::Link { .. } => tag == "a",
+        NodeKind::Media { .. } => tag == "audio" || tag == "video",
         NodeKind::Portal { .. } => true,
     }
 }
@@ -885,6 +889,8 @@ where
             if *checked {
                 input.set_attribute("checked", "")?;
             }
+            // Explicit ARIA state so screen readers announce the toggle (todo.md #16).
+            input.set_attribute("aria-checked", if *checked { "true" } else { "false" })?;
             el.append_child(&input)?;
             let span = document.create_element("span")?;
             span.set_text_content(Some(label));
@@ -910,6 +916,8 @@ where
             selected,
         } => {
             let el = document.create_element("div")?;
+            // `role="radiogroup"` groups the options for assistive tech.
+            let _ = el.set_attribute("role", "radiogroup");
             for (value, label) in options {
                 let label_el = document.create_element("label")?;
                 let input = document.create_element("input")?;
@@ -919,6 +927,7 @@ where
                 if value == selected {
                     input.set_attribute("checked", "")?;
                 }
+                input.set_attribute("aria-checked", if value == selected { "true" } else { "false" })?;
                 label_el.append_child(&input)?;
                 let span = document.create_element("span")?;
                 span.set_text_content(Some(label));
@@ -934,6 +943,8 @@ where
             let header_row = document.create_element("tr")?;
             for column in columns {
                 let th = document.create_element("th")?;
+                // `scope="col"` tells screen readers each header describes its column.
+                let _ = th.set_attribute("scope", "col");
                 th.set_text_content(Some(column));
                 header_row.append_child(&th)?;
             }
@@ -962,6 +973,31 @@ where
             }
             table.append_child(&tbody)?;
             table.into()
+        }
+        NodeKind::Image { src, alt } => {
+            let el = document.create_element("img")?;
+            el.set_attribute("src", src)?;
+            el.set_attribute("alt", alt)?;
+            el.into()
+        }
+        NodeKind::Link { href, text } => {
+            let el = document.create_element("a")?;
+            el.set_attribute("href", href)?;
+            el.set_text_content(Some(text));
+            el.into()
+        }
+        NodeKind::Media { src, alt, media_type } => {
+            let tag = match media_type {
+                MediaType::Audio => "audio",
+                MediaType::Video => "video",
+            };
+            let el = document.create_element(tag)?;
+            el.set_attribute("src", src)?;
+            el.set_attribute("controls", "")?;
+            if !alt.is_empty() {
+                el.set_attribute("aria-label", alt)?;
+            }
+            el.into()
         }
         NodeKind::Portal { target, content } => {
             let el = render_node(document, content, dispatch)?;
@@ -1351,6 +1387,9 @@ where
         | NodeKind::Checkbox { .. }
         | NodeKind::Select { .. }
         | NodeKind::Radio { .. }
+        | NodeKind::Image { .. }
+        | NodeKind::Link { .. }
+        | NodeKind::Media { .. }
         | NodeKind::Portal { .. } => {}
     }
 

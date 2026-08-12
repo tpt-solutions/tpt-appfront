@@ -4,7 +4,7 @@
 //! `<script type="application/ld+json">`. See `docs/ai-schema.md`.
 
 use serde_json::{Map, Value};
-use tpt_appfront_core::{AiMeta, NodeKind, UITree};
+use tpt_appfront_core::{ui_tree::MediaType, AiMeta, NodeKind, UITree};
 
 /// Serialises `ui` as a JSON-LD `@graph` array.
 pub fn to_json_ld<Msg>(ui: &UITree<Msg>) -> Value {
@@ -144,6 +144,34 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
                 .map(|r| Value::Array(r.iter().map(|c| Value::String(c.clone())).collect()))
                 .collect();
             item.insert("rows".to_string(), Value::Array(row_values));
+            graph.push(Value::Object(item));
+        }
+        NodeKind::Image { src, alt } => {
+            let mut item = Map::new();
+            item.insert("@type".to_string(), Value::String("ImageObject".to_string()));
+            item.insert("contentUrl".to_string(), Value::String(src.clone()));
+            item.insert("description".to_string(), Value::String(alt.clone()));
+            if let Some(desc) = &ui.meta.ai.description {
+                item.insert("name".to_string(), Value::String(desc.clone()));
+            }
+            graph.push(Value::Object(item));
+        }
+        NodeKind::Link { href, text } => {
+            let mut item = web_page_element(&ui.meta.ai);
+            item.insert("@type".to_string(), Value::String("WebPageElement".to_string()));
+            item.insert("url".to_string(), Value::String(href.clone()));
+            item.insert("name".to_string(), Value::String(text.clone()));
+            graph.push(Value::Object(item));
+        }
+        NodeKind::Media { src, alt, media_type } => {
+            let mut item = Map::new();
+            let schema_type = match media_type {
+                MediaType::Audio => "AudioObject",
+                MediaType::Video => "VideoObject",
+            };
+            item.insert("@type".to_string(), Value::String(schema_type.to_string()));
+            item.insert("contentUrl".to_string(), Value::String(src.clone()));
+            item.insert("description".to_string(), Value::String(alt.clone()));
             graph.push(Value::Object(item));
         }
         NodeKind::Portal { content, .. } => {
@@ -300,5 +328,27 @@ mod tests {
             entry["rows"],
             serde_json::json!([["Alice", "30"], ["Bob", "25"]])
         );
+    }
+
+    #[test]
+    fn image_link_media_produce_schema_objects() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            use tpt_appfront_core::ui_tree::MediaType;
+            c.image("/logo.png", "Logo");
+            c.link("/home", "Home");
+            c.media("/clip.mp4", "Clip", MediaType::Video);
+        });
+        let json = to_json_ld(&ui);
+        let graph = json["@graph"].as_array().unwrap();
+        // graph[0] = container, then Image, Link, Media.
+        assert_eq!(graph[1]["@type"], "ImageObject");
+        assert_eq!(graph[1]["contentUrl"], "/logo.png");
+        assert_eq!(graph[1]["description"], "Logo");
+        assert_eq!(graph[2]["@type"], "WebPageElement");
+        assert_eq!(graph[2]["url"], "/home");
+        assert_eq!(graph[2]["name"], "Home");
+        assert_eq!(graph[3]["@type"], "VideoObject");
+        assert_eq!(graph[3]["contentUrl"], "/clip.mp4");
+        assert_eq!(graph[3]["description"], "Clip");
     }
 }

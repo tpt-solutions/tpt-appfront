@@ -222,6 +222,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     )
 }
 
+pub fn server_cargo_toml(pkg_name: &str, core_dep: &str, server_dep: &str) -> String {
+    format!(
+        r#"[package]
+name = "{pkg_name}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tpt-appfront-core = {core_dep}
+tpt-appfront-server = {server_dep}
+tokio = {{ version = "1", features = ["full"] }}
+"#
+    )
+}
+
+/// `main.rs` for `init --server`: a standalone Axum smart-router server that
+/// serves the same `UITree` to humans (WASM shell), crawlers (semantic HTML),
+/// AI agents (JSON-LD + AI Schema) and social bots (OpenGraph) — wiring
+/// `tpt-appfront-server` directly instead of standing it up by hand (todo.md
+/// Phase 20 missing-feature follow-up).
+pub fn server_main_rs(app_title: &str) -> String {
+    format!(
+        r#"use tpt_appfront_core::UITree;
+use tpt_appfront_server::{{SmartRouterBuilder, serve}};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {{
+    let ui: UITree<()> = UITree::container(|c| {{
+        c.heading(1, "{app_title}");
+        c.text("Served by the TPT AppFront smart router.");
+        c.button("Get started").ai_action("get_started");
+    }});
+
+    let router = SmartRouterBuilder::new(ui)
+        .title("{app_title}")
+        .description("A TPT AppFront smart-router demo server.")
+        .build();
+
+    let addr: std::net::SocketAddr = "127.0.0.1:3000".parse()?;
+    println!("Serving on http://{{addr}}");
+    serve(router, addr).await;
+    Ok(())
+}}
+"#
+    )
+}
+
 pub fn gitignore() -> &'static str {
     "/target\n/dist\nCargo.lock\n"
 }
@@ -938,6 +986,30 @@ mod tests {
         assert!(out.contains("My App"));
         assert!(!out.contains("{{"));
         assert!(!out.contains("}}"));
+    }
+
+    #[test]
+    fn server_cargo_toml_embeds_paths_and_tokio() {
+        let out = server_cargo_toml(
+            "my-server",
+            "path = \"/repo/tpt-appfront-core\"",
+            "path = \"/repo/tpt-appfront-server\"",
+        );
+        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
+        assert!(out.contains(
+            "tpt-appfront-server = path = \"/repo/tpt-appfront-server\""
+        ));
+        assert!(out.contains("tokio = { version = \"1\", features = [\"full\"] }"));
+        assert!(looks_like_toml(&out));
+    }
+
+    #[test]
+    fn server_main_rs_wires_smart_router_and_has_no_leftover_braces() {
+        let out = server_main_rs("My App");
+        assert!(out.contains("SmartRouterBuilder::new"));
+        assert!(out.contains("tpt_appfront_server::{SmartRouterBuilder, serve}"));
+        assert!(out.contains("serve(router, addr).await;"));
+        assert!(!out.contains("{{"));
     }
 
     #[test]

@@ -97,6 +97,14 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             if *checked {
                 buf.push_str(" checked");
             }
+            // Explicit ARIA state so screen readers announce the toggle even
+            // when the native checkbox semantics are overridden (todo.md #16).
+            buf.push_str(" aria-checked=\"");
+            buf.push_str(if *checked { "true" } else { "false" });
+            buf.push('"');
+            if !label.is_empty() {
+                attr(buf, "aria-label", label);
+            }
             buf.push_str(" /> ");
             buf.push_str(&esc_text(label));
             close_tag(buf, "label");
@@ -123,15 +131,26 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             options,
             selected,
         } => {
-            open_tag(buf, "div", ui);
+            // `role="radiogroup"` groups the options for assistive tech; each
+            // option carries its own `aria-checked`/`aria-label` (todo.md #16).
+            buf.push_str("<div");
+            attrs(buf, ui);
+            buf.push_str(" role=\"radiogroup\">");
             for (value, label) in options {
                 buf.push_str("<label><input type=\"radio\" name=\"");
                 buf.push_str(&esc_attr(name));
                 buf.push_str("\" value=\"");
                 buf.push_str(&esc_attr(value));
                 buf.push('"');
-                if value == selected {
+                let is_selected = value == selected;
+                if is_selected {
                     buf.push_str(" checked");
+                }
+                buf.push_str(" aria-checked=\"");
+                buf.push_str(if is_selected { "true" } else { "false" });
+                buf.push('"');
+                if !label.is_empty() {
+                    attr(buf, "aria-label", label);
                 }
                 buf.push_str(" /> ");
                 buf.push_str(&esc_text(label));
@@ -155,7 +174,9 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             // <thead>
             buf.push_str("<thead><tr>");
             for col in columns {
-                buf.push_str("<th>");
+                // `scope="col"` tells screen readers each header describes its
+                // column (todo.md #16).
+                buf.push_str("<th scope=\"col\">");
                 buf.push_str(&esc_text(col));
                 buf.push_str("</th>");
             }
@@ -446,8 +467,24 @@ mod tests {
         });
         let html = render(&ui);
         assert!(html.contains("<table>"));
-        assert!(html.contains("<th>A</th>"));
+        assert!(html.contains("<th scope=\"col\">A</th>"));
         assert!(html.contains("<td>1</td>"));
+    }
+
+    #[test]
+    fn renders_aria_attributes_for_form_controls() {
+        let ui = tpt_appfront_core::UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.checkbox("Agree", true);
+            c.radio_group("color", [("r", "Red"), ("g", "Green")], "g");
+            c.data_grid(["A", "B"], [vec!["1", "2"]]);
+        });
+        let html = render(&ui);
+        assert!(html.contains("type=\"checkbox\" checked aria-checked=\"true\""), "{html}");
+        assert!(html.contains("aria-label=\"Agree\""), "{html}");
+        assert!(html.contains("role=\"radiogroup\""), "{html}");
+        assert!(html.contains("aria-checked=\"true\""), "{html}");
+        assert!(html.contains("aria-label=\"Green\""), "{html}");
+        assert!(html.contains("<th scope=\"col\">A</th>"), "{html}");
     }
 
     #[test]

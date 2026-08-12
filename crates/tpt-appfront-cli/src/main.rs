@@ -29,6 +29,7 @@ enum InitTarget {
     Canvas,
     Tui,
     Both,
+    Server,
 }
 
 #[derive(Subcommand)]
@@ -84,7 +85,7 @@ enum Command {
     },
     /// Build the application for a target.
     Build {
-        /// Target: dom, canvas, html, ai-schema, webview, or all.
+        /// Target: dom, canvas, webview, server, or all.
         #[arg(long)]
         target: Option<String>,
         /// Directory of the crate to build (defaults to the current directory).
@@ -406,6 +407,9 @@ fn init(
             scaffold_canvas_crate(&root.join("canvas"), &format!("{name}-canvas"), &app_title)?;
             scaffold_dom_crate(&root.join("dom"), &format!("{name}-dom"), &app_title)?;
         }
+        InitTarget::Server => {
+            scaffold_server_crate(&root, name, &app_title)?;
+        }
     }
 
     fs::write(root.join(".gitignore"), templates::gitignore())?;
@@ -423,6 +427,7 @@ fn init(
         InitTarget::Canvas => println!("  cd {name} && cargo run"),
         InitTarget::Dom => println!("  cd {name} && trunk serve"),
         InitTarget::Tui => println!("  cd {name} && cargo run"),
+        InitTarget::Server => println!("  cd {name} && cargo run   # smart-router server"),
     }
     Ok(())
 }
@@ -447,6 +452,7 @@ fn target_label(target: InitTarget) -> &'static str {
         InitTarget::Canvas => "canvas",
         InitTarget::Tui => "tui",
         InitTarget::Both => "canvas + dom",
+        InitTarget::Server => "server",
     }
 }
 
@@ -498,6 +504,23 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::write(
         dir.join("src").join("main.rs"),
         templates::tui_main_rs(app_title),
+    )?;
+    Ok(())
+}
+
+fn scaffold_server_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Result<()> {
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(
+        dir.join("Cargo.toml"),
+        templates::server_cargo_toml(
+            pkg_name,
+            &dep_ref("tpt-appfront-core"),
+            &dep_ref("tpt-appfront-server"),
+        ),
+    )?;
+    fs::write(
+        dir.join("src").join("main.rs"),
+        templates::server_main_rs(app_title),
     )?;
     Ok(())
 }
@@ -985,7 +1008,14 @@ fn resolve_build_steps(target: &str) -> anyhow::Result<Vec<BuildStep>> {
             builds_ui: true,
             report_size: true,
         }],
-        other => bail!("unknown target `{other}`; use: dom, canvas, webview, or all"),
+        "server" => vec![BuildStep {
+            program: "cargo",
+            args: &["build", "--release"],
+            needs_trunk_index: false,
+            builds_ui: false,
+            report_size: true,
+        }],
+        other => bail!("unknown target `{other}`; use: dom, canvas, webview, server, or all"),
     };
     Ok(steps)
 }

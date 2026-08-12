@@ -26,7 +26,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
-use tpt_appfront_core::{NodeKind, UITree};
+use tpt_appfront_core::{ui_tree::MediaType, NodeKind, UITree, VirtualScroll};
 
 /// A focusable element discovered while walking the tree, in document order.
 /// `tpt-appfront-dom`/`tpt-appfront-canvas` wire these to pointer events; here they're
@@ -109,7 +109,10 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
             NodeKind::Heading { .. }
             | NodeKind::Text { .. }
             | NodeKind::DataGrid { .. }
-            | NodeKind::Portal { .. } => {}
+            | NodeKind::Portal { .. }
+            | NodeKind::Image { .. }
+            | NodeKind::Link { .. }
+            | NodeKind::Media { .. } => {}
         }
     }
     walk(ui, &mut out);
@@ -127,7 +130,31 @@ fn node_text<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::Checkbox { label, .. } => label.clone(),
         NodeKind::Select { selected, .. } => selected.clone(),
         NodeKind::Radio { selected, .. } => selected.clone(),
+        NodeKind::Image { alt, .. } => alt.clone(),
+        NodeKind::Link { text, .. } => text.clone(),
+        NodeKind::Media { alt, .. } => alt.clone(),
         _ => String::new(),
+    }
+}
+
+/// Computes the `(start, end)` window of a large `List`/`DataGrid` to render
+/// when virtual scrolling is configured. `VirtualScroll` is px-based for DOM/
+/// canvas; in the terminal a row is one unit, so we reinterpret `item_height`
+/// as 1 row and `viewport_height` as the visible row count (minus one for a
+/// `DataGrid` header). Returns the full range when no `VirtualScroll` is set.
+fn tui_window(total: usize, vs: Option<VirtualScroll>, viewport_rows: u16) -> (usize, usize) {
+    match vs {
+        Some(v) => {
+            let vr = VirtualScroll {
+                item_height: 1.0,
+                viewport_height: viewport_rows.max(1) as f32,
+                scroll_offset: v.scroll_offset,
+                overscan: v.overscan,
+            };
+            let r = vr.visible_range(total);
+            (r.start, r.end)
+        }
+        None => (0, total),
     }
 }
 
@@ -275,10 +302,17 @@ fn render_node<Msg: Clone>(
             frame.render_widget(Paragraph::new(text).style(style), area);
         }
         NodeKind::List { items } => {
-            let rows: Vec<ListItem> = items
-                .iter()
-                .map(|it| ListItem::new(node_text(it)))
-                .collect();
+            let (start, end) = tui_window(items.len(), ui.meta.virtual_scroll, area.height);
+            let mut rows: Vec<ListItem> = Vec::with_capacity(items.len());
+            for _ in 0..start {
+                rows.push(ListItem::new(""));
+            }
+            for it in &items[start..end] {
+                rows.push(ListItem::new(node_text(it)));
+            }
+            for _ in end..items.len() {
+                rows.push(ListItem::new(""));
+            }
             frame.render_widget(
                 List::new(rows).block(Block::default().borders(Borders::ALL).title("list")),
                 area,
@@ -286,10 +320,20 @@ fn render_node<Msg: Clone>(
         }
         NodeKind::DataGrid { columns, rows } => {
             let header: Row = Row::new(columns.iter().map(|c| Cell::from(c.clone())));
-            let body: Vec<Row> = rows
-                .iter()
-                .map(|r| Row::new(r.iter().map(|c| Cell::from(c.clone()))))
-                .collect();
+            // Reserve one row for the header when computing the visible window.
+            let viewport_rows = area.height.saturating_sub(1);
+            let (start, end) = tui_window(rows.len(), ui.meta.virtual_scroll, viewport_rows);
+            let blanks: Vec<Cell> = vec![Cell::from(""); columns.len()];
+            let mut body: Vec<Row> = Vec::with_capacity(rows.len());
+            for _ in 0..start {
+                body.push(Row::new(blanks.clone()));
+            }
+            for r in &rows[start..end] {
+                body.push(Row::new(r.iter().map(|c| Cell::from(c.clone()))));
+            }
+            for _ in end..rows.len() {
+                body.push(Row::new(blanks.clone()));
+            }
             let widths: Vec<Constraint> = if columns.is_empty() {
                 vec![Constraint::Percentage(100)]
             } else {
@@ -307,6 +351,33 @@ fn render_node<Msg: Clone>(
             // declaration site. Hosts that want true overlay portals can use
             // `UITree::collect_portals` to extract them first.
             render_node(content, frame, area, inputs, checks, selections, focus_id);
+        }
+        NodeKind::Image { src, alt } => {
+            frame.render_widget(
+                Paragraph::new(format!("🖼 {alt} ({src})")).wrap(Wrap { trim: false }),
+                area,
+            );
+        }
+        NodeKind::Link { href, text } => {
+            let style = if focused {
+                focus_style()
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(format!("→ {text} <{href}>")).style(style),
+                area,
+            );
+        }
+        NodeKind::Media { src, alt, media_type } => {
+            let kind = match media_type {
+                MediaType::Audio => "audio",
+                MediaType::Video => "video",
+            };
+            frame.render_widget(
+                Paragraph::new(format!("{kind}: {alt} ({src})")).wrap(Wrap { trim: false }),
+                area,
+            );
         }
     }
 }
@@ -776,6 +847,27 @@ mod tests {
         assert!(
             s.contains("[ +1 ]"),
             "focused button should be bracketed: {s}"
+        );
+    }
+
+    #[test]
+    fn list_virtual_scroll_renders_only_window() {
+        // A 100-item list configured to virtualize (1-row items, 5-row viewport):
+        // only the top window should be in the rendered buffer, not far rows.
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.list(|l: &mut ContainerBuilder<Msg>| {
+                for i in 0..100 {
+                    l.text(format!("row {i}"));
+                }
+            })
+            .virtual_scroll(VirtualScroll::new(1.0, 5.0));
+        });
+        let buf = render_to_buffer(&ui, 40, 10);
+        let s = buffer_to_string(&buf);
+        assert!(s.contains("row 0"), "first rows should render: {s}");
+        assert!(
+            !s.contains("row 99"),
+            "far rows should be virtualized out of the visible buffer: {s}"
         );
     }
 }

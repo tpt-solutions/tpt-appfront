@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use taffy::TaffyTree;
-use tpt_appfront_core::NodeKind;
+use tpt_appfront_core::{ui_tree::MediaType, NodeKind};
 
 use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
 
@@ -154,6 +154,52 @@ pub fn paint<Msg: Clone>(
         }
         NodeKind::DataGrid { columns, rows } => {
             paint_data_grid(ui, tree, node, pos, columns, rows);
+        }
+        NodeKind::Image { src, alt } => {
+            let caption = if alt.is_empty() {
+                src.as_str()
+            } else {
+                alt.as_str()
+            };
+            paint_text(ui, pos, caption, TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(
+                ui,
+                rect,
+                id,
+                if alt.is_empty() {
+                    src.as_str()
+                } else {
+                    alt.as_str()
+                },
+                Some(egui::accesskit::Role::Image),
+            );
+        }
+        NodeKind::Link { href, text } => {
+            let label = format!("{text} \u{2192} {href}");
+            paint_text(ui, pos, &label, TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(
+                ui,
+                rect,
+                id,
+                text,
+                Some(egui::accesskit::Role::Link),
+            );
+        }
+        NodeKind::Media { src, alt, media_type } => {
+            let kind = match media_type {
+                MediaType::Audio => "audio",
+                MediaType::Video => "video",
+            };
+            let label = if alt.is_empty() {
+                format!("{kind}: {src}")
+            } else {
+                format!("{kind}: {alt} ({src})")
+            };
+            paint_text(ui, pos, &label, TEXT_FONT_SIZE, style.foreground);
+            #[cfg(feature = "accesskit")]
+            name_accessible_node(ui, rect, id, alt, None);
         }
     }
 
