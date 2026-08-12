@@ -8,7 +8,55 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Cancel superseded runs on the same PR/ref so a push to a branch with an
+# in-flight CI run doesn't queue redundant jobs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  fmt:
+    name: Format check (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo +nightly fmt --all --check
+      # examples/ are excluded from the workspace, so format them explicitly.
+      - name: Check formatting of examples
+        run: |
+          set -e
+          for dir in examples/*/; do
+            if [ -f "$dir/Cargo.toml" ]; then
+              echo "fmt: $dir"
+              (cd "$dir" && cargo +nightly fmt --check)
+            fi
+          done
+
+  doc:
+    name: Docs build (no broken links)
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # tpt-appfront-webview needs webkit2gtk/GTK3 system libs not available on
+      # ubuntu-latest; it is verified locally per AGENTS.md.
+      - run: cargo doc --workspace --no-deps --exclude tpt-appfront-webview
+
+  msrv:
+    name: MSRV build (pinned toolchain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-targets --exclude tpt-appfront-webview
+
   native:
     name: Native (workspace)
     runs-on: ubuntu-latest

@@ -3,7 +3,7 @@
 //! persistence (`localStorage` / `IndexedDB`).
 //!
 //! A [`Store`] owns a single `Signal<S>` of your app state. Components read it
-//! through [`Store::state`] (a `Signal<S>`) and update it through [`Store::set`]
+//! through [`Store`] (a `Signal<S>`) and update it through [`Store::set`]
 //! / [`Store::update`]. Because the store is just a `Signal`, any effect that
 //! reads it re-runs on change — the same reactivity model as `Signal`/`memo`,
 //! but with a single named, subscribable source of truth.
@@ -25,8 +25,9 @@
 //! provided impl (`WebStorage`) is gated behind `target_arch = "wasm32"`, so
 //! `appfront-core` keeps building natively.
 
-use crate::signal::{create_effect, EffectHandle, Signal};
 use std::rc::Rc;
+
+use crate::signal::{create_effect, EffectHandle, Signal};
 
 /// Shared, mutable list of plain-callback subscribers. Wrapped in `Rc<RefCell>`
 /// so a dropped [`StoreSubscription`] can remove its own entry by holding a

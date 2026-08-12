@@ -11,9 +11,10 @@
 //! aware, with the built-in capability set (dialog/notify/clipboard/media/
 //! secret) auto-granted through the ACL.
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use tpt_appfront_webview::{AppBuilder, WebviewOptions};
-use std::path::PathBuf;
 
 fn main() -> Result<()> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -45,7 +46,9 @@ fn main() -> Result<()> {
     };
 
     AppBuilder::new("tpt-counter-webview")
-        .with_window(tpt_appfront_webview::WindowConfig::from_options("main", &opts))
+        .with_window(tpt_appfront_webview::WindowConfig::from_options(
+            "main", &opts,
+        ))
         .with_acl(opts.acl.clone())
         .with_max_commands_per_second(opts.max_commands_per_second)
         .with_builtin_capabilities()

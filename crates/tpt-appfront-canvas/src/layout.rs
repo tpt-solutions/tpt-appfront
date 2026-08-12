@@ -3,10 +3,11 @@
 //! entirely separate from painting: this module only decides *where*
 //! things go; `paint.rs` decides *how* they look.
 
-use crate::text::TextMeasurer;
-use tpt_appfront_core::{NodeKind, UITree};
 use taffy::prelude::*;
 use taffy::TaffyTree;
+use tpt_appfront_core::{NodeKind, UITree};
+
+use crate::text::TextMeasurer;
 
 pub const BUTTON_PAD_X: f32 = 12.0;
 pub const BUTTON_PAD_Y: f32 = 8.0;
@@ -81,7 +82,8 @@ pub fn build<'a, Msg>(
             }
         }
         NodeKind::Heading { text, level } => {
-            let fs = (heading_font_size(*level) + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
+            let fs =
+                (heading_font_size(*level) + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
             build_text_leaf(tree, measurer, ui, text, fs, 0.0, 0.0)
         }
         NodeKind::Text { text } => {
@@ -219,9 +221,13 @@ pub fn build<'a, Msg>(
         // Canvas has no overlay layer; render the portal content inline as a
         // column flex container (its `target` is metadata for hosts that
         // collect portals via `UITree::collect_portals`).
-        NodeKind::Portal { content, .. } => {
-            build_flex_container(tree, measurer, ui, std::slice::from_ref(content), FlexDirection::Column)
-        }
+        NodeKind::Portal { content, .. } => build_flex_container(
+            tree,
+            measurer,
+            ui,
+            std::slice::from_ref(content),
+            FlexDirection::Column,
+        ),
     }
 }
 
@@ -634,13 +640,41 @@ pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
         // strings regardless of which schema emitted them.
         let name = util.strip_prefix("af-u-").unwrap_or(util);
         match name {
-            "p-0" => { pad = Edge { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 }; have_padding = true; }
-            "p-1" => { pad = uniform(0.25); have_padding = true; }
-            "p-2" => { pad = uniform(0.5); have_padding = true; }
-            "p-4" => { pad = uniform(1.0); have_padding = true; }
-            "p-8" => { pad = uniform(2.0); have_padding = true; }
-            "px-4" => { pad.left = 1.0; pad.right = 1.0; have_padding = true; }
-            "py-2" => { pad.top = 0.5; pad.bottom = 0.5; have_padding = true; }
+            "p-0" => {
+                pad = Edge {
+                    left: 0.0,
+                    right: 0.0,
+                    top: 0.0,
+                    bottom: 0.0,
+                };
+                have_padding = true;
+            }
+            "p-1" => {
+                pad = uniform(0.25);
+                have_padding = true;
+            }
+            "p-2" => {
+                pad = uniform(0.5);
+                have_padding = true;
+            }
+            "p-4" => {
+                pad = uniform(1.0);
+                have_padding = true;
+            }
+            "p-8" => {
+                pad = uniform(2.0);
+                have_padding = true;
+            }
+            "px-4" => {
+                pad.left = 1.0;
+                pad.right = 1.0;
+                have_padding = true;
+            }
+            "py-2" => {
+                pad.top = 0.5;
+                pad.bottom = 0.5;
+                have_padding = true;
+            }
             "text-xs" => style.font_delta = -8.0,
             "text-sm" => style.font_delta = -4.0,
             "text-lg" => style.font_delta = 2.0,
@@ -661,13 +695,19 @@ pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
 
 fn uniform(rem: f32) -> Edge<f32> {
     let px = rem * 16.0;
-    Edge { left: px, right: px, top: px, bottom: px }
+    Edge {
+        left: px,
+        right: px,
+        top: px,
+        bottom: px,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::UITree;
+
+    use super::*;
 
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
@@ -779,7 +819,10 @@ mod tests {
         let mut measurer = TextMeasurer::new();
         let root = build(&mut tree, &mut measurer, &ui);
         let grid_node = &root.children[0];
-        let grid_cells = grid_node.grid_cells.as_ref().expect("virtual grid has cells");
+        let grid_cells = grid_node
+            .grid_cells
+            .as_ref()
+            .expect("virtual grid has cells");
 
         assert_eq!(grid_cells[0].kind, GridRowKind::Header);
         // With a nonzero scroll offset there must be a spacer before the
@@ -790,7 +833,9 @@ mod tests {
             .find(|r| matches!(r.kind, GridRowKind::Data(_)))
             .expect("at least one data row in the window");
         match first_data_row.kind {
-            GridRowKind::Data(idx) => assert!(idx > 0, "expected a scrolled-past window, got row {idx}"),
+            GridRowKind::Data(idx) => {
+                assert!(idx > 0, "expected a scrolled-past window, got row {idx}")
+            }
             _ => unreachable!(),
         }
     }
@@ -812,8 +857,15 @@ mod tests {
         let root = build(&mut tree, &mut measurer, &ui);
         let list_node = &root.children[0];
         // Should be far fewer than 1000 children (window + 2 spacers).
-        assert!(list_node.children.len() < 100, "virtual list must not build every item: got {}", list_node.children.len());
-        assert!(list_node.children.len() >= 3, "windowed list should still have top-spacer, items, bottom-spacer");
+        assert!(
+            list_node.children.len() < 100,
+            "virtual list must not build every item: got {}",
+            list_node.children.len()
+        );
+        assert!(
+            list_node.children.len() >= 3,
+            "windowed list should still have top-spacer, items, bottom-spacer"
+        );
         // A container without virtual_scroll builds all items.
         let plain: UITree<Msg> = UITree::container(|c| {
             c.list(|l| {
@@ -832,7 +884,10 @@ mod tests {
         let s = canvas_style_for(&Some("p-4 bg-blue-500 text-white".to_string()));
         assert_eq!(s.padding.left, 16.0);
         assert_eq!(s.padding.top, 16.0);
-        assert_eq!(s.background, Some(egui::Color32::from_rgb(0x3b, 0x82, 0xf6)));
+        assert_eq!(
+            s.background,
+            Some(egui::Color32::from_rgb(0x3b, 0x82, 0xf6))
+        );
         assert_eq!(s.foreground, Some(egui::Color32::WHITE));
 
         // The `af-u-` prefixed form emitted by SSR/DOM is accepted too.
@@ -841,15 +896,29 @@ mod tests {
 
         // No mapped utilities => default no-op style.
         let s3 = canvas_style_for(&Some("my-custom-class".to_string()));
-        assert_eq!(s3.padding, Edge { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 });
+        assert_eq!(
+            s3.padding,
+            Edge {
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0
+            }
+        );
         assert!(s3.background.is_none());
         assert!(s3.foreground.is_none());
     }
 
     #[test]
     fn canvas_style_font_delta_from_text_size_utility() {
-        assert_eq!(canvas_style_for(&Some("text-2xl".to_string())).font_delta, 8.0);
-        assert_eq!(canvas_style_for(&Some("text-sm".to_string())).font_delta, -4.0);
+        assert_eq!(
+            canvas_style_for(&Some("text-2xl".to_string())).font_delta,
+            8.0
+        );
+        assert_eq!(
+            canvas_style_for(&Some("text-sm".to_string())).font_delta,
+            -4.0
+        );
         assert_eq!(canvas_style_for(&None).font_delta, 0.0);
     }
 }

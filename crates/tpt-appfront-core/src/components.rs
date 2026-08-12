@@ -3,7 +3,7 @@
 //! Every widget here builds a plain [`UITree<Msg>`] out of the core node kinds
 //! (`Container`, `List`, `Button`, `Input`, `DataGrid`, `Portal`, `Text`), so
 //! the same components render on the DOM, canvas, and TUI backends without any
-//! backend-specific code. State is held in [`Signal`]/[`Store`], and user
+//! backend-specific code. State is held in [`crate::signal::Signal`]/[`crate::store::Store`], and user
 //! intent is surfaced via `Msg` (`on_click`/`on_input`), exactly like the rest
 //! of the framework.
 //!
@@ -21,7 +21,7 @@ use crate::ui_tree::{ContainerBuilder, UITree};
 type TabContent<Msg> = Box<dyn FnOnce(&mut ContainerBuilder<Msg>) + 'static>;
 
 /// A modal dialog. Visible only when `open` is `true`; renders its `body`
-/// inside a [`NodeKind::Portal`] (so backends show it as an overlay) plus a
+/// inside a [`crate::ui_tree::NodeKind::Portal`] (so backends show it as an overlay) plus a
 /// close button wired to `on_close`. When closed it renders an empty container
 /// (no DOM nodes), so it costs nothing while hidden.
 pub fn modal<Msg: Clone + 'static>(
@@ -109,7 +109,7 @@ pub fn dropdown<Msg: Clone + 'static>(
     })
 }
 
-/// A sortable data table. Renders a [`NodeKind::DataGrid`] whose rows are sorted
+/// A sortable data table. Renders a [`crate::ui_tree::NodeKind::DataGrid`] whose rows are sorted
 /// by `sort_column` (ascending when `asc`, descending otherwise). Clicking a
 /// column header toggles the sort via `on_sort`. Purely presentational: the
 /// sorting is done here at build time so backends just paint the grid.
@@ -230,10 +230,11 @@ pub fn move_focus(focus: usize, count: usize, delta: isize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
     use crate::resource::Resource;
     use crate::ui_tree::{NodeKind, NodeMeta};
-    use std::rc::Rc;
 
     fn find_attr(meta: &NodeMeta<()>, name: &str) -> Option<String> {
         meta.attrs
@@ -258,7 +259,10 @@ mod tests {
             panic!("expected portal");
         };
         assert_eq!(find_attr(&content.meta, "role").as_deref(), Some("dialog"));
-        assert_eq!(find_attr(&content.meta, "aria-modal").as_deref(), Some("true"));
+        assert_eq!(
+            find_attr(&content.meta, "aria-modal").as_deref(),
+            Some("true")
+        );
     }
 
     #[test]
@@ -277,8 +281,14 @@ mod tests {
         let NodeKind::Container { children: bar, .. } = &children[0].kind else {
             panic!("expected tablist");
         };
-        assert_eq!(find_attr(&bar[0].meta, "aria-selected").as_deref(), Some("false"));
-        assert_eq!(find_attr(&bar[1].meta, "aria-selected").as_deref(), Some("true"));
+        assert_eq!(
+            find_attr(&bar[0].meta, "aria-selected").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            find_attr(&bar[1].meta, "aria-selected").as_deref(),
+            Some("true")
+        );
     }
 
     #[test]
@@ -307,13 +317,7 @@ mod tests {
         assert_eq!(sorted[0][0], "Alice");
         assert_eq!(sorted[2][0], "Charlie");
 
-        let desc = sortable_table::<()>(
-            vec!["Name".into(), "N".into()],
-            rows,
-            0,
-            false,
-            |_| (),
-        );
+        let desc = sortable_table::<()>(vec!["Name".into(), "N".into()], rows, 0, false, |_| ());
         let NodeKind::Container { children } = &desc.kind else {
             panic!();
         };
@@ -338,8 +342,14 @@ mod tests {
         let NodeKind::List { items } = &wrap[0].kind else {
             panic!();
         };
-        assert_eq!(find_attr(&items[0].meta, "aria-selected").as_deref(), Some("false"));
-        assert_eq!(find_attr(&items[1].meta, "aria-selected").as_deref(), Some("true"));
+        assert_eq!(
+            find_attr(&items[0].meta, "aria-selected").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            find_attr(&items[1].meta, "aria-selected").as_deref(),
+            Some("true")
+        );
     }
 
     #[test]
@@ -375,7 +385,10 @@ mod tests {
         let _handle = announce_resource_status(r.clone(), move |s| {
             seen2.borrow_mut().push(s);
         });
-        assert_eq!(seen.borrow().last().map(|s| s.as_str()), Some("Error: loading"));
+        assert_eq!(
+            seen.borrow().last().map(|s| s.as_str()),
+            Some("Error: loading")
+        );
         r.set_result(Ok("done".to_string()));
         assert_eq!(seen.borrow().last().map(|s| s.as_str()), Some("Ready"));
     }
@@ -389,7 +402,13 @@ mod tests {
         let NodeKind::Text { .. } = &children[0].kind else {
             panic!("expected text");
         };
-        assert_eq!(find_attr(&children[0].meta, "aria-live").as_deref(), Some("polite"));
-        assert_eq!(find_attr(&children[0].meta, "role").as_deref(), Some("status"));
+        assert_eq!(
+            find_attr(&children[0].meta, "aria-live").as_deref(),
+            Some("polite")
+        );
+        assert_eq!(
+            find_attr(&children[0].meta, "role").as_deref(),
+            Some("status")
+        );
     }
 }

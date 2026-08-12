@@ -11,10 +11,11 @@
 //! `mcp-cli`, ...). No async runtime: one request per line in, one response
 //! per line out.
 
-use tpt_appfront_core::{query_state, UITree};
-use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
+
+use serde_json::{json, Value};
+use tpt_appfront_core::{query_state, UITree};
 
 /// An inbound instruction translated from an MCP `tools/call` invocation
 /// whose `name` didn't match a built-in tool (`query_state`/`navigate`).
@@ -50,6 +51,13 @@ impl McpCommandResult {
         }
     }
 }
+
+/// Max bytes of a single newline-delimited stdio frame we will parse. Mirrors
+/// the `16 KiB` body cap on `tpt-appfront-server`'s `POST /command` and the
+/// webview IPC bridge: a line larger than this is dropped before
+/// `serde_json::from_str` runs, bounding the memory an untrusted/buggy MCP
+/// client can force the server to buffer.
+const MAX_LINE_BYTES: usize = 16 * 1024;
 
 /// An MCP server for one AppFront app. Rebuilds the `UITree` fresh (via
 /// `build_ui`) on every `tools/list`/`query_state` call so tool discovery
@@ -88,10 +96,58 @@ impl<Msg> McpServer<Msg> {
         let stdin = io::stdin();
         let stdout = io::stdout();
         let mut out = stdout.lock();
+        self.run_on(stdin.lock(), &mut out)
+    }
 
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let trimmed = line.trim();
+    /// Transport loop driven by an arbitrary reader/writer. Shares the bounded
+    /// line-reading logic with [`McpServer::run_stdio`] (no line larger than
+    /// `MAX_LINE_BYTES` is ever buffered) and exists mainly so the transport
+    /// can be exercised without a real TTY in tests.
+    fn run_on<R: BufRead, W: Write>(&self, mut reader: R, out: &mut W) -> io::Result<()> {
+        let mut buf: Vec<u8> = Vec::with_capacity(256);
+        let mut byte = [0u8; 1];
+        loop {
+            buf.clear();
+            let mut oversized = false;
+            // Read one newline-delimited frame, bounding its length.
+            loop {
+                let n = reader.read(&mut byte)?;
+                if n == 0 {
+                    // EOF. If we have a trailing partial frame, fall through to
+                    // process it; otherwise the stream is cleanly closed.
+                    if buf.is_empty() && !oversized {
+                        return Ok(());
+                    }
+                    break;
+                }
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if buf.len() >= MAX_LINE_BYTES {
+                    oversized = true;
+                    // Drain the remainder of this oversized line before handling.
+                    loop {
+                        let n = reader.read(&mut byte)?;
+                        if n == 0 || byte[0] == b'\n' {
+                            break;
+                        }
+                    }
+                    break;
+                }
+                buf.push(byte[0]);
+            }
+
+            if oversized {
+                // Frame exceeded the size cap: drop it rather than buffer
+                // unbounded memory. A real client should never send a frame
+                // this large (tool-call arguments are tiny).
+                continue;
+            }
+
+            let trimmed = match std::str::from_utf8(&buf) {
+                Ok(s) => s.trim(),
+                Err(_) => continue,
+            };
             if trimmed.is_empty() {
                 continue;
             }
@@ -103,7 +159,6 @@ impl<Msg> McpServer<Msg> {
                 out.flush()?;
             }
         }
-        Ok(())
     }
 
     /// Handles one parsed JSON-RPC request, returning `None` for
@@ -239,8 +294,9 @@ impl<Msg> McpServer<Msg> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
 
     #[derive(Debug, Clone)]
     enum TestMsg {
@@ -416,6 +472,45 @@ mod tests {
         });
         let resp1 = server.handle_request(&q1).unwrap();
         let text1 = resp1["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text1.contains("Tasks: 1"), "MCP command should have updated app state");
+        assert!(
+            text1.contains("Tasks: 1"),
+            "MCP command should have updated app state"
+        );
+    }
+
+    #[test]
+    fn oversized_stdio_frames_are_dropped_without_crashing() {
+        use std::io::{BufReader, Cursor};
+
+        let server = test_server();
+        let mut oversized = String::with_capacity(MAX_LINE_BYTES + 64);
+        oversized.push_str("{\"jsonrpc\":\"2.0\",\"id\":123,\"method\":\"tools/list\",\"params\":{}");
+        oversized.push_str(&"x".repeat(MAX_LINE_BYTES));
+        oversized.push('\n');
+
+        let mut input = Vec::new();
+        input.extend_from_slice(
+            b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n",
+        );
+        input.extend_from_slice(oversized.as_bytes());
+        input.extend_from_slice(
+            b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
+        );
+
+        let mut out = Vec::new();
+        server
+            .run_on(BufReader::new(Cursor::new(input)), &mut out)
+            .unwrap();
+
+        let out_str = String::from_utf8(out).unwrap();
+        // The valid frames before/after the oversized one are answered; the
+        // oversized frame was dropped, not buffered, and the server did not
+        // panic/crash.
+        assert!(out_str.contains("\"id\":1"), "initialize response lost");
+        assert!(out_str.contains("\"id\":2"), "tools/list response lost");
+        assert!(
+            !out_str.contains("\"id\":123"),
+            "oversized frame should not have been answered"
+        );
     }
 }

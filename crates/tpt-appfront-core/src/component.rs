@@ -5,9 +5,10 @@
 //! real, React-like shape: typed `Props`, `children` slots, and optional
 //! memoization keyed on props equality.
 
-use crate::ui_tree::UITree;
 use std::cell::RefCell;
 use std::collections::HashMap;
+
+use crate::ui_tree::UITree;
 
 /// The `children` slot passed to a component that accepts them. A component
 /// declares a `children: Children<Msg>` parameter and renders the passed
@@ -73,9 +74,7 @@ where
     MEMO_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(entry) = cache.get(&id) {
-            if let Some((prev_key, prev_tree)) =
-                entry.downcast_ref::<(P, UITree<Msg>)>()
-            {
+            if let Some((prev_key, prev_tree)) = entry.downcast_ref::<(P, UITree<Msg>)>() {
                 if *prev_key == key {
                     return prev_tree.clone();
                 }

@@ -14,6 +14,16 @@ A full VS Code *extension* (command palette, project scaffolding UI) is
 deliberately **out of scope** for now — the `tpt-appfront` CLI already covers
 those workflows from the terminal.
 
+## Task runner (`just`)
+
+The repo ships a [`justfile`](../justfile) (install via `cargo install just`) with
+the common dev tasks — `just fmt`, `just lint`, `just test`, `just doc`, `just ci`,
+and `just examples`. `just fmt` / `just fmt-check` use the **nightly** rustfmt
+(because `rustfmt.toml` enables unstable import-grouping options), so install it
+once with `rustup toolchain install nightly`. See
+[Quickstart → Formatting & linting](../docs/quickstart.md#formatting--linting-hygiene)
+for the full list.
+
 ## `view!` macro expansion
 
 `view!` and `#[component]` are proc macros in `tpt-appfront-macros`, re-exported

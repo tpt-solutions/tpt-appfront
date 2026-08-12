@@ -51,8 +51,9 @@ pub fn report_sidecar_crash(reporter: &CrashReporter, program: &str, detail: &st
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::{Arc, Mutex};
+
+    use super::*;
 
     #[test]
     fn panic_hook_forwards_to_reporter() {

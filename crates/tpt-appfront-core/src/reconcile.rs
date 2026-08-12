@@ -1,7 +1,7 @@
 //! Backend-agnostic keyed list reconciliation (Phase 3).
 //!
 //! `tpt-appfront-dom` already performs keyed reconciliation against the live DOM
-//! in [`tpt_appfront_dom::update_list`]; this module factors the *pure* part of
+//! in `tpt_appfront_dom::update_list`; this module factors the *pure* part of
 //! that algorithm out so it can be unit-tested on any target (the DOM backend
 //! is `wasm32`-only and can't run native tests) and reused by other backends
 //! that render keyed collections (`tpt-appfront-canvas`, `tpt-appfront-tui`).
@@ -15,9 +15,10 @@
 //! without rebuilding the whole list.
 //!
 //! Keys should be unique. Duplicate keys are not meaningful for reconciliation
-//! and will produce undefined moves.
+//! and will produce undefined moves. In debug builds a warning is emitted when
+//! duplicate keys are detected (see [`reconcile_keys`]).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 /// What to do with one item in the new sequence.
@@ -46,39 +47,82 @@ pub fn reconcile_keys<K>(old: &[K], new: &[K]) -> KeyedDiff<K>
 where
     K: Clone + Eq + Hash,
 {
-    // Keys in `old` (in old order) that still appear in `new` — these are the
-    // candidates to keep/move. Keys in `old` but not `new` are removed.
-    let mut surviving: VecDeque<(usize, &K)> = old
+    // Debug-only guard for the documented-as-undefined duplicate-key case:
+    // reconciliation is meaningless when the same key appears more than once
+    // in `old` or `new` (a node can't have two stable identities). In debug
+    // builds we surface it instead of silently emitting undefined moves.
+    #[cfg(debug_assertions)]
+    warn_on_duplicate_keys("old", old);
+    #[cfg(debug_assertions)]
+    warn_on_duplicate_keys("new", new);
+
+    // O(n + m) set membership instead of the previous `Vec::contains` scans.
+    let new_set: HashSet<&K> = new.iter().collect();
+    let old_in_new: HashSet<&K> = old.iter().filter(|k| new_set.contains(k)).collect();
+    let removed: Vec<K> = old
+        .iter()
+        .filter(|k| !new_set.contains(k))
+        .cloned()
+        .collect();
+
+    // Survivors (old keys that appear in `new`) in old order, plus an index map
+    // so a "move" can mark a survivor consumed in O(1) without shifting the
+    // backing `Vec`. The map entry is set to `usize::MAX` when a survivor has
+    // been consumed, so the front-advance loop skips over it.
+    let survivors: Vec<&K> = old
+        .iter()
+        .filter(|k| old_in_new.contains(k))
+        .collect();
+    let mut survivor_idx: HashMap<&K, usize> = survivors
         .iter()
         .enumerate()
-        .filter(|(_, k)| new.contains(k))
+        .map(|(i, &k)| (k, i))
         .collect();
-    let removed: Vec<K> = old.iter().filter(|&k| !new.contains(k)).cloned().collect();
 
     let mut edits = Vec::with_capacity(new.len());
+    let mut front_idx = 0usize;
     for k in new {
-        let in_old = old.contains(k);
-        if !in_old {
+        if !old_in_new.contains(k) {
             edits.push(ListEdit::Insert { key: k.clone() });
             continue;
         }
-        // Present in old: keep if it's the next survivor in old order, else move.
-        if let Some(front) = surviving.front() {
-            if front.1 == k {
-                surviving.pop_front();
-                edits.push(ListEdit::Keep { key: k.clone() });
-            } else {
-                if let Some(idx) = surviving.iter().position(|(_, sk)| *sk == k) {
-                    surviving.remove(idx);
-                }
-                edits.push(ListEdit::Move { key: k.clone() });
-            }
+        // Skip consumed survivors at the front of the old-order queue.
+        while front_idx < survivors.len()
+            && survivor_idx.get(survivors[front_idx]) != Some(&front_idx)
+        {
+            front_idx += 1;
+        }
+        if front_idx < survivors.len() && survivors[front_idx] == k {
+            // Next survivor in old order — keep in place, no DOM move needed.
+            survivor_idx.remove(k);
+            front_idx += 1;
+            edits.push(ListEdit::Keep { key: k.clone() });
         } else {
+            // Already rendered but not in its old-order position — move it here.
+            // Mark consumed (O(1)) rather than removing from the `Vec`.
+            survivor_idx.insert(k, usize::MAX);
             edits.push(ListEdit::Move { key: k.clone() });
         }
     }
 
     KeyedDiff { edits, removed }
+}
+
+/// Emits a debug-only warning when `seq` contains duplicate keys (the
+/// undefined-duplicate-key case documented on [`reconcile_keys`]).
+#[cfg(debug_assertions)]
+fn warn_on_duplicate_keys<K: Eq + Hash>(which: &str, seq: &[K]) {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for k in seq {
+        if !seen.insert(k) {
+            eprintln!(
+                "tpt-appfront reconcile_keys: duplicate key in `{which}` produces \
+                 undefined moves; ensure list keys are unique"
+            );
+            break;
+        }
+    }
 }
 
 /// Applies a [`KeyedDiff`] to a keyed sequence, for tests and for backends
@@ -388,7 +432,10 @@ mod tests {
     fn edit_description_is_readable() {
         assert_eq!(edit_description(&ListEdit::Keep { key: "a" }), "kept a");
         assert_eq!(edit_description(&ListEdit::Move { key: "b" }), "moved b");
-        assert_eq!(edit_description(&ListEdit::Insert { key: "c" }), "inserted c");
+        assert_eq!(
+            edit_description(&ListEdit::Insert { key: "c" }),
+            "inserted c"
+        );
     }
 
     #[test]
@@ -396,7 +443,37 @@ mod tests {
         let old = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let new = vec!["a".to_string(), "x".to_string(), "c".to_string()];
         let diff = reconcile_keys(&old, &new);
-        assert_eq!(diff_summary(&diff), "kept 2, moved 0, inserted 1, removed 1");
+        assert_eq!(
+            diff_summary(&diff),
+            "kept 2, moved 0, inserted 1, removed 1"
+        );
+    }
+
+    #[test]
+    fn large_full_reorder_stays_correct_and_fast() {
+        // Worst case for the old O(n·m) scan (a full reversal): must still produce
+        // the correct reorder and must not be quadratic. 20k items reversed.
+        let n = 20_000usize;
+        let old: Vec<String> = (0..n).map(|i| format!("k{i}")).collect();
+        let mut new = old.clone();
+        new.reverse();
+        let diff = reconcile_keys(&old, &new);
+        assert!(diff.removed.is_empty());
+        assert!(diff
+            .edits
+            .iter()
+            .all(|e| !matches!(e, ListEdit::Insert { .. })));
+        assert_eq!(apply_edits(&old, &diff), new);
+    }
+
+    #[test]
+    fn duplicate_keys_do_not_panic() {
+        // Documented as undefined behavior; the algorithm must at least not panic
+        // and must still emit one edit per new item.
+        let old = vec!["a".to_string(), "a".to_string(), "b".to_string()];
+        let new = vec!["b".to_string(), "a".to_string()];
+        let diff = reconcile_keys(&old, &new);
+        assert_eq!(apply_edits(&old, &diff).len(), new.len());
     }
 }
 

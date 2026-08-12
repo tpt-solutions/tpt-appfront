@@ -150,6 +150,47 @@ tpt-appfront doctor
 ```
 
 Run it before `init`/`dev`/`build` if a toolchain error looks environment-related.
+`doctor` also reports hygiene state: whether `rustfmt`/`cargo fmt` is available,
+whether the local pre-commit hook is installed, and whether the workspace is
+formatted.
+
+## Formatting & linting (hygiene)
+
+Formatting is enforced by a root `rustfmt.toml` and checked in CI (`fmt` job).
+`rustfmt.toml` enables unstable options (`group_imports` / `imports_granularity`
+/ `format_code_in_doc_comments`), so formatting must run on the **nightly**
+rustfmt — install it once with `rustup toolchain install nightly`. The tools
+below invoke `cargo +nightly fmt` for you, so you don't run plain `cargo fmt`
+(stable silently drops the import grouping and CI's `fmt` job fails the diff).
+
+```sh
+tpt-appfront fmt                 # cargo +nightly fmt across workspace + examples
+tpt-appfront lint                # cargo clippy -D warnings across workspace + examples
+```
+
+A `justfile` wraps the common tasks (install `just` via `cargo install just`):
+
+```sh
+just fmt          # format workspace + examples
+just fmt-check    # fail if anything is unformatted (mirrors CI)
+just lint         # clippy -D warnings (webview excluded)
+just doc          # cargo doc with -D warnings on broken links
+just test         # native test suite (webview excluded)
+just ci           # fmt-check + lint + test, like the CI gate
+just examples     # format + build + check every example
+```
+
+### Local pre-commit hook
+
+`scripts/install-hooks.sh` points git at the checked-in hook in
+`scripts/git-hooks/pre-commit` (which runs `cargo fmt --check`, clippy, and the
+native tests). Run it once per clone:
+
+```sh
+scripts/install-hooks.sh
+```
+
+Bypass a single commit with `git commit --no-verify`.
 
 ## Benchmark
 

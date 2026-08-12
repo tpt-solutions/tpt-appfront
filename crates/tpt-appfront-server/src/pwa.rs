@@ -205,7 +205,6 @@ function urlBase64ToUint8Array(base64String) {{
     )
 }
 
-
 /// Generates a `manifest.webmanifest` (JSON).
 pub fn manifest(cfg: &PwaConfig) -> String {
     let json = serde_json::json!({
@@ -279,7 +278,6 @@ if ('serviceWorker' in navigator) {{
         nonce = nonce,
     )
 }
-
 
 #[cfg(test)]
 mod tests {

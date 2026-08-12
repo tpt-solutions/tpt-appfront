@@ -154,18 +154,28 @@ fn expand(input: ItemFn, memo: bool) -> syn::Result<proc_macro2::TokenStream> {
     // therefore be `PartialEq + Clone`; the compiler enforces this via the
     // `memoize` bound when memo is enabled.
     let wrapper_body = if memo {
-        let key_ident = arg_idents
-            .first()
-            .cloned()
-            .unwrap_or_else(|| format_ident!("__appfront_unit_key"));
+        // Key the memo cache on the first argument (props) when present; a
+        // zero-arg component has no props, so the memo key is the unit type
+        // `()` (which satisfies `PartialEq + Clone + 'static`). The previous
+        // code emitted an unbound `__appfront_unit_key` ident for that case,
+        // which failed to compile.
+        let (key_expr, key_pat, clone_stmt) = if let Some(first) = arg_idents.first().cloned() {
+            (
+                quote! { #first.clone() },
+                quote! { #first },
+                quote! { let #first = #first.clone(); },
+            )
+        } else {
+            (quote! { () }, quote! { () }, quote! {})
+        };
         quote! {
             static __appfront_memo_sentinel: u8 = 0;
             let __appfront_memo_id = (&__appfront_memo_sentinel as *const u8) as u64;
             tpt_appfront_core::memoize(
                 __appfront_memo_id,
-                #key_ident.clone(),
-                move |#key_ident| {
-                    let #key_ident = #key_ident.clone();
+                #key_expr,
+                move |#key_pat| {
+                    #clone_stmt
                     #build_body
                 },
             )
@@ -261,8 +271,9 @@ fn kebab_case(ident: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use quote::quote;
+
+    use super::*;
 
     #[test]
     fn kebab_case_replaces_underscores() {

@@ -30,7 +30,11 @@ pub fn notify(params: &serde_json::Value) -> Result<(), String> {
         }
     }
     #[cfg(target_os = "macos")]
-    if params.get("sound").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if params
+        .get("sound")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         n.sound_name("Ping");
     }
     n.show().map(|_| ()).map_err(|e| e.to_string())
@@ -55,10 +59,30 @@ pub fn notify_capability() -> crate::Capability {
     Capability {
         action: "notify".into(),
         params: vec![
-            ParamSpec { name: "title".into(), required: true, kind: ParamKind::String, default: None },
-            ParamSpec { name: "body".into(), required: false, kind: ParamKind::String, default: None },
-            ParamSpec { name: "timeout_ms".into(), required: false, kind: ParamKind::Number, default: None },
-            ParamSpec { name: "sound".into(), required: false, kind: ParamKind::Boolean, default: None },
+            ParamSpec {
+                name: "title".into(),
+                required: true,
+                kind: ParamKind::String,
+                default: None,
+            },
+            ParamSpec {
+                name: "body".into(),
+                required: false,
+                kind: ParamKind::String,
+                default: None,
+            },
+            ParamSpec {
+                name: "timeout_ms".into(),
+                required: false,
+                kind: ParamKind::Number,
+                default: None,
+            },
+            ParamSpec {
+                name: "sound".into(),
+                required: false,
+                kind: ParamKind::Boolean,
+                default: None,
+            },
         ],
     }
 }

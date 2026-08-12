@@ -1,5 +1,6 @@
-use tpt_appfront_core::{create_effect, Signal, UITree};
 use std::rc::Rc;
+
+use tpt_appfront_core::{create_effect, Signal, UITree};
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Clone)]

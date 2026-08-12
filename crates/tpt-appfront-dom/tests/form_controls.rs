@@ -33,8 +33,7 @@ fn mount_to_host(ui: &UITree<FormMsg>) -> web_sys::Element {
 /// DOM element for each is produced and wired to the right event.
 fn form_ui() -> UITree<FormMsg> {
     UITree::container(|c: &mut ContainerBuilder<FormMsg>| {
-        c.input("hello")
-            .on_input(FormMsg::InputChanged);
+        c.input("hello").on_input(FormMsg::InputChanged);
         c.textarea("notes").on_input(FormMsg::TextareaChanged);
         c.checkbox("Agree", false).on_toggle(FormMsg::Toggled);
         c.select([("a", "Alpha"), ("b", "Beta")], "a")
@@ -59,8 +58,18 @@ fn renders_all_form_controls() {
     let container = mount_to_host(&ui);
 
     // Input
-    assert!(container.query_selector("input[type=text]").ok().flatten().is_some()
-        || container.query_selector("input:not([type])").ok().flatten().is_some());
+    assert!(
+        container
+            .query_selector("input[type=text]")
+            .ok()
+            .flatten()
+            .is_some()
+            || container
+                .query_selector("input:not([type])")
+                .ok()
+                .flatten()
+                .is_some()
+    );
     // Textarea
     let ta = container.query_selector("textarea").ok().flatten().unwrap();
     assert_eq!(ta.text_content().as_deref(), Some("notes"));
@@ -80,7 +89,10 @@ fn renders_all_form_controls() {
         .flatten()
         .is_some());
     // Radio group
-    let radios = container.query_selector_all("input[type=radio]").ok().unwrap();
+    let radios = container
+        .query_selector_all("input[type=radio]")
+        .ok()
+        .unwrap();
     assert_eq!(radios.length(), 2);
     let checked_radio = container
         .query_selector("input[type=radio][checked]")

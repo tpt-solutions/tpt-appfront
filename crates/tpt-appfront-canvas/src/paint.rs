@@ -3,11 +3,13 @@
 //! mapping from `spec.txt` (`Container`→plain area, `Button`→`Button`,
 //! etc.), kept separate from the layout math itself.
 
-use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
-use tpt_appfront_core::NodeKind;
-use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use std::rc::Rc;
+
+use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use taffy::TaffyTree;
+use tpt_appfront_core::NodeKind;
+
+use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
 
 /// Paints `node` (and its subtree) into `ui`, with `origin` being the
 /// absolute screen position of `node`'s parent's content box. `id_seed` is
@@ -41,7 +43,13 @@ pub fn paint<Msg: Clone>(
             }
         }
         NodeKind::Heading { text, level } => {
-            paint_text(ui, pos, text, layout::heading_font_size(*level), style.foreground);
+            paint_text(
+                ui,
+                pos,
+                text,
+                layout::heading_font_size(*level),
+                style.foreground,
+            );
             #[cfg(feature = "accesskit")]
             name_accessible_node(ui, rect, id, text, Some(egui::accesskit::Role::Heading));
         }
@@ -116,11 +124,19 @@ pub fn paint<Msg: Clone>(
                 .find(|(v, _)| v == selected)
                 .map(|(_, l)| l.as_str())
                 .unwrap_or(selected.as_str());
-            paint_text(ui, pos, &format!("{label} \u{25be}"), TEXT_FONT_SIZE, style.foreground);
+            paint_text(
+                ui,
+                pos,
+                &format!("{label} \u{25be}"),
+                TEXT_FONT_SIZE,
+                style.foreground,
+            );
             #[cfg(feature = "accesskit")]
             name_accessible_node(ui, rect, id, label, None);
         }
-        NodeKind::Radio { options, selected, .. } => {
+        NodeKind::Radio {
+            options, selected, ..
+        } => {
             let text: String = options
                 .iter()
                 .map(|(v, l)| {
@@ -232,11 +248,13 @@ fn paint_data_grid<Msg>(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
+    use egui::{Event, PointerButton, Pos2 as EguiPos2, RawInput};
+    use tpt_appfront_core::UITree;
+
     use super::*;
     use crate::text::TextMeasurer;
-    use tpt_appfront_core::UITree;
-    use egui::{Event, PointerButton, Pos2 as EguiPos2, RawInput};
-    use std::cell::RefCell;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {

@@ -2,8 +2,9 @@
 //! Rust shell log lines through a single [`LogSink`] so they interleave in one
 //! place (terminal, file, or whatever the app configures).
 
-use crate::sidecar::{LogSink, Stream};
 use std::sync::Arc;
+
+use crate::sidecar::{LogSink, Stream};
 
 /// Convenience macro that forwards a native shell log line through the unified
 /// sink as [`Stream::Stdout`].

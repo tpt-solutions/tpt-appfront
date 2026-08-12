@@ -4,8 +4,9 @@
 //! small JSON file under the app's data dir; on launch it reads it back so the
 //! window reopens where the user left it. Stored per-window by an id.
 
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 /// A persisted window geometry.
 #[derive(Debug, Clone, Serialize, Deserialize)]

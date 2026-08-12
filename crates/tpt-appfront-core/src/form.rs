@@ -119,7 +119,10 @@ impl FormState {
     /// error. Fields with no validator (or never validated) are always
     /// considered valid.
     pub fn is_valid(&self) -> bool {
-        self.fields.borrow().values().all(|f| f.error.get().is_none())
+        self.fields
+            .borrow()
+            .values()
+            .all(|f| f.error.get().is_none())
     }
 
     /// Snapshot of every string field's current value (e.g. for submission),
@@ -195,6 +198,9 @@ mod tests {
 
         let values = form.values();
         assert_eq!(values.get("name").map(String::as_str), Some("Ada"));
-        assert_eq!(values.get("email").map(String::as_str), Some("ada@example.com"));
+        assert_eq!(
+            values.get("email").map(String::as_str),
+            Some("ada@example.com")
+        );
     }
 }

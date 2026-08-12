@@ -2,12 +2,14 @@
 //! the `UITree` (immediate-mode, matching `egui`'s own paradigm), lays it
 //! out with `taffy`, and paints it (see `layout.rs` / `paint.rs`).
 
+use std::rc::Rc;
+
+use taffy::TaffyTree;
+use tpt_appfront_core::{NodeKind, UITree, VirtualScroll};
+
 use crate::auto_optimizer::{AutoOptimizer, OptimizerState};
 use crate::text::TextMeasurer;
 use crate::{layout, paint};
-use tpt_appfront_core::{NodeKind, UITree, VirtualScroll};
-use std::rc::Rc;
-use taffy::TaffyTree;
 
 /// Item count at/above which `auto_optimize` applies a `VirtualScroll` to a
 /// `List`/`DataGrid` that doesn't already configure one. Below this a list is
@@ -83,14 +85,24 @@ impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
         let mut tree: TaffyTree<()> = TaffyTree::new();
         let root = layout::build(&mut tree, &mut self.measurer, &ui_tree);
 
-        tree.compute_layout(
+        // Degrade instead of crashing the whole window: a transient taffy
+        // failure (e.g. zero/NaN available size while minimized) must not take
+        // the desktop app down with it. Skip this frame's layout/paint and let
+        // the next frame retry — the window stays alive and recovers on its own.
+        if let Err(e) = tree.compute_layout(
             root.taffy_id,
             taffy::Size {
                 width: taffy::AvailableSpace::Definite(available.x),
                 height: taffy::AvailableSpace::Definite(available.y),
             },
-        )
-        .expect("taffy compute_layout");
+        ) {
+            eprintln!(
+                "tpt-appfront-canvas: taffy compute_layout failed ({e:?}); skipping paint this frame"
+            );
+            self.optimizer
+                .record_frame(start.elapsed().as_secs_f64() * 1000.0);
+            return;
+        }
 
         let origin = ui.min_rect().min;
         let mut id_seed = 0u64;
@@ -155,8 +167,9 @@ fn apply_auto_virtual_scroll_inner<Msg: Clone>(ui: &mut UITree<Msg>, viewport_he
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
 
     fn big_list(n: usize) -> UITree<()> {
         let mut b = ContainerBuilder::new();

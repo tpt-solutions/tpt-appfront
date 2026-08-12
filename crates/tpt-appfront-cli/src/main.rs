@@ -3,19 +3,21 @@ mod ingest;
 mod presets;
 mod templates;
 
-use std::fs;
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
-use std::thread;
 use std::time::Duration;
+use std::{fs, thread};
 
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
-#[command(name = "tpt-appfront", about = "Unified UI framework for web, desktop, and AI")]
+#[command(
+    name = "tpt-appfront",
+    about = "Unified UI framework for web, desktop, and AI"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -60,13 +62,13 @@ enum Command {
         /// Run the browser (DOM) build via `trunk serve`.
         #[arg(long)]
         web: bool,
-    /// Run the terminal (TUI) build via `cargo run`.
-    #[arg(long)]
-    tui: bool,
-    /// Run the desktop webview shell (`tpt-appfront-webview`) via `cargo run`,
-    /// hosting the `ui/` trunk build inside the OS webview.
-    #[arg(long)]
-    desktop_webview: bool,
+        /// Run the terminal (TUI) build via `cargo run`.
+        #[arg(long)]
+        tui: bool,
+        /// Run the desktop webview shell (`tpt-appfront-webview`) via `cargo run`,
+        /// hosting the `ui/` trunk build inside the OS webview.
+        #[arg(long)]
+        desktop_webview: bool,
         /// Disable the watch/reload loop for `--desktop` and run a single plain
         /// `cargo run` (useful when you manage reloading externally).
         #[arg(long)]
@@ -156,6 +158,11 @@ enum Command {
         #[command(subcommand)]
         kind: AddKind,
     },
+    /// Format the workspace and every standalone example with `cargo fmt`.
+    Fmt,
+    /// Lint the workspace and every standalone example with
+    /// `cargo clippy --all-targets -- -D warnings`.
+    Lint,
 }
 
 /// The sub-kind of `tpt-appfront add`.
@@ -183,20 +190,50 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Init { name, target, preset, with, list_presets } => {
+        Command::Init {
+            name,
+            target,
+            preset,
+            with,
+            list_presets,
+        } => {
             if list_presets {
                 list_presets_cmd();
                 return Ok(());
             }
             init(&name, target, preset.as_deref(), &with)
         }
-        Command::Dev { desktop, web, tui, desktop_webview, no_reload, devtools, project } => {
-            dev(desktop, web, tui, desktop_webview, no_reload, devtools, &project)
-        }
-        Command::Build { target, project, bundle } => build(target, &project, bundle),
+        Command::Dev {
+            desktop,
+            web,
+            tui,
+            desktop_webview,
+            no_reload,
+            devtools,
+            project,
+        } => dev(
+            desktop,
+            web,
+            tui,
+            desktop_webview,
+            no_reload,
+            devtools,
+            &project,
+        ),
+        Command::Build {
+            target,
+            project,
+            bundle,
+        } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
         Command::Doctor { project } => doctor(&project),
-        Command::Optimize { target, project, auto, bundle, analyze } => {
+        Command::Optimize {
+            target,
+            project,
+            auto,
+            bundle,
+            analyze,
+        } => {
             if analyze {
                 optimize_analyze(&project)
             } else {
@@ -209,6 +246,8 @@ fn main() -> anyhow::Result<()> {
             AddKind::Component { name, project } => add_component(&name, &project),
             AddKind::Page { name, project } => add_page(&name, &project),
         },
+        Command::Fmt => fmt_cmd(),
+        Command::Lint => lint_cmd(),
     }
 }
 
@@ -243,7 +282,10 @@ fn crates_dir() -> PathBuf {
 }
 
 fn dep_path(crate_name: &str) -> String {
-    crates_dir().join(crate_name).to_string_lossy().replace('\\', "/")
+    crates_dir()
+        .join(crate_name)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// True when this CLI is running against the `tpt-appfront` monorepo checkout
@@ -252,14 +294,18 @@ fn dep_path(crate_name: &str) -> String {
 /// `CARGO_MANIFEST_DIR` points at the (absent) build-time source dir, so this
 /// is false and we fall back to version dependencies instead.
 fn is_workspace_checkout() -> bool {
-    crates_dir().join("tpt-appfront-core").join("Cargo.toml").exists()
+    crates_dir()
+        .join("tpt-appfront-core")
+        .join("Cargo.toml")
+        .exists()
 }
 
 /// The version to require for crates on a published install, overridable via
 /// the `TPT_APPFRONT_DEP_VERSION` env var (e.g. pinning a pre-release). Defaults to
 /// this CLI's own `CARGO_PKG_VERSION`.
 fn published_version() -> String {
-    std::env::var("TPT_APPFRONT_DEP_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+    std::env::var("TPT_APPFRONT_DEP_VERSION")
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
 }
 
 /// Returns a ready-to-emit TOML dependency spec for `crate_name`: a `path`
@@ -275,7 +321,12 @@ fn dep_ref(crate_name: &str) -> String {
     }
 }
 
-fn init(name: &str, target: InitTarget, preset: Option<&str>, with: &[String]) -> anyhow::Result<()> {
+fn init(
+    name: &str,
+    target: InitTarget,
+    preset: Option<&str>,
+    with: &[String],
+) -> anyhow::Result<()> {
     if name.is_empty()
         || name.contains(['/', '\\'])
         || name == ".."
@@ -312,7 +363,11 @@ fn init(name: &str, target: InitTarget, preset: Option<&str>, with: &[String]) -
         }
         fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
         scaffold_with_crate(&root, name, &format!("{name} — TPT AppFront"), &pieces)?;
-        let csv = pieces.iter().map(|p| p.name()).collect::<Vec<_>>().join(",");
+        let csv = pieces
+            .iter()
+            .map(|p| p.name())
+            .collect::<Vec<_>>()
+            .join(",");
         println!("Created `{name}` (with: {csv}).");
         println!("  cd {name} && trunk serve        # browser (DOM)");
         return Ok(());
@@ -399,9 +454,16 @@ fn scaffold_canvas_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow:
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::canvas_cargo_toml(pkg_name, &dep_ref("tpt-appfront-core"), &dep_ref("tpt-appfront-canvas")),
+        templates::canvas_cargo_toml(
+            pkg_name,
+            &dep_ref("tpt-appfront-core"),
+            &dep_ref("tpt-appfront-canvas"),
+        ),
     )?;
-    fs::write(dir.join("src").join("main.rs"), templates::canvas_main_rs(app_title))?;
+    fs::write(
+        dir.join("src").join("main.rs"),
+        templates::canvas_main_rs(app_title),
+    )?;
     Ok(())
 }
 
@@ -409,9 +471,16 @@ fn scaffold_dom_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::dom_cargo_toml(pkg_name, &dep_ref("tpt-appfront-core"), &dep_ref("tpt-appfront-dom")),
+        templates::dom_cargo_toml(
+            pkg_name,
+            &dep_ref("tpt-appfront-core"),
+            &dep_ref("tpt-appfront-dom"),
+        ),
     )?;
-    fs::write(dir.join("src").join("lib.rs"), templates::dom_lib_rs(app_title))?;
+    fs::write(
+        dir.join("src").join("lib.rs"),
+        templates::dom_lib_rs(app_title),
+    )?;
     fs::write(dir.join("index.html"), templates::index_html(app_title))?;
     Ok(())
 }
@@ -420,9 +489,16 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::tui_cargo_toml(pkg_name, &dep_ref("tpt-appfront-core"), &dep_ref("tpt-appfront-tui")),
+        templates::tui_cargo_toml(
+            pkg_name,
+            &dep_ref("tpt-appfront-core"),
+            &dep_ref("tpt-appfront-tui"),
+        ),
     )?;
-    fs::write(dir.join("src").join("main.rs"), templates::tui_main_rs(app_title))?;
+    fs::write(
+        dir.join("src").join("main.rs"),
+        templates::tui_main_rs(app_title),
+    )?;
     Ok(())
 }
 
@@ -445,7 +521,10 @@ fn scaffold_with_crate(
             &dep_ref("tpt-appfront-templates"),
         ),
     )?;
-    fs::write(dir.join("src").join("lib.rs"), templates::with_lib_rs(pieces, app_title))?;
+    fs::write(
+        dir.join("src").join("lib.rs"),
+        templates::with_lib_rs(pieces, app_title),
+    )?;
     fs::write(dir.join("index.html"), templates::index_html(app_title))?;
     Ok(())
 }
@@ -469,7 +548,10 @@ fn scaffold_preset_crate(
             &dep_ref("tpt-appfront-templates"),
         ),
     )?;
-    fs::write(dir.join("src").join("lib.rs"), templates::preset_lib_rs(&preset, app_title))?;
+    fs::write(
+        dir.join("src").join("lib.rs"),
+        templates::preset_lib_rs(&preset, app_title),
+    )?;
     fs::write(dir.join("index.html"), templates::index_html(app_title))?;
     Ok(())
 }
@@ -579,8 +661,12 @@ fn dev(
     project: &Path,
 ) -> anyhow::Result<()> {
     match (desktop, web, tui, desktop_webview) {
-        (true, true, _, _) | (true, _, true, _) | (_, true, true, _) | (_, _, true, true)
-        | (true, _, _, true) | (_, true, _, true) => {
+        (true, true, _, _)
+        | (true, _, true, _)
+        | (_, true, true, _)
+        | (_, _, true, true)
+        | (true, _, _, true)
+        | (_, true, _, true) => {
             bail!("pass only one of --desktop, --web, --tui, or --desktop-webview")
         }
         (true, false, false, false) => {
@@ -599,10 +685,9 @@ fn dev(
             if no_reload {
                 run_in(project, "cargo", &["run"], devtools)
             } else {
-                dev_watch(
-                    vec![project.to_path_buf()],
-                    move || spawn_cargo_run(project, devtools),
-                )
+                dev_watch(vec![project.to_path_buf()], move || {
+                    spawn_cargo_run(project, devtools)
+                })
             }
         }
         (false, false, false, true) => {
@@ -617,8 +702,9 @@ fn dev(
                 )
             })?;
             if no_reload {
-                run_in(&ui, "trunk", &["build"], devtools)
-                    .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
+                run_in(&ui, "trunk", &["build"], devtools).context(
+                    "failed to run `trunk build` — install it with `cargo install trunk`",
+                )?;
                 run_in(project, "cargo", &["run"], devtools)
             } else {
                 // Hot reload: watch both the host crate and the nested `ui/`
@@ -739,10 +825,9 @@ fn file_hash(path: &Path) -> Option<u64> {
 /// Compile errors don't abort the loop — the failing `cargo run` child exits,
 /// the watcher keeps running, and the next save retries the build.
 fn dev_desktop_watch(project: &Path, devtools: bool) -> anyhow::Result<()> {
-    dev_watch(
-        vec![project.to_path_buf()],
-        move || spawn_cargo_run(project, devtools),
-    )
+    dev_watch(vec![project.to_path_buf()], move || {
+        spawn_cargo_run(project, devtools)
+    })
 }
 
 /// Generalized watch/reload loop used by every `dev` target that supports
@@ -750,10 +835,7 @@ fn dev_desktop_watch(project: &Path, devtools: bool) -> anyhow::Result<()> {
 /// child process; `roots` are the directories watched for source change. For
 /// `--desktop-webview` that's both the host crate and the nested `ui/` trunk
 /// app; `--desktop`/`--tui` watch only their single crate.
-fn dev_watch(
-    roots: Vec<PathBuf>,
-    spawn: impl Fn() -> anyhow::Result<Child>,
-) -> anyhow::Result<()> {
+fn dev_watch(roots: Vec<PathBuf>, spawn: impl Fn() -> anyhow::Result<Child>) -> anyhow::Result<()> {
     let roots_display = roots
         .iter()
         .map(|p| p.display().to_string())
@@ -794,7 +876,10 @@ fn spawn_cargo_run(project: &Path, devtools: bool) -> anyhow::Result<Child> {
     }
     cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            anyhow::anyhow!("failed to spawn `cargo run`: {e} — {}", missing_tool_hint("cargo"))
+            anyhow::anyhow!(
+                "failed to spawn `cargo run`: {e} — {}",
+                missing_tool_hint("cargo")
+            )
         } else {
             anyhow::anyhow!("failed to spawn `cargo run` in {}: {e}", project.display())
         }
@@ -928,7 +1013,7 @@ fn run_step(project: &Path, step: &BuildStep, strict: bool) -> anyhow::Result<()
         );
         return Ok(());
     }
-        run_in(project, step.program, step.args, false)?;
+    run_in(project, step.program, step.args, false)?;
     if step.report_size {
         report_release_size(project);
     }
@@ -952,8 +1037,9 @@ fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result
             report_release_size(project);
             if project.join("index.html").exists() {
                 println!("== dom (wasm) ==");
-            run_in(project, "trunk", &["build", "--release"], false)
-                .context("failed to run `trunk build` — install it with `cargo install trunk`")?;
+                run_in(project, "trunk", &["build", "--release"], false).context(
+                    "failed to run `trunk build` — install it with `cargo install trunk`",
+                )?;
             }
         }
         t => {
@@ -1116,7 +1202,9 @@ fn report_release_size(project: &Path) {
     if let Some((size, path)) = largest {
         println!(
             "release artifact: {} — {:.2} MiB",
-            path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             size as f64 / (1024.0 * 1024.0)
         );
     }
@@ -1138,6 +1226,80 @@ fn run_bundler(project: &Path) -> anyhow::Result<()> {
     }
     run_in(project, "cargo", &["packager"], false)
         .context("failed to run `cargo packager` — install it with `cargo install cargo-packager`")
+}
+
+// ---------------------------------------------------------------------------
+// fmt / lint — repo-wide hygiene wrappers
+// ---------------------------------------------------------------------------
+
+/// Returns the directories under `examples/` that contain a `Cargo.toml`. Each
+/// example is a standalone crate excluded from the workspace, so it must be
+/// formatted/linted with its own `--manifest-path` rather than via the
+/// workspace-level commands.
+fn example_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let root = PathBuf::from("examples");
+    if let Ok(entries) = fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && p.join("Cargo.toml").exists() {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `tpt-appfront fmt` — formats the workspace and every standalone example.
+///
+/// Uses `cargo +nightly fmt`: `rustfmt.toml` enables unstable options
+/// (`group_imports` / `imports_granularity` / `format_code_in_doc_comments`)
+/// that the stable formatter silently ignores, so nightly must be the formatter
+/// or CI's `fmt` job will reject the diff.
+fn fmt_cmd() -> anyhow::Result<()> {
+    run_in(
+        Path::new("."),
+        "cargo",
+        &["+nightly", "fmt", "--all"],
+        false,
+    )?;
+    for ex in example_dirs() {
+        run_in(&ex, "cargo", &["+nightly", "fmt"], false)
+            .with_context(|| format!("formatting example {}", ex.display()))?;
+    }
+    println!("formatted workspace + examples with `cargo +nightly fmt`");
+    Ok(())
+}
+
+/// `tpt-appfront lint` — lints the workspace (webview excluded, as in CI) and
+/// every standalone example with `clippy -D warnings`.
+fn lint_cmd() -> anyhow::Result<()> {
+    run_in(
+        Path::new("."),
+        "cargo",
+        &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--exclude",
+            "tpt-appfront-webview",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        false,
+    )?;
+    for ex in example_dirs() {
+        run_in(
+            &ex,
+            "cargo",
+            &["clippy", "--all-targets", "--", "-D", "warnings"],
+            false,
+        )
+        .with_context(|| format!("linting example {}", ex.display()))?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1225,6 +1387,77 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
         }
     }
 
+    // Informational hygiene checks — reported but never fail `doctor`, since a
+    // dev may legitimately not have the local pre-commit hook installed or may
+    // be mid-edit on an unformatted tree.
+    let mut info: Vec<Check> = Vec::new();
+
+    let rustfmt_ok = Process::new("rustfmt").arg("--version").output().is_ok();
+    info.push(Check {
+        name: "rustfmt",
+        ok: rustfmt_ok,
+        detail: if rustfmt_ok {
+            "installed (formatting checks available)".into()
+        } else {
+            "missing — `rustup component add rustfmt`".into()
+        },
+    });
+
+    // `tpt-appfront fmt` and CI's `fmt` job use `cargo +nightly fmt` because
+    // `rustfmt.toml` enables unstable options. Report its presence (WARN, not
+    // FAIL — a dev can still build/test without it).
+    let nightly_fmt = Process::new("cargo")
+        .args(["+nightly", "fmt", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    info.push(Check {
+        name: "rustfmt (nightly)",
+        ok: nightly_fmt,
+        detail: if nightly_fmt {
+            "installed (required for `tpt-appfront fmt` + CI `fmt` job)".into()
+        } else {
+            "missing — `rustup toolchain install nightly` (needed for import grouping)".into()
+        },
+    });
+
+    let hooks_path = Process::new("git")
+        .args(["config", "--get", "core.hooksPath"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    info.push(Check {
+        name: "pre-commit hook",
+        ok: hooks_path.as_deref() == Some("scripts/git-hooks"),
+        detail: match hooks_path {
+            Some(ref p) if p == "scripts/git-hooks" => "installed (scripts/git-hooks)".into(),
+            Some(ref p) => format!("core.hooksPath = `{p}` (not the repo hook)"),
+            None => "not installed — run `scripts/install-hooks.sh`".into(),
+        },
+    });
+
+    let fmt_clean = Process::new("cargo")
+        .args(["+nightly", "fmt", "--all", "--check"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    info.push(Check {
+        name: "workspace formatted",
+        ok: fmt_clean,
+        detail: if fmt_clean {
+            "cargo fmt --all --check passes".into()
+        } else {
+            "formatting drift — run `tpt-appfront fmt`".into()
+        },
+    });
+
+    for c in &info {
+        let mark = if c.ok { "ok  " } else { "WARN" };
+        println!("[{mark}] {:<28} {}", c.name, c.detail);
+    }
+
     if failed {
         bail!("doctor found missing required tooling — see above");
     }
@@ -1265,7 +1498,10 @@ fn run_in(dir: &Path, program: &str, args: &[&str], devtools: bool) -> anyhow::R
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!("failed to run `{program}`: {e} — {}", missing_tool_hint(program))
+            bail!(
+                "failed to run `{program}`: {e} — {}",
+                missing_tool_hint(program)
+            )
         }
         Err(e) => bail!("failed to spawn `{program}` in {}: {e}", dir.display()),
     }
@@ -1298,7 +1534,10 @@ mod tests {
             assert!(r.starts_with("{ path ="), "expected path dep, got {r}");
         } else {
             let r = dep_ref("tpt-appfront-core");
-            assert!(r.starts_with('"') && r.ends_with('"'), "expected version dep, got {r}");
+            assert!(
+                r.starts_with('"') && r.ends_with('"'),
+                "expected version dep, got {r}"
+            );
         }
     }
 
@@ -1321,10 +1560,7 @@ mod tests {
 
     #[test]
     fn dev_devtools_flag_parses() {
-        assert!(Cli::try_parse_from([
-            "tpt-appfront", "dev", "--desktop", "--devtools"
-        ])
-        .is_ok());
+        assert!(Cli::try_parse_from(["tpt-appfront", "dev", "--desktop", "--devtools"]).is_ok());
     }
 
     #[test]
@@ -1332,6 +1568,12 @@ mod tests {
         assert!(missing_tool_hint("trunk").contains("cargo install trunk"));
         assert!(missing_tool_hint("cargo-packager").contains("cargo install cargo-packager"));
         assert!(missing_tool_hint("cargo").contains("Rust toolchain"));
+    }
+
+    #[test]
+    fn fmt_and_lint_subcommands_parse() {
+        assert!(Cli::try_parse_from(["tpt-appfront", "fmt"]).is_ok());
+        assert!(Cli::try_parse_from(["tpt-appfront", "lint"]).is_ok());
     }
 
     #[test]
@@ -1343,10 +1585,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let err = dev(false, false, false, true, false, false, &dir)
             .expect_err("expected an error for missing ui/ trunk app");
-        assert!(
-            err.to_string().contains("ui/index.html"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("ui/index.html"), "got: {err}");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1362,10 +1601,7 @@ mod tests {
 
     #[test]
     fn dev_no_reload_flag_parses() {
-        assert!(Cli::try_parse_from([
-            "tpt-appfront", "dev", "--desktop", "--no-reload"
-        ])
-        .is_ok());
+        assert!(Cli::try_parse_from(["tpt-appfront", "dev", "--desktop", "--no-reload"]).is_ok());
         assert!(Cli::try_parse_from(["tpt-appfront", "dev", "--desktop"]).is_ok());
     }
 
@@ -1425,7 +1661,11 @@ mod tests {
     #[test]
     fn init_with_flag_parses() {
         assert!(Cli::try_parse_from([
-            "tpt-appfront", "init", "myapp", "--with", "dashboard,settings"
+            "tpt-appfront",
+            "init",
+            "myapp",
+            "--with",
+            "dashboard,settings"
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["tpt-appfront", "init", "myapp", "--with", "login"]).is_ok());
@@ -1460,10 +1700,14 @@ mod tests {
     #[test]
     fn optimize_analyze_flag_parses_and_runs() {
         assert!(Cli::try_parse_from(["tpt-appfront", "optimize", "--analyze"]).is_ok());
-        assert!(
-            Cli::try_parse_from(["tpt-appfront", "optimize", "--target", "canvas", "--analyze"])
-                .is_ok()
-        );
+        assert!(Cli::try_parse_from([
+            "tpt-appfront",
+            "optimize",
+            "--target",
+            "canvas",
+            "--analyze"
+        ])
+        .is_ok());
     }
 
     #[test]
@@ -1492,13 +1736,17 @@ mod tests {
         // clap parser (no args actually executed). These only check parsing.
         assert!(Cli::try_parse_from(["tpt-appfront", "benchmark", "--project", "."]).is_ok());
         assert!(Cli::try_parse_from([
-            "tpt-appfront", "optimize", "--target", "canvas", "--bundle"
+            "tpt-appfront",
+            "optimize",
+            "--target",
+            "canvas",
+            "--bundle"
         ])
         .is_ok());
-        assert!(Cli::try_parse_from([
-            "tpt-appfront", "build", "--target", "webview", "--bundle"
-        ])
-        .is_ok());
+        assert!(
+            Cli::try_parse_from(["tpt-appfront", "build", "--target", "webview", "--bundle"])
+                .is_ok()
+        );
         assert!(Cli::try_parse_from(["tpt-appfront", "optimize", "--target", "bogus"]).is_ok());
     }
 
@@ -1506,7 +1754,12 @@ mod tests {
     fn generate_flags_parse() {
         assert!(Cli::try_parse_from(["tpt-appfront", "generate", "--prompt", "a counter"]).is_ok());
         assert!(Cli::try_parse_from([
-            "tpt-appfront", "generate", "--prompt", "a counter", "--out", "ui.rs"
+            "tpt-appfront",
+            "generate",
+            "--prompt",
+            "a counter",
+            "--out",
+            "ui.rs"
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["tpt-appfront", "generate"]).is_err());
@@ -1522,7 +1775,8 @@ mod tests {
     fn watcher_detects_source_change_and_ignores_cargo_lock() {
         // Content-hash based, so this is reliable even when both writes land in
         // the same filesystem mtime tick (unlike an mtime-only watcher).
-        let dir = std::env::temp_dir().join(format!("tpt-appfront-watch-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tpt-appfront-watch-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
         let file = dir.join("src").join("main.rs");
@@ -1545,7 +1799,10 @@ mod tests {
         fs::write(&lock, "version = 3\n").unwrap();
         assert!(!w.changed(&mut snap), "adding Cargo.lock does not reload");
         fs::write(&lock, "version = 3\n# cargo rewrote this\n").unwrap();
-        assert!(!w.changed(&mut snap), "editing Cargo.lock alone does not reload");
+        assert!(
+            !w.changed(&mut snap),
+            "editing Cargo.lock alone does not reload"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1553,13 +1810,18 @@ mod tests {
     #[test]
     fn add_subcommands_parse() {
         assert!(Cli::try_parse_from([
-            "tpt-appfront", "add", "component", "UserBadge", "--project", "."
+            "tpt-appfront",
+            "add",
+            "component",
+            "UserBadge",
+            "--project",
+            "."
         ])
         .is_ok());
-        assert!(Cli::try_parse_from([
-            "tpt-appfront", "add", "page", "Settings", "--project", "."
-        ])
-        .is_ok());
+        assert!(
+            Cli::try_parse_from(["tpt-appfront", "add", "page", "Settings", "--project", "."])
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1578,9 +1840,15 @@ mod tests {
         assert!(src.contains("class=\"user-badge\""));
 
         let root = fs::read_to_string(dir.join("src").join("lib.rs")).unwrap();
-        assert!(root.contains("mod components;"), "module decl appended: {root}");
+        assert!(
+            root.contains("mod components;"),
+            "module decl appended: {root}"
+        );
 
-        assert!(add_component("UserBadge", &dir).is_err(), "duplicate rejected");
+        assert!(
+            add_component("UserBadge", &dir).is_err(),
+            "duplicate rejected"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1625,7 +1893,11 @@ mod tests {
         fs::write(dir.join("src").join("lib.rs"), "mod components;\n").unwrap();
         assert!(add_component("Widget", &dir).is_ok());
         let root = fs::read_to_string(dir.join("src").join("lib.rs")).unwrap();
-        assert_eq!(root.matches("mod components;").count(), 1, "no duplicate decl");
+        assert_eq!(
+            root.matches("mod components;").count(),
+            1,
+            "no duplicate decl"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

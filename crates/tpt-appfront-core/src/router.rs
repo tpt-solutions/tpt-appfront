@@ -1,6 +1,6 @@
 //! Backend-agnostic client-side router.
 //!
-//! A real hash/history-based router is more than the bare [`route_signal`]
+//! A real hash/history-based router is more than the bare [`crate::agent::route_signal`]
 //! pointer in [`crate::agent`] (which exists for AI-agent/devtools purposes).
 //! This module adds a route *table* with path-matching and parameter
 //! extraction, plus a [`Router`] that owns the current location, resolves it
@@ -12,10 +12,11 @@
 //! `wasm32`; `appfront-html` / `appfront-ai-schema` resolve routes at
 //! crawl/generation time.
 
-use crate::signal::Signal;
-use crate::ui_tree::UITree;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use crate::signal::Signal;
+use crate::ui_tree::UITree;
 
 /// A view-producing handler for a matched route. Receives the captured path
 /// params and returns the [`UITree`] for that route.
@@ -272,11 +273,29 @@ mod tests {
             .unwrap()
             .fallback(|| UITree::container(|_| {}));
 
-        assert!(matches!(table.resolve("/"), UITree { kind: NodeKind::Container { .. }, .. }));
+        assert!(matches!(
+            table.resolve("/"),
+            UITree {
+                kind: NodeKind::Container { .. },
+                ..
+            }
+        ));
         let view = table.resolve("/users/7");
-        assert!(matches!(view, UITree { kind: NodeKind::Container { .. }, .. }));
+        assert!(matches!(
+            view,
+            UITree {
+                kind: NodeKind::Container { .. },
+                ..
+            }
+        ));
         // Unknown route hits the fallback.
-        assert!(matches!(table.resolve("/nope"), UITree { kind: NodeKind::Container { .. }, .. }));
+        assert!(matches!(
+            table.resolve("/nope"),
+            UITree {
+                kind: NodeKind::Container { .. },
+                ..
+            }
+        ));
     }
 
     #[test]

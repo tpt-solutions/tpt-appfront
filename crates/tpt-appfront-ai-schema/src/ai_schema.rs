@@ -4,8 +4,9 @@
 //! page's interactive surface and data content without rendering it.
 //! See `docs/ai-schema.md`.
 
-use tpt_appfront_core::{NodeKind, UITree};
 use serde_json::{Map, Value};
+use tpt_appfront_core::ui_tree::MediaType;
+use tpt_appfront_core::{NodeKind, UITree};
 
 /// Describes the interactive surface of a `UITree` for AI agents.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -44,9 +45,15 @@ pub fn to_ai_schema<Msg>(ui: &UITree<Msg>) -> AiSchemaOutput {
     let mut data = Vec::new();
     collect(ui, &mut interactive, &mut data);
 
-    let title = data
-        .first()
-        .and_then(|d| d.text.clone())
+    // An explicit title on the root node's `AiMeta` overrides the heuristic so a
+    // breadcrumb/aside rendering before the real heading can't mis-name the
+    // page. The heuristic only runs when no explicit title is set.
+    let title = ui
+        .meta
+        .ai
+        .title
+        .clone()
+        .or_else(|| data.first().and_then(|d| d.text.clone()))
         .unwrap_or_default();
 
     AiSchemaOutput {
@@ -166,6 +173,34 @@ fn collect<Msg>(
                 text: None,
             });
         }
+        NodeKind::Image { alt, .. } => {
+            data.push(DataElement {
+                kind: "image".to_string(),
+                columns: None,
+                rows: None,
+                text: Some(alt.clone()),
+            });
+        }
+        NodeKind::Link { text, .. } => {
+            data.push(DataElement {
+                kind: "link".to_string(),
+                columns: None,
+                rows: None,
+                text: Some(text.clone()),
+            });
+        }
+        NodeKind::Media { alt, media_type, .. } => {
+            data.push(DataElement {
+                kind: match media_type {
+                    MediaType::Audio => "audio",
+                    MediaType::Video => "video",
+                }
+                .to_string(),
+                columns: None,
+                rows: None,
+                text: Some(alt.clone()),
+            });
+        }
         NodeKind::Portal { content, .. } => {
             // Surface the portal's content so AI consumers see its elements.
             collect(content, interactive, data);
@@ -183,8 +218,9 @@ fn build_params(pairs: &[(String, String)]) -> Map<String, Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::UITree;
+
+    use super::*;
 
     #[derive(Debug, Clone)]
     enum Msg {

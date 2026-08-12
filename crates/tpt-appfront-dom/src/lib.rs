@@ -1,7 +1,7 @@
 //! Fine-grained-reactive real DOM backend (see spec.txt's "Better DOM" pivot).
 //!
 //! `mount` walks a `UITree` once and creates real DOM nodes directly via
-//! `web-sys` — then keeps a [`MountedRoot`] record so subsequent renders can
+//! `web-sys` — then keeps a `MountedRoot` record so subsequent renders can
 //! update attributes/children *in place* instead of tearing the whole subtree
 //! down and rebuilding it. Event handlers dispatch an app-defined `Msg` back
 //! through a caller-supplied callback.
@@ -11,15 +11,15 @@
 //!
 //! ## Reconciliation & cleanup
 //!
-//! Every mount returns a [`MountedRoot`] whose `unmount()` removes all event
-//! listeners and drops every `EffectHandle` it owns — no leaks. [`render`]
+//! Every mount returns a `MountedRoot` whose `unmount()` removes all event
+//! listeners and drops every `EffectHandle` it owns — no leaks. `render`
 //! returns an [`EffectHandle`](tpt_appfront_core::EffectHandle) that re-renders
-//! only the changed subtrees on each signal change; [`mount_router`] uses it
+//! only the changed subtrees on each signal change; `mount_router` uses it
 //! so navigation reconciles rather than full-replacing the container.
 //!
 //! ## Hydration
 //!
-//! [`hydrate`] is the counterpart to server-side rendering (SSR). Instead of
+//! `hydrate` is the counterpart to server-side rendering (SSR). Instead of
 //! creating fresh DOM nodes, it reads the serialised `HydrationPayload` from
 //! `<script id="__APPFRONT_STATE__">`, matches each `UITree` node to its
 //! server-rendered DOM element via `data-appfront-id`, and attaches event
@@ -27,11 +27,12 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use tpt_appfront_core::{
     create_effect, reconcile_keys, HydrationPayload, KeyedDiff, NodeKind, Router, UITree,
 };
-use std::collections::HashMap;
-use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, Node};
@@ -255,7 +256,7 @@ where
 // Stashes a [`MountedNode`] record on the container element via a module-local
 // map keyed by a stable per-element identity, so no attribute is polluted.
 thread_local! {
-    static CONTAINER_MOUNTS: std::cell::RefCell<HashMap<u32, MountedNode>> =
+    static CONTAINER_MOUNTS: std::cell::RefCell<HashMap<u64, MountedNode>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
@@ -269,10 +270,12 @@ fn take_mounted_record(container: &Element) -> Option<MountedNode> {
     CONTAINER_MOUNTS.with(|m| m.borrow_mut().remove(&key))
 }
 
-fn element_key(el: &Element) -> u32 {
-    // Cheap, stable-per-element identity for the side-channel map.
-    (el.as_ref() as *const wasm_bindgen::JsValue as u32)
-        ^ (el.tag_name().len() as u32).wrapping_mul(2654435761)
+fn element_key(el: &Element) -> u64 {
+    // Cheap, stable-per-element identity for the side-channel map. Keyed by the
+    // full 64-bit pointer address (not truncated to `u32`) so it stays correct
+    // under a memory64/wasm build, not just classic wasm32.
+    (el.as_ref() as *const wasm_bindgen::JsValue as u64)
+        ^ (el.tag_name().len() as u64).wrapping_mul(2654435761)
 }
 
 /// Navigates the router and syncs the browser URL via `history.pushState`,
@@ -388,7 +391,9 @@ where
             apply_meta_to_element(Some(el), new_ui);
 
             match &new_ui.kind {
-                NodeKind::Container { children: new_children } => {
+                NodeKind::Container {
+                    children: new_children,
+                } => {
                     reconcile_children(
                         document,
                         dispatch,
@@ -644,8 +649,12 @@ where
     Msg: Clone + 'static,
 {
     let diff = reconcile_keys(
-        &(0..old_rows.len()).map(|i| i.to_string()).collect::<Vec<_>>(),
-        &(0..new_rows.len()).map(|i| i.to_string()).collect::<Vec<_>>(),
+        &(0..old_rows.len())
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>(),
+        &(0..new_rows.len())
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>(),
     );
 
     let mut old_by_index: HashMap<String, MountedNode> = HashMap::new();
@@ -895,7 +904,11 @@ where
             }
             el.into()
         }
-        NodeKind::Radio { name, options, selected } => {
+        NodeKind::Radio {
+            name,
+            options,
+            selected,
+        } => {
             let el = document.create_element("div")?;
             for (value, label) in options {
                 let label_el = document.create_element("label")?;
@@ -931,7 +944,10 @@ where
             if let Some(vs) = ui.meta.virtual_scroll {
                 table.set_attribute(
                     "style",
-                    &format!("display:block;overflow-y:auto;height:{}px", vs.viewport_height),
+                    &format!(
+                        "display:block;overflow-y:auto;height:{}px",
+                        vs.viewport_height
+                    ),
                 )?;
                 let range = vs.visible_range(rows.len());
                 append_row_spacer(document, &tbody, columns.len(), range.top_spacer)?;
@@ -966,8 +982,8 @@ where
         if let Some(el) = node.dyn_ref::<Element>() {
             el.set_attribute("data-ai-action", action)?;
             if !ui.meta.ai.params.is_empty() {
-                let params_json = serde_json::to_string(&json_obj(&ui.meta.ai.params))
-                    .unwrap_or_default();
+                let params_json =
+                    serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default();
                 el.set_attribute("data-ai-params", &params_json)?;
             }
         }
@@ -1013,7 +1029,11 @@ where
     if let Some(on_toggle) = ui.meta.on_toggle.clone() {
         let dispatch = Rc::clone(dispatch);
         if let Some(label_el) = node.dyn_ref::<web_sys::HtmlLabelElement>() {
-            if let Some(input_el) = label_el.query_selector("input[type=checkbox]").ok().flatten() {
+            if let Some(input_el) = label_el
+                .query_selector("input[type=checkbox]")
+                .ok()
+                .flatten()
+            {
                 if let Some(checkbox_el) = input_el.dyn_ref::<web_sys::HtmlInputElement>() {
                     let target = checkbox_el.clone();
                     let closure = Closure::<dyn FnMut()>::new(move || {
@@ -1338,7 +1358,27 @@ where
         if let Some(id) = ui.meta.data_appfront_id {
             if let Some(el) = id_map.get(&id) {
                 attach_listeners(ui, dispatch, el)?;
+            } else {
+                // SSR/CSR mismatch: an interactive node was built on the client
+                // but the server's serialized DOM had no matching
+                // `data-appfront-id`. In debug builds surface it so the broken
+                // hydration is obvious rather than silently leaving a dead node.
+                #[cfg(debug_assertions)]
+                web_sys::console::warn_1(
+                    &wasm_bindgen::JsValue::from_str(&format!(
+                        "tpt-appfront hydrate: no DOM node for appfront id {id}; \
+                         SSR/CSR mismatch — listeners not attached"
+                    )),
+                );
             }
+        } else {
+            // An interactive node with no id at all also indicates a server
+            // render that didn't emit `data-appfront-id` on it.
+            #[cfg(debug_assertions)]
+            web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(
+                "tpt-appfront hydrate: interactive node missing data-appfront-id; \
+                 SSR/CSR mismatch — listeners not attached",
+            ));
         }
     }
 
@@ -1357,9 +1397,9 @@ where
     if let Some(msg) = ui.meta.on_click.clone() {
         let dispatch = Rc::clone(dispatch);
         let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
-        let html_el: &web_sys::HtmlElement = el.dyn_ref::<web_sys::HtmlElement>().ok_or_else(|| {
-            wasm_bindgen::JsValue::from_str("element is not an HtmlElement")
-        })?;
+        let html_el: &web_sys::HtmlElement = el
+            .dyn_ref::<web_sys::HtmlElement>()
+            .ok_or_else(|| wasm_bindgen::JsValue::from_str("element is not an HtmlElement"))?;
         html_el.set_onclick(Some(closure.as_ref().unchecked_ref()));
         track_closure(&el.clone().into(), closure);
     }
@@ -1393,7 +1433,11 @@ where
     if let Some(on_toggle) = ui.meta.on_toggle.clone() {
         let dispatch = Rc::clone(dispatch);
         if let Some(label_el) = el.dyn_ref::<web_sys::HtmlLabelElement>() {
-            if let Some(input_el) = label_el.query_selector("input[type=checkbox]").ok().flatten() {
+            if let Some(input_el) = label_el
+                .query_selector("input[type=checkbox]")
+                .ok()
+                .flatten()
+            {
                 if let Some(checkbox_el) = input_el.dyn_ref::<web_sys::HtmlInputElement>() {
                     let target = checkbox_el.clone();
                     let closure = Closure::<dyn FnMut()>::new(move || {
@@ -1409,8 +1453,8 @@ where
     if let Some(action) = &ui.meta.ai.action {
         el.set_attribute("data-ai-action", action)?;
         if !ui.meta.ai.params.is_empty() {
-            let params_json = serde_json::to_string(&json_obj(&ui.meta.ai.params))
-                .unwrap_or_default();
+            let params_json =
+                serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default();
             el.set_attribute("data-ai-params", &params_json)?;
         }
     }

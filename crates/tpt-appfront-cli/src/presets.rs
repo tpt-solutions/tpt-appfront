@@ -1,7 +1,7 @@
 //! Starter presets for `tpt-appfront init --preset <name>`.
 //!
 //! Each preset scaffolds a runnable DOM app that uses the
-//! [`tpt_appfront_templates`] starter templates (or, for the login form, the
+//! `tpt-appfront-templates` starter templates (or, for the login form, the
 //! `view!` two-way-binding path) wired to real `Signal`-backed state — a "real"
 //! UI shape to start from instead of the bare counter (todo.md Phase 19).
 //!

@@ -7,8 +7,8 @@
 //! re-implementing the webview plumbing.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 /// A drag-and-drop event delivered to the app.
 #[derive(Debug, Clone)]

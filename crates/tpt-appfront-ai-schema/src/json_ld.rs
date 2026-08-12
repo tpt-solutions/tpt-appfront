@@ -3,8 +3,8 @@
 //! Produces a `@graph` array suitable for embedding in
 //! `<script type="application/ld+json">`. See `docs/ai-schema.md`.
 
-use tpt_appfront_core::{AiMeta, NodeKind, UITree};
 use serde_json::{Map, Value};
+use tpt_appfront_core::{AiMeta, NodeKind, UITree};
 
 /// Serialises `ui` as a JSON-LD `@graph` array.
 pub fn to_json_ld<Msg>(ui: &UITree<Msg>) -> Value {
@@ -86,17 +86,31 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
             item.insert("value".to_string(), Value::String(selected.clone()));
             item.insert(
                 "options".to_string(),
-                Value::Array(options.iter().map(|(v, _)| Value::String(v.clone())).collect()),
+                Value::Array(
+                    options
+                        .iter()
+                        .map(|(v, _)| Value::String(v.clone()))
+                        .collect(),
+                ),
             );
             graph.push(Value::Object(item));
         }
-        NodeKind::Radio { name, options, selected } => {
+        NodeKind::Radio {
+            name,
+            options,
+            selected,
+        } => {
             let mut item = web_page_element(&ui.meta.ai);
             item.insert("name".to_string(), Value::String(name.clone()));
             item.insert("value".to_string(), Value::String(selected.clone()));
             item.insert(
                 "options".to_string(),
-                Value::Array(options.iter().map(|(v, _)| Value::String(v.clone())).collect()),
+                Value::Array(
+                    options
+                        .iter()
+                        .map(|(v, _)| Value::String(v.clone()))
+                        .collect(),
+                ),
             );
             graph.push(Value::Object(item));
         }
@@ -174,8 +188,9 @@ fn action_entry(name: &str, action: &str, params: &[(String, String)]) -> Value 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::UITree;
+
+    use super::*;
 
     #[derive(Debug, Clone)]
     enum Msg {

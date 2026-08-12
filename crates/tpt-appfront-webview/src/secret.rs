@@ -42,12 +42,10 @@ impl std::error::Error for SecretError {}
 pub fn get_secret(app_id: &str, key: &str) -> Result<String, SecretError> {
     let entry = keyring::Entry::new(&format!("{SERVICE_PREFIX}{app_id}"), key)
         .map_err(|e| SecretError::Backend(e.to_string()))?;
-    entry
-        .get_password()
-        .map_err(|e| match e {
-            keyring::Error::NoEntry => SecretError::NotFound,
-            other => SecretError::Backend(other.to_string()),
-        })
+    entry.get_password().map_err(|e| match e {
+        keyring::Error::NoEntry => SecretError::NotFound,
+        other => SecretError::Backend(other.to_string()),
+    })
 }
 
 /// Stores `value` under `key` for `app_id`, overwriting any prior value.
@@ -63,12 +61,10 @@ pub fn set_secret(app_id: &str, key: &str, value: &str) -> Result<(), SecretErro
 pub fn delete_secret(app_id: &str, key: &str) -> Result<(), SecretError> {
     let entry = keyring::Entry::new(&format!("{SERVICE_PREFIX}{app_id}"), key)
         .map_err(|e| SecretError::Backend(e.to_string()))?;
-    entry
-        .delete_credential()
-        .map_err(|e| match e {
-            keyring::Error::NoEntry => SecretError::NotFound,
-            other => SecretError::Backend(other.to_string()),
-        })
+    entry.delete_credential().map_err(|e| match e {
+        keyring::Error::NoEntry => SecretError::NotFound,
+        other => SecretError::Backend(other.to_string()),
+    })
 }
 
 /// A reply produced by handling a secret IPC action, ready to be posted back to

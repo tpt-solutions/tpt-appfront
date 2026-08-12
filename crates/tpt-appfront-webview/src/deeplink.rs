@@ -11,8 +11,8 @@
 //! keys. On macOS/Linux the equivalent is handled by the bundle/launcher, but
 //! the [`DeepLinkDispatcher`] dispatch path is platform-independent.
 
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 /// A dispatcher that buffers received deep-link URLs and lets the app drain
 /// them from its event loop via [`DeepLinkDispatcher::receiver`].

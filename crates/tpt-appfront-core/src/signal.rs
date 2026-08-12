@@ -7,10 +7,11 @@
 //! effect that branches (`if cond.get() { a.get() } else { b.get() }`)
 //! only stays subscribed to whichever branch it last took.
 
-use serde::de::DeserializeOwned;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
+
+use serde::de::DeserializeOwned;
 
 type EffectFn = dyn FnMut();
 
@@ -34,6 +35,13 @@ struct EffectNode {
     /// Signals read during the most recent run, kept so they can be
     /// unsubscribed before the next run recomputes dependencies from scratch.
     deps: RefCell<Vec<Rc<dyn Trackable>>>,
+    /// Cleanup closures registered via [`on_cleanup`] during the most recent
+    /// run. Run (and cleared) just before the next run, and again when the
+    /// effect's [`EffectHandle`] is dropped — so effects that open
+    /// subscriptions/timers/listeners can tear them down between runs instead
+    /// of leaking them on every re-run.
+    cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
+
     /// Scheduling order for batched flushes: 0 for an effect that only reads
     /// plain signals, or `1 + max(rank of any dependency's producing effect)`
     /// for an effect (e.g. a memo) downstream of other memos. Reset to 0 at
@@ -44,6 +52,10 @@ struct EffectNode {
 
 thread_local! {
     static EFFECT_STACK: RefCell<Vec<Rc<EffectNode>>> = const { RefCell::new(Vec::new()) };
+    /// The effect currently running, so [`on_cleanup`] can register a cleanup
+    /// closure against it. `Weak` because it mirrors the `EffectHandle`'s
+    /// strong ownership of the node.
+    static CURRENT_CLEANUP: RefCell<Option<Weak<EffectNode>>> = const { RefCell::new(None) };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +217,7 @@ impl<T> Clone for Signal<T> {
     }
 }
 
-impl<T: Clone + 'static> Signal<T> {
+impl<T: 'static> Signal<T> {
     pub fn new(value: T) -> Self {
         Signal {
             inner: Rc::new(RefCell::new(SignalInner {
@@ -288,13 +300,6 @@ impl<T: Clone + 'static> Signal<T> {
         });
     }
 
-    /// Reads the current value, subscribing the currently-running effect
-    /// (if any) to future updates of this signal.
-    pub fn get(&self) -> T {
-        self.track();
-        self.inner.borrow().value.clone()
-    }
-
     /// Reads the current value via a borrow instead of cloning it, still
     /// subscribing the currently-running effect. Prefer this over `get()`
     /// for large values (e.g. a `DataGrid`'s row vector) where the mandatory
@@ -330,12 +335,24 @@ impl<T: Clone + 'static> Signal<T> {
     }
 }
 
+impl<T: Clone + 'static> Signal<T> {
+    /// Reads the current value, subscribing the currently-running effect
+    /// (if any) to future updates of this signal. Requires `T: Clone` because
+    /// the value is returned by copy; for large or non-`Clone` state read it
+    /// via [`Signal::with`] instead (which borrows without cloning).
+    pub fn get(&self) -> T {
+        self.track();
+        self.inner.borrow().value.clone()
+    }
+}
+
 impl<T: Clone + PartialEq + 'static> Signal<T> {
-    /// Like `set`, but skips the write and notification entirely when
-    /// `value` equals the current one. Used internally by `create_memo` so
-    /// a memo whose recomputed value hasn't actually changed doesn't wake
-    /// its own downstream subscribers.
-    fn set_if_changed(&self, value: T) {
+    /// Like [`Signal::set`], but skips the write and notification entirely
+    /// when `value` equals the current one — handy for callers that want the
+    /// memo-style "don't notify on unchanged output" behavior without building
+    /// a memo. Public so apps can dedupe writes directly (e.g. an effect that
+    /// recomputes a value and only wants to propagate real changes).
+    pub fn set_if_changed(&self, value: T) {
         let changed = self.inner.borrow().value != value;
         if changed {
             self.set(value);
@@ -369,6 +386,7 @@ pub fn create_memo<T: Clone + PartialEq + 'static>(compute: impl Fn() -> T + 'st
             }
         })),
         deps: RefCell::new(Vec::new()),
+        cleanups: RefCell::new(Vec::new()),
         rank: Cell::new(0),
     });
 
@@ -392,6 +410,18 @@ pub struct EffectHandle {
     _inner: Rc<EffectNode>,
 }
 
+impl Drop for EffectHandle {
+    fn drop(&mut self) {
+        // Run any cleanups registered during the effect's last run (e.g. close
+        // a subscription opened by `on_cleanup`), then clear them so they don't
+        // run again if the node is somehow reused.
+        let cleanups: Vec<Box<dyn FnOnce()>> = std::mem::take(&mut self._inner.cleanups.borrow_mut());
+        for cleanup in cleanups {
+            cleanup();
+        }
+    }
+}
+
 /// Runs `f` immediately, then re-runs it whenever any `Signal` it read
 /// during that run is updated. Returns a handle that must be kept alive
 /// for as long as the effect should keep reacting.
@@ -399,6 +429,7 @@ pub fn create_effect(f: impl FnMut() + 'static) -> EffectHandle {
     let node = Rc::new(EffectNode {
         f: RefCell::new(Box::new(f)),
         deps: RefCell::new(Vec::new()),
+        cleanups: RefCell::new(Vec::new()),
         rank: Cell::new(0),
     });
     run_effect(&node);
@@ -413,17 +444,47 @@ fn run_effect(node: &Rc<EffectNode>) {
         dep.unsubscribe(effect_ptr);
     }
 
+    // Run (and clear) any cleanups registered during the previous run before
+    // re-running the effect — SolidJS-style `on_cleanup` teardown.
+    let prev_cleanups: Vec<Box<dyn FnOnce()>> = std::mem::take(&mut node.cleanups.borrow_mut());
+    for cleanup in prev_cleanups {
+        cleanup();
+    }
+
     EFFECT_STACK.with(|stack| stack.borrow_mut().push(Rc::clone(node)));
+    CURRENT_CLEANUP.with(|c| *c.borrow_mut() = Some(Rc::downgrade(node)));
     (node.f.borrow_mut())();
+    CURRENT_CLEANUP.with(|c| *c.borrow_mut() = None);
     EFFECT_STACK.with(|stack| {
         stack.borrow_mut().pop();
     });
 }
 
+/// Registers `cleanup` to run before the currently-running effect's next run
+/// (and when its [`EffectHandle`] is dropped). Mirrors SolidJS's `on_cleanup`:
+/// an effect that opens a subscription, timer, or listener can tear it down
+/// here so it doesn't leak across re-runs. Must be called from within an
+/// effect (or [`create_memo`] compute closure); outside one it is a no-op.
+///
+/// ```ignore
+/// create_effect(|| {
+///     let ch = subscribe_to_channel();
+///     on_cleanup(move || ch.close());
+/// });
+/// ```
+pub fn on_cleanup(cleanup: impl FnOnce() + 'static) {
+    CURRENT_CLEANUP.with(|c| {
+        if let Some(weak) = c.borrow().as_ref().and_then(Weak::upgrade) {
+            weak.cleanups.borrow_mut().push(Box::new(cleanup));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::cell::Cell;
+
+    use super::*;
 
     #[test]
     fn get_returns_current_value() {
@@ -760,5 +821,91 @@ mod tests {
             vec![11, 110, 150],
             "shallow no longer reacts to a; only deep_of_a updates (100 + 5*10)"
         );
+    }
+
+    #[test]
+    fn on_cleanup_runs_before_next_run_and_on_drop() {
+        let a = Signal::new(1);
+        let runs = Rc::new(Cell::new(0));
+        let cleanups = Rc::new(Cell::new(0));
+        let runs_clone = Rc::clone(&runs);
+        let cleanups_clone = Rc::clone(&cleanups);
+        let a_for_effect = a.clone();
+        let handle = create_effect(move || {
+            a_for_effect.get();
+            runs_clone.set(runs_clone.get() + 1);
+            let n = cleanups_clone.clone();
+            on_cleanup(move || {
+                n.set(n.get() + 1);
+            });
+        });
+
+        assert_eq!(runs.get(), 1);
+        assert_eq!(
+            cleanups.get(),
+            0,
+            "no cleanup should fire before the first rerun"
+        );
+
+        a.set(2);
+        assert_eq!(runs.get(), 2);
+        assert_eq!(
+            cleanups.get(),
+            1,
+            "cleanup from run 1 must fire before run 2"
+        );
+
+        drop(handle);
+        assert_eq!(
+            cleanups.get(),
+            2,
+            "pending cleanup must fire when the handle is dropped"
+        );
+    }
+
+    #[test]
+    fn set_if_changed_does_not_notify_on_unchanged_value() {
+        let s = Signal::new(5i32);
+        let runs = Rc::new(Cell::new(0));
+        let runs_clone = Rc::clone(&runs);
+        let s_e = s.clone();
+        let _h = create_effect(move || {
+            s_e.get();
+            runs_clone.set(runs_clone.get() + 1);
+        });
+
+        assert_eq!(runs.get(), 1, "effect runs once on creation");
+        s.set_if_changed(5);
+        assert_eq!(
+            runs.get(),
+            1,
+            "set_if_changed with unchanged value must not notify"
+        );
+        s.set_if_changed(6);
+        assert_eq!(runs.get(), 2, "set_if_changed with new value notifies");
+    }
+
+    #[test]
+    fn signal_works_without_clone_via_with() {
+        // Loosened `T: Clone` requirement (todo.md Phase 20): a non-`Clone`
+        // value can still be stored, updated, and read via `with`.
+        #[derive(Debug)]
+        struct Big {
+            parts: Vec<String>,
+        }
+        impl Big {
+            fn len(&self) -> usize {
+                self.parts.len()
+            }
+        }
+
+        let s: Signal<Big> = Signal::new(Big {
+            parts: vec!["a".to_string()],
+        });
+        assert_eq!(s.with(|b| b.len()), 1);
+        s.set(Big {
+            parts: vec!["a".to_string(), "b".to_string()],
+        });
+        assert_eq!(s.with(|b| b.len()), 2);
     }
 }

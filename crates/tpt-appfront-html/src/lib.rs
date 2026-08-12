@@ -4,6 +4,7 @@
 //! and `data-ai-action` / `data-ai-params` attributes for AI crawlers.
 //! See `docs/ai-schema.md`.
 
+use tpt_appfront_core::ui_tree::MediaType;
 use tpt_appfront_core::{NodeKind, UITree};
 
 /// Renders a `UITree` to a semantic HTML fragment (no `<html>`/`<head>`/`<body>`).
@@ -117,7 +118,11 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             }
             close_tag(buf, "select");
         }
-        NodeKind::Radio { name, options, selected } => {
+        NodeKind::Radio {
+            name,
+            options,
+            selected,
+        } => {
             open_tag(buf, "div", ui);
             for (value, label) in options {
                 buf.push_str("<label><input type=\"radio\" name=\"");
@@ -170,6 +175,36 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             buf.push_str("</tbody>");
 
             close_tag(buf, "table");
+        }
+        NodeKind::Image { src, alt } => {
+            buf.push_str("<img");
+            attrs(buf, ui);
+            attr(buf, "src", src);
+            attr(buf, "alt", alt);
+            buf.push_str(" />");
+        }
+        NodeKind::Link { href, text } => {
+            buf.push_str("<a");
+            attrs(buf, ui);
+            attr(buf, "href", href);
+            buf.push('>');
+            buf.push_str(&esc_text(text));
+            close_tag(buf, "a");
+        }
+        NodeKind::Media { src, alt, media_type } => {
+            let tag = match media_type {
+                MediaType::Audio => "audio",
+                MediaType::Video => "video",
+            };
+            buf.push_str(tag);
+            attrs(buf, ui);
+            attr(buf, "src", src);
+            buf.push_str(" controls");
+            if !alt.is_empty() {
+                attr(buf, "aria-label", alt);
+            }
+            buf.push('>');
+            close_tag(buf, tag);
         }
         NodeKind::Portal { target, content } => {
             // Render the portal content inline but tag it so a crawler/host can
@@ -327,9 +362,9 @@ fn esc_json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
 
     type Msg = ();
 
@@ -427,7 +462,10 @@ mod tests {
         assert!(html.contains("<textarea"), "{html}");
         assert!(html.contains(">notes</textarea>"), "{html}");
         assert!(html.contains("type=\"checkbox\" checked"), "{html}");
-        assert!(html.contains("<option value=\"b\" selected>Beta</option>"), "{html}");
+        assert!(
+            html.contains("<option value=\"b\" selected>Beta</option>"),
+            "{html}"
+        );
         assert!(
             html.contains("name=\"color\" value=\"g\" checked"),
             "{html}"

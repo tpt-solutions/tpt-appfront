@@ -12,10 +12,11 @@
 //!   in a [`Router`]/[`RouteTable`], navigate, and assert the resolved tree
 //!   swaps and still contains the expected nodes.
 
+use std::rc::Rc;
+
 use tpt_appfront_core::reconcile::{reconcile_keys, ListEdit};
 use tpt_appfront_core::signal::{create_effect, Signal};
 use tpt_appfront_core::ui_tree::{NodeKind, UITree};
-use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Msg {
@@ -47,10 +48,13 @@ fn view(count: &Signal<i32>) -> UITree<Msg> {
 
 /// The reducer: what a click handler would do with a dispatched `Msg`.
 fn reduce(count: &Signal<i32>, msg: Msg) {
-    count.set(count.get() + match msg {
-        Msg::Increment => 1,
-        Msg::Decrement => -1,
-    });
+    count.set(
+        count.get()
+            + match msg {
+                Msg::Increment => 1,
+                Msg::Decrement => -1,
+            },
+    );
 }
 
 #[test]
@@ -128,8 +132,16 @@ fn removing_items_reconciles_as_removes_not_full_rebuild() {
     let old_keys: Vec<String> = (0..3).map(|i| format!("item-{i}")).collect();
     let new_keys: Vec<String> = (0..1).map(|i| format!("item-{i}")).collect();
     let diff = reconcile_keys(&old_keys, &new_keys);
-    assert_eq!(diff.removed, vec!["item-1".to_string(), "item-2".to_string()]);
-    assert_eq!(diff.edits[0], ListEdit::Keep { key: "item-0".to_string() });
+    assert_eq!(
+        diff.removed,
+        vec!["item-1".to_string(), "item-2".to_string()]
+    );
+    assert_eq!(
+        diff.edits[0],
+        ListEdit::Keep {
+            key: "item-0".to_string()
+        }
+    );
 }
 
 #[test]
@@ -143,10 +155,7 @@ fn signal_effect_rebuilds_view_on_click() {
         *current_clone.borrow_mut() = tree;
     });
 
-    assert!(matches!(
-        &current.borrow().kind,
-        NodeKind::Container { .. }
-    ));
+    assert!(matches!(&current.borrow().kind, NodeKind::Container { .. }));
 
     reduce(&count, Msg::Increment);
     let NodeKind::Container { children } = &current.borrow().kind else {

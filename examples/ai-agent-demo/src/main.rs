@@ -4,7 +4,9 @@
 //! via [`tpt_appfront_core::trigger_event`] — no browser, no canvas, headless.
 //! Also prints the JSON-LD / AI-Schema representation an AI agent hitting
 //! `GET /ai-schema.json` on `tpt-appfront-server` would receive.
-use tpt_appfront_core::{navigate_to, query_state, trigger_event, ContainerBuilder, Signal, UITree};
+use tpt_appfront_core::{
+    navigate_to, query_state, trigger_event, ContainerBuilder, Signal, UITree,
+};
 
 #[derive(Debug, Clone)]
 enum Msg {
@@ -94,9 +96,8 @@ fn main() {
         match agent_choose_action(&state, step) {
             Some(action) => {
                 let tasks_for_dispatch = tasks.clone();
-                let dispatched = trigger_event(&ui, &action, &|msg| {
-                    dispatch(&tasks_for_dispatch, msg)
-                });
+                let dispatched =
+                    trigger_event(&ui, &action, &|msg| dispatch(&tasks_for_dispatch, msg));
                 println!("  agent invoked `{action}` -> dispatched={dispatched}");
             }
             None => println!("  agent found no matching action, stopping"),

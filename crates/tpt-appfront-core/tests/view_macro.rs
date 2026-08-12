@@ -116,12 +116,31 @@ fn fully_static_view_is_flagged_static() {
             <Text>"static body"</Text>
         </Container>
     };
-    assert!(!ui.meta.is_dynamic, "static view must set is_dynamic = false");
+    assert!(
+        !ui.meta.is_dynamic,
+        "static view must set is_dynamic = false"
+    );
     assert_eq!(ui.meta.class.as_deref(), Some("page"));
     let NodeKind::Container { children } = root_kind(&ui) else {
         panic!("expected container");
     };
     assert_eq!(children.len(), 2);
+}
+
+#[test]
+fn negative_numeric_literal_is_flagged_static() {
+    // `level={-1}` parses as `Expr::Unary`, not `Expr::Lit`; it must still be
+    // treated as a literal so the subtree is hoisted into the static cache.
+    let ui: UITree<Msg> = view! {
+        <Container class={"page"}>
+            <Heading level={-1i8}>"Title"</Heading>
+            <Text>"static body"</Text>
+        </Container>
+    };
+    assert!(
+        !ui.meta.is_dynamic,
+        "negative numeric literal must not defeat static detection"
+    );
 }
 
 #[test]
@@ -132,7 +151,10 @@ fn dynamic_view_is_flagged_dynamic() {
             <Text>{ format!("n = {n}") }</Text>
         </Container>
     };
-    assert!(ui.meta.is_dynamic, "interpolated view must set is_dynamic = true");
+    assert!(
+        ui.meta.is_dynamic,
+        "interpolated view must set is_dynamic = true"
+    );
 }
 
 #[test]
@@ -245,11 +267,7 @@ fn two_way_binding_emits_on_input() {
                 children[0].meta.on_input.is_some(),
                 "two-way binding must set on_input"
             );
-            let produced = children[0]
-                .meta
-                .on_input
-                .as_ref()
-                .unwrap()("hello".to_string());
+            let produced = children[0].meta.on_input.as_ref().unwrap()("hello".to_string());
             assert_eq!(produced, Msg::Submit("hello".to_string()));
         }
         other => panic!("expected input, got {other:?}"),
@@ -344,7 +362,10 @@ fn control_flow_marks_view_dynamic() {
             {if flag { <Text>"x"</Text> }}
         </Container>
     };
-    assert!(ui.meta.is_dynamic, "control flow must set is_dynamic = true");
+    assert!(
+        ui.meta.is_dynamic,
+        "control flow must set is_dynamic = true"
+    );
 }
 
 #[test]
@@ -492,11 +513,7 @@ fn textarea_tag_builds_value_and_on_input() {
                 children[0].meta.on_input.is_some(),
                 "textarea two-way binding must set on_input"
             );
-            let produced = children[0]
-                .meta
-                .on_input
-                .as_ref()
-                .unwrap()("typed".to_string());
+            let produced = children[0].meta.on_input.as_ref().unwrap()("typed".to_string());
             assert_eq!(produced, Msg::Submit("typed".to_string()));
         }
         other => panic!("expected textarea, got {other:?}"),
@@ -614,8 +631,14 @@ fn custom_tag_sugar_expands_to_templates_component_call() {
     match &children[0].kind {
         NodeKind::Container { children: inner } => {
             // login_form builds a heading + 2 inputs + a submit button.
-            assert!(inner.len() >= 3, "expected login_form's children, got {inner:?}");
-            assert!(matches!(inner.last().unwrap().kind, NodeKind::Button { .. }));
+            assert!(
+                inner.len() >= 3,
+                "expected login_form's children, got {inner:?}"
+            );
+            assert!(matches!(
+                inner.last().unwrap().kind,
+                NodeKind::Button { .. }
+            ));
         }
         other => panic!("expected composed container from custom tag, got {other:?}"),
     }
@@ -655,5 +678,3 @@ fn memoized_component_reuses_tree_when_props_equal() {
         other => panic!("expected text, got {other:?}"),
     }
 }
-
-

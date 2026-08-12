@@ -7,9 +7,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use tpt_appfront_core::UITree;
+use tpt_appfront_core::{ContainerBuilder, UITree};
 use tpt_appfront_server::SmartRouterBuilder;
-use tpt_appfront_core::ContainerBuilder;
 
 type Msg = ();
 
@@ -99,7 +98,10 @@ fn googlebot_gets_semantic_html() {
     let url = guard.url("/");
 
     let resp = ureq::get(&url)
-        .set("User-Agent", "Googlebot/2.1 (+http://www.google.com/bot.html)")
+        .set(
+            "User-Agent",
+            "Googlebot/2.1 (+http://www.google.com/bot.html)",
+        )
         .call()
         .unwrap();
 

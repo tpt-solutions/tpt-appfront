@@ -35,12 +35,21 @@
 use proc_macro2::{Delimiter, Ident, Span, TokenStream, TokenTree};
 use quote::{format_ident, quote};
 use syn::parse::Parser;
-use syn::{Error, Expr, ExprLit, Lit, Pat};
+use syn::{Error, Expr, ExprLit, Lit, Pat, UnOp};
 
 /// Node types the macro understands, with their allowed/required attributes.
 const TAGS: &[&str] = &[
-    "Container", "Heading", "Text", "Button", "Input", "Textarea", "Checkbox", "Select", "Radio",
-    "List", "DataGrid",
+    "Container",
+    "Heading",
+    "Text",
+    "Button",
+    "Input",
+    "Textarea",
+    "Checkbox",
+    "Select",
+    "Radio",
+    "List",
+    "DataGrid",
 ];
 
 const ALLOWED: &[(&str, &[&str], &[&str])] = &[
@@ -48,11 +57,7 @@ const ALLOWED: &[(&str, &[&str], &[&str])] = &[
     ("Heading", &["level", "class", "key"], &["level"]),
     ("Text", &["class", "key"], &[]),
     ("Button", &["on_click", "class", "key"], &["on_click"]),
-    (
-        "Input",
-        &["value", "class", "key", "on_input"],
-        &["value"],
-    ),
+    ("Input", &["value", "class", "key", "on_input"], &["value"]),
     (
         "Textarea",
         &["value", "class", "key", "on_input"],
@@ -271,7 +276,12 @@ fn parse_node(cur: &mut Cursor) -> Result<Node, Error> {
             Some(other) => {
                 return Err(Error::new(other.span(), "unexpected token inside tag"));
             }
-            None => return Err(Error::new(Span::call_site(), "unexpected end of input in tag")),
+            None => {
+                return Err(Error::new(
+                    Span::call_site(),
+                    "unexpected end of input in tag",
+                ))
+            }
         }
     }
 }
@@ -302,14 +312,14 @@ fn parse_children(
                     return Ok(children);
                 }
                 return Err(match &close {
-                    CloseMode::Tag(t) => Error::new(
-                        t.span(),
-                        format!("missing closing `</{}>`", t),
-                    ),
-                    CloseMode::Brace => {
-                        Error::new(Span::call_site(), "missing closing `}` in control-flow block")
+                    CloseMode::Tag(t) => {
+                        Error::new(t.span(), format!("missing closing `</{}>`", t))
                     }
-                })
+                    CloseMode::Brace => Error::new(
+                        Span::call_site(),
+                        "missing closing `}` in control-flow block",
+                    ),
+                });
             }
             Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
                 // Closing tag if the next token is `/`.
@@ -330,17 +340,13 @@ fn parse_children(
                 let node = parse_node(cur)?;
                 children.push(Child::Node(node));
             }
-            Some(TokenTree::Punct(p)) if p.as_char() == '}' => {
-                match &close {
-                    CloseMode::Brace => {
-                        cur.next();
-                        return Ok(children);
-                    }
-                    CloseMode::Tag(_) => {
-                        return Err(Error::new(p.span(), "unexpected `}`"))
-                    }
+            Some(TokenTree::Punct(p)) if p.as_char() == '}' => match &close {
+                CloseMode::Brace => {
+                    cur.next();
+                    return Ok(children);
                 }
-            }
+                CloseMode::Tag(_) => return Err(Error::new(p.span(), "unexpected `}`")),
+            },
             Some(TokenTree::Literal(l)) => {
                 let l = l.clone();
                 cur.next();
@@ -348,7 +354,10 @@ fn parse_children(
                 let s = match &lit {
                     Lit::Str(s) => s.value(),
                     other => {
-                        return Err(Error::new(other.span(), "expected a string literal as text"));
+                        return Err(Error::new(
+                            other.span(),
+                            "expected a string literal as text",
+                        ));
                     }
                 };
                 let lit_str = syn::LitStr::new(&s, l.span());
@@ -394,14 +403,22 @@ fn parse_children(
 /// `{for pat in iter { ... }}` block into a [`Control`] tree.
 fn parse_control(stream: TokenStream, span: Span) -> Result<Control, Error> {
     let toks: Vec<TokenTree> = stream.into_iter().collect();
-    let mut cur = Cursor { toks: &toks, pos: 0 };
+    let mut cur = Cursor {
+        toks: &toks,
+        pos: 0,
+    };
 
     let first = cur
         .peek()
         .ok_or_else(|| Error::new(span, "empty control-flow block"))?;
     let kw = match first {
         TokenTree::Ident(i) => i.to_string(),
-        _ => return Err(Error::new(span, "control-flow block must start with `if` or `for`")),
+        _ => {
+            return Err(Error::new(
+                span,
+                "control-flow block must start with `if` or `for`",
+            ))
+        }
     };
     cur.next();
 
@@ -413,7 +430,9 @@ fn parse_control(stream: TokenStream, span: Span) -> Result<Control, Error> {
                 match cur.next() {
                     Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => break g,
                     Some(t) => cond_toks.push(t),
-                    None => return Err(Error::new(span, "expected `{` block after `if` condition")),
+                    None => {
+                        return Err(Error::new(span, "expected `{` block after `if` condition"))
+                    }
                 }
             };
             let cond: Expr = syn::parse2(cond_toks.into_iter().collect())
@@ -474,7 +493,9 @@ fn parse_control(stream: TokenStream, span: Span) -> Result<Control, Error> {
                 match cur.next() {
                     Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => break g,
                     Some(t) => iter_toks.push(t),
-                    None => return Err(Error::new(span, "expected `{` block after `for` iterator")),
+                    None => {
+                        return Err(Error::new(span, "expected `{` block after `for` iterator"))
+                    }
                 }
             };
             let iter: Expr = syn::parse2(iter_toks.into_iter().collect())
@@ -483,7 +504,10 @@ fn parse_control(stream: TokenStream, span: Span) -> Result<Control, Error> {
 
             Ok(Control::For { pat, iter, body })
         }
-        other => Err(Error::new(span, format!("unknown control-flow keyword `{other}`"))),
+        other => Err(Error::new(
+            span,
+            format!("unknown control-flow keyword `{other}`"),
+        )),
     }
 }
 
@@ -517,7 +541,11 @@ fn consume_closing(cur: &mut Cursor, close_tag: &Ident) -> Result<(), Error> {
 // ---------------------------------------------------------------------------
 
 fn allowed_for(tag: &str) -> &'static [&'static str] {
-    ALLOWED.iter().find(|(t, _, _)| *t == tag).map(|(_, a, _)| *a).unwrap_or(&[])
+    ALLOWED
+        .iter()
+        .find(|(t, _, _)| *t == tag)
+        .map(|(_, a, _)| *a)
+        .unwrap_or(&[])
 }
 
 fn required_for(tag: &str) -> &'static [&'static str] {
@@ -529,10 +557,7 @@ fn required_for(tag: &str) -> &'static [&'static str] {
 }
 
 fn attr_expr<'a>(node: &'a Node, name: &str) -> Option<&'a Expr> {
-    node.attrs
-        .iter()
-        .find(|(n, _)| n == name)
-        .map(|(_, e)| e)
+    node.attrs.iter().find(|(n, _)| n == name).map(|(_, e)| e)
 }
 
 fn single_text(node: &Node) -> Result<&Expr, Error> {
@@ -587,11 +612,17 @@ fn node_is_static(node: &Node) -> bool {
 }
 
 /// A literal expression is one the macro can prove is constant at compile time:
-/// a string literal or a numeric/char literal (anything in `Expr::Lit` whose
-/// inner `Lit` is not a `bool`/negative-number ambiguity issue). Brace-group
-/// expressions (`{ count.get() }`) are dynamic and return `false`.
+/// a string literal or a numeric/char literal (anything in `Expr::Lit`). A unary
+/// negative of a numeric literal (e.g. `level={-1}`) parses as `Expr::Unary`
+/// and is also treated as a literal, so negative numeric literals aren't
+/// wrongly excluded from static-tree caching. Brace-group expressions
+/// (`{ count.get() }`) are dynamic and return `false`.
 fn is_literal_expr(e: &Expr) -> bool {
-    matches!(e, Expr::Lit(_))
+    match e {
+        Expr::Lit(_) => true,
+        Expr::Unary(un) if matches!(un.op, UnOp::Neg(_)) => matches!(*un.expr, Expr::Lit(_)),
+        _ => false,
+    }
 }
 
 /// A custom-component tag is one that starts with an ASCII uppercase letter
@@ -692,7 +723,10 @@ fn gen_node_stmt(
         }
         let fn_name = format_ident!("{}", to_snake_case(&tag));
         let cfg_ident = format_ident!("{}Config", tag);
-        let fields = node.attrs.iter().map(|(name, expr)| quote! { #name: (#expr) });
+        let fields = node
+            .attrs
+            .iter()
+            .map(|(name, expr)| quote! { #name: (#expr) });
         return Ok(quote! {
             #parent.with(tpt_appfront_templates::#fn_name(&tpt_appfront_templates::#cfg_ident { #(#fields),* }));
         });
@@ -911,7 +945,11 @@ fn gen_children(
                         }
                     });
                 }
-                Control::For { ref pat, ref iter, ref body } => {
+                Control::For {
+                    ref pat,
+                    ref iter,
+                    ref body,
+                } => {
                     let body_stmts = gen_children(body, parent, parent_static, id)?;
                     out.push(quote! {
                         for #pat in (#iter) {
@@ -927,7 +965,10 @@ fn gen_children(
 
 pub fn expand(input: TokenStream) -> Result<TokenStream, Error> {
     let toks: Vec<TokenTree> = input.into_iter().collect();
-    let mut cur = Cursor { toks: &toks, pos: 0 };
+    let mut cur = Cursor {
+        toks: &toks,
+        pos: 0,
+    };
 
     let root = parse_node(&mut cur)?;
     if !cur.at_end() {
@@ -950,10 +991,12 @@ pub fn expand(input: TokenStream) -> Result<TokenStream, Error> {
     // (see `chain_suffix`), so e.g. `class={"page"}` (a `&str`) works here too.
     let mut root_stmts = TokenStream::new();
     if let Some(e) = attr_expr(&root, "class") {
-        root_stmts.extend(quote! { __ui.meta.class = Some(::std::string::ToString::to_string(&(#e))); });
+        root_stmts
+            .extend(quote! { __ui.meta.class = Some(::std::string::ToString::to_string(&(#e))); });
     }
     if let Some(e) = attr_expr(&root, "key") {
-        root_stmts.extend(quote! { __ui.meta.key = Some(::std::string::ToString::to_string(&(#e))); });
+        root_stmts
+            .extend(quote! { __ui.meta.key = Some(::std::string::ToString::to_string(&(#e))); });
     }
     // `is_dynamic` is now set precisely by the macro (it was a heuristic flag
     // before): `false` when the entire `view!` is purely static, `true` when

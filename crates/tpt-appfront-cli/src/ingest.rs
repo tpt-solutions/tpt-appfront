@@ -8,9 +8,8 @@
 //! HTML is just an empty shell `<div>`); feed this command a rendered DOM
 //! snapshot instead.
 
-use scraper::{Html, Selector};
-
 use anyhow::Context;
+use scraper::{Html, Selector};
 
 /// Ingests `input_html` (a string of HTML markup) and returns a `view!` source
 /// skeleton. `dropped` (if `Some`) receives a human-readable summary of any
@@ -40,9 +39,7 @@ pub fn ingest(input_html: &str, dropped: &mut Vec<String>) -> String {
         }
     }
 
-    format!(
-        "tpt_appfront_core::view! {{\n    <Container>\n{body}    </Container>\n}}\n"
-    )
+    format!("tpt_appfront_core::view! {{\n    <Container>\n{body}    </Container>\n}}\n")
 }
 
 /// Maps a single HTML element to a `view!` node line (indented two levels).
@@ -76,7 +73,10 @@ fn element_to_view(
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
             let level = tag[1..].parse::<u8>().unwrap_or(1);
             (
-                format!("<Heading level={{{level}u8}}{} >", class.unwrap_or_default()),
+                format!(
+                    "<Heading level={{{level}u8}}{} >",
+                    class.unwrap_or_default()
+                ),
                 "</Heading>",
                 false,
             )
@@ -123,10 +123,16 @@ fn element_to_view(
             "",
             true,
         ),
-        "ul" | "ol" => (format!("<List{}>", class.unwrap_or_default()), "</List>", false),
-        "table" => {
-            (format!("<DataGrid{} />", class.unwrap_or_default()), "", true)
-        }
+        "ul" | "ol" => (
+            format!("<List{}>", class.unwrap_or_default()),
+            "</List>",
+            false,
+        ),
+        "table" => (
+            format!("<DataGrid{} />", class.unwrap_or_default()),
+            "",
+            true,
+        ),
         "a" => {
             let href = el.value().attr("href").unwrap_or("#");
             (
@@ -192,8 +198,8 @@ fn indent(s: &str, prefix: &str) -> String {
 /// Reads `path`, ingests it, writes the skeleton to `out` (or stdout), and
 /// reports dropped/unmapped items to stderr.
 pub fn ingest_file(path: &std::path::Path, out: Option<&std::path::Path>) -> anyhow::Result<()> {
-    let html = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let html =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut dropped = Vec::new();
     let skeleton = ingest(&html, &mut dropped);
 

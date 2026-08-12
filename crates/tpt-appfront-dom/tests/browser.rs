@@ -11,9 +11,10 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use std::rc::Rc;
+
 use tpt_appfront_core::{create_effect, Signal, UITree};
 use tpt_appfront_dom::{mount, reactive_text};
-use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 use web_sys::{Document, Element};

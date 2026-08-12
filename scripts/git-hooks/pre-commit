@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Pre-commit hook for tpt-appfront.
+#
+# Installed by `scripts/install-hooks.sh` (which points git at `scripts/git-hooks`
+# via `core.hooksPath`), or by `tpt-appfront doctor --fix`. Pure bash so it works
+# for Rust devs without a Python `pre-commit` install.
+#
+# Runs the same checks CI enforces: formatting, clippy, and the native test suite.
+# A non-zero exit blocks the commit so formatting/lint regressions can't land.
+
+set -euo pipefail
+
+echo "[pre-commit] cargo fmt --all --check"
+if ! cargo fmt --all --check; then
+    echo "[pre-commit] formatting drift — run \`cargo fmt --all\` (or \`just fmt\`) and re-stage." >&2
+    exit 1
+fi
+
+echo "[pre-commit] cargo clippy --workspace --all-targets --exclude tpt-appfront-webview -- -D warnings"
+if ! cargo clippy --workspace --all-targets --exclude tpt-appfront-webview -- -D warnings; then
+    echo "[pre-commit] clippy failed — fix the warnings above before committing." >&2
+    exit 1
+fi
+
+echo "[pre-commit] cargo test --workspace --exclude tpt-appfront-webview"
+if ! cargo test --workspace --exclude tpt-appfront-webview; then
+    echo "[pre-commit] tests failed — fix them before committing." >&2
+    exit 1
+fi
+
+echo "[pre-commit] ok"

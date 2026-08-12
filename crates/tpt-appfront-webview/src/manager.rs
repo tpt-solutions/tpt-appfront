@@ -5,6 +5,20 @@
 //!
 //! This is the Phase 1 consolidation of the previous single-window [`crate::run`].
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use anyhow::Result;
+use serde_json::json;
+use wry::application::dpi::LogicalSize;
+use wry::application::event::{Event, WindowEvent};
+use wry::application::event_loop::{ControlFlow, EventLoop};
+use wry::application::window::WindowBuilder;
+use wry::http::{Request, Response};
+use wry::webview::{FileDropEvent, WebView, WebViewBuilder};
+
 use crate::clipboard::{self, Clipboard};
 use crate::crash::{self, CrashReporter};
 use crate::deeplink::{self, DeepLinkDispatcher};
@@ -15,24 +29,8 @@ use crate::notify::{self, notify_capability};
 use crate::secret::{self, SecretError};
 use crate::shortcut::{self, ShortcutRegistry};
 use crate::sidecar::{LogSink, SidecarConfig, SidecarSupervisor};
-use crate::single_instance;
 use crate::webrtc::{self, MediaKind};
-use crate::window_state;
-use crate::{Acl, WebviewOptions};
-
-use anyhow::Result;
-use serde_json::json;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::rc::Rc;
-
-use wry::application::dpi::LogicalSize;
-use wry::application::event::{Event, WindowEvent};
-use wry::application::event_loop::{ControlFlow, EventLoop};
-use wry::application::window::WindowBuilder;
-use wry::http::{Request, Response};
-use wry::webview::{FileDropEvent, WebView, WebViewBuilder};
+use crate::{single_instance, window_state, Acl, WebviewOptions};
 
 /// Configuration for a single window in the app.
 #[derive(Clone)]
@@ -78,6 +76,7 @@ pub struct AppBuilder {
     crash_reporter: Option<CrashReporter>,
     log_sink: ArcLogSink,
     persisted_state: bool,
+    on_ipc_rejection: Option<std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>>,
 }
 
 type ArcLogSink = std::sync::Arc<dyn LogSink>;
@@ -99,6 +98,7 @@ impl AppBuilder {
             crash_reporter: None,
             log_sink: std::sync::Arc::new(UnifiedLogSink),
             persisted_state: true,
+            on_ipc_rejection: None,
         }
     }
 
@@ -163,6 +163,18 @@ impl AppBuilder {
         self
     }
 
+    /// Sets the host-side rejection hook invoked whenever an IPC message is
+    /// rejected or fails (oversized, malformed, not grantable by the ACL,
+    /// rate-limited, or the app `on_command` errors). Mirrors
+    /// [`crate::WebviewOptions::on_ipc_rejection`]; defaults to `None`.
+    pub fn with_ipc_rejection(
+        mut self,
+        hook: std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>,
+    ) -> Self {
+        self.on_ipc_rejection = Some(hook);
+        self
+    }
+
     /// Merges standard built-in capabilities (dialog/notify/clipboard/media/
     /// secret) into the ACL so the built-in actions resolve. Call after
     /// [`AppBuilder::with_acl`] if you want them alongside custom grants.
@@ -216,8 +228,10 @@ impl AppBuilder {
         if let (Some(scheme), Some(disp)) = (&self.deeplink_scheme, &self.deeplink_dispatcher) {
             let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("app"));
             if let Err(e) = deeplink::register_scheme(scheme, &exe) {
-                self.log_sink
-                    .emit(crate::sidecar::Stream::Stderr, &format!("deeplink register: {e}"));
+                self.log_sink.emit(
+                    crate::sidecar::Stream::Stderr,
+                    &format!("deeplink register: {e}"),
+                );
             }
             // Surface a launch-time deep link from argv (if any).
             for arg in std::env::args() {
@@ -262,6 +276,7 @@ impl AppBuilder {
         let log_sink = self.log_sink.clone();
         let on_command = std::rc::Rc::new(on_command);
         let clipboard = std::sync::Arc::new(Clipboard::new());
+        let on_reject = self.on_ipc_rejection.clone();
 
         let mut built_windows = Vec::new();
         for cfg in &self.windows {
@@ -276,7 +291,11 @@ impl AppBuilder {
             }
             wb = wb.with_inner_size(LogicalSize::new(
                 if geo.width > 0 { geo.width } else { cfg.width },
-                if geo.height > 0 { geo.height } else { cfg.height },
+                if geo.height > 0 {
+                    geo.height
+                } else {
+                    cfg.height
+                },
             ));
             let window = wb.build(&event_loop)?;
 
@@ -288,6 +307,7 @@ impl AppBuilder {
             let log_sink_c = log_sink.clone();
             let clipboard_c = clipboard.clone();
             let registry_c = registry.clone();
+            let on_reject_c = on_reject.clone();
             let window_id = cfg.id.clone();
 
             let builder = WebViewBuilder::new(window)?
@@ -297,30 +317,20 @@ impl AppBuilder {
                 })
                 .with_file_drop_handler({
                     let sender = dragdrop_disp.sender();
-                    move |_window, event| {
-                        match event {
-                            FileDropEvent::Hovered(paths) => {
-                                sender.send(dragdrop::DragDropEvent::Hovered(
-                                    paths,
-                                    0.0,
-                                    0.0,
-                                ));
-                                true
-                            }
-                            FileDropEvent::Dropped(paths) => {
-                                sender.send(dragdrop::DragDropEvent::Dropped(
-                                    paths,
-                                    0.0,
-                                    0.0,
-                                ));
-                                true
-                            }
-                            FileDropEvent::Cancelled => {
-                                sender.send(dragdrop::DragDropEvent::Cancelled);
-                                true
-                            }
-                            _ => true,
+                    move |_window, event| match event {
+                        FileDropEvent::Hovered(paths) => {
+                            sender.send(dragdrop::DragDropEvent::Hovered(paths, 0.0, 0.0));
+                            true
                         }
+                        FileDropEvent::Dropped(paths) => {
+                            sender.send(dragdrop::DragDropEvent::Dropped(paths, 0.0, 0.0));
+                            true
+                        }
+                        FileDropEvent::Cancelled => {
+                            sender.send(dragdrop::DragDropEvent::Cancelled);
+                            true
+                        }
+                        _ => true,
                     }
                 })
                 .with_ipc_handler(move |_window, message| {
@@ -333,6 +343,7 @@ impl AppBuilder {
                         &clipboard_c,
                         &registry_c,
                         &window_id,
+                        &on_reject_c,
                         &message,
                     );
                 })
@@ -425,6 +436,7 @@ fn dispatch_ipc(
     clipboard: &std::sync::Arc<Clipboard>,
     registry: &std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, WebView>>>,
     window_id: &str,
+    on_reject: &Option<std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>>,
     message: &str,
 ) {
     let parsed: serde_json::Value = match serde_json::from_str(message) {
@@ -434,6 +446,11 @@ fn dispatch_ipc(
                 crate::sidecar::Stream::Stderr,
                 &format!("[appfront-webview] malformed IPC: {e}"),
             );
+            if let Some(h) = on_reject {
+                h(crate::IpcRejection::Malformed {
+                    error: e.to_string(),
+                });
+            }
             return;
         }
     };
@@ -444,10 +461,16 @@ fn dispatch_ipc(
                 crate::sidecar::Stream::Stderr,
                 "[appfront-webview] IPC without `action`",
             );
+            if let Some(h) = on_reject {
+                h(crate::IpcRejection::MissingAction);
+            }
             return;
         }
     };
-    let raw_params = parsed.get("params").cloned().unwrap_or(serde_json::Value::Null);
+    let raw_params = parsed
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let request_id = parsed.get("requestId").cloned();
 
     let validated = match acl.validate(&action, &raw_params) {
@@ -457,7 +480,18 @@ fn dispatch_ipc(
                 crate::sidecar::Stream::Stderr,
                 &format!("[appfront-webview] rejected `{action}`: {e:?}"),
             );
-            reply(registry, window_id, request_id, json!({ "error": format!("{e:?}") }));
+            if let Some(h) = on_reject {
+                h(crate::IpcRejection::ActionDenied {
+                    action,
+                    reason: format!("{e:?}"),
+                });
+            }
+            reply(
+                registry,
+                window_id,
+                request_id,
+                json!({ "error": format!("{e:?}") }),
+            );
             return;
         }
     };
@@ -467,7 +501,15 @@ fn dispatch_ipc(
             crate::sidecar::Stream::Stderr,
             &format!("[appfront-webview] rate limit exceeded for `{action}`"),
         );
-        reply(registry, window_id, request_id, json!({ "error": "rate limited" }));
+        if let Some(h) = on_reject {
+            h(crate::IpcRejection::RateLimited { action });
+        }
+        reply(
+            registry,
+            window_id,
+            request_id,
+            json!({ "error": "rate limited" }),
+        );
         return;
     }
 
@@ -475,10 +517,18 @@ fn dispatch_ipc(
     if let Some(r) = secret::handle_secret_action(app_id, acl, &action, &validated) {
         match r {
             Ok(v) => reply(registry, window_id, request_id, v),
-            Err(SecretError::NotPermitted) => {
-                reply(registry, window_id, request_id, json!({ "error": "not permitted" }))
-            }
-            Err(e) => reply(registry, window_id, request_id, json!({ "error": e.to_string() })),
+            Err(SecretError::NotPermitted) => reply(
+                registry,
+                window_id,
+                request_id,
+                json!({ "error": "not permitted" }),
+            ),
+            Err(e) => reply(
+                registry,
+                window_id,
+                request_id,
+                json!({ "error": e.to_string() }),
+            ),
         }
         return;
     }
@@ -512,6 +562,12 @@ fn dispatch_ipc(
             crate::sidecar::Stream::Stderr,
             &format!("[appfront-webview] command `{action}` failed: {e}"),
         );
+        if let Some(h) = on_reject {
+            h(crate::IpcRejection::DispatchError {
+                action,
+                error: e,
+            });
+        }
     }
 }
 

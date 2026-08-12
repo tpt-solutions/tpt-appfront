@@ -61,7 +61,10 @@ pub fn handle_media_action(
         Some(c) => c,
         None => return Some(json!({ "granted": false, "reason": "no capability" })),
     };
-    let kind_str = params.get("kind").and_then(|v| v.as_str()).unwrap_or("camera");
+    let kind_str = params
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("camera");
     let kind = match MediaKind::parse(kind_str) {
         Some(k) => k,
         None => return Some(json!({ "granted": false, "reason": "unknown kind" })),
@@ -77,10 +80,7 @@ pub fn handle_media_action(
             spec.default
                 .as_ref()
                 .and_then(|d| d.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .any(|v| v.as_str() == Some(kind.as_param()))
-                })
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some(kind.as_param())))
                 .unwrap_or(true) // no enumerated list => allow any parsed kind
         })
         .unwrap_or(true);

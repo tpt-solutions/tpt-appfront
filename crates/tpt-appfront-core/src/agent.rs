@@ -10,11 +10,11 @@
 //! | [`trigger_event`] | Dispatch an event by `ai_action` name |
 //! | [`current_route`] | Return the current route path |
 
-use serde::Serialize;
 use std::cell::RefCell;
 
+use serde::Serialize;
 use crate::signal::Signal;
-use crate::ui_tree::{NodeKind, UITree};
+use crate::ui_tree::{MediaType, NodeKind, UITree};
 
 /// Structured snapshot of the UI tree designed for LLM / AI agent consumption.
 ///
@@ -229,6 +229,43 @@ fn walk<Msg>(
                 description: None,
             });
         }
+        NodeKind::Image { alt, .. } => {
+            data.push(ElementSummary {
+                id,
+                kind: "image".into(),
+                label: Some(alt.clone()),
+                value: None,
+                action: None,
+                params: Vec::new(),
+                description: None,
+            });
+        }
+        NodeKind::Link { text, href, .. } => {
+            data.push(ElementSummary {
+                id,
+                kind: "link".into(),
+                label: Some(text.clone()),
+                value: Some(href.clone()),
+                action: None,
+                params: Vec::new(),
+                description: None,
+            });
+        }
+        NodeKind::Media { alt, media_type, .. } => {
+            data.push(ElementSummary {
+                id,
+                kind: match media_type {
+                    MediaType::Audio => "audio",
+                    MediaType::Video => "video",
+                }
+                .into(),
+                label: Some(alt.clone()),
+                value: None,
+                action: None,
+                params: Vec::new(),
+                description: None,
+            });
+        }
         NodeKind::Portal { content, .. } => {
             // Surface the portal's content so agents observe its elements.
             walk(content, interactive, data);
@@ -392,8 +429,9 @@ mod tests {
 
     #[test]
     fn route_signal_is_reactive() {
-        use crate::signal::create_effect;
         use std::rc::Rc;
+
+        use crate::signal::create_effect;
 
         let seen = Rc::new(std::cell::RefCell::new(Vec::new()));
         let route = route_signal();

@@ -85,7 +85,9 @@ impl eframe::App for NodeGraphApp {
         egui::CentralPanel::default().show(ui, |ui| {
             let screen_rect = ui.clip_rect();
             let painter = ui.painter();
-            let pointer = ui.input(|i| i.pointer.interact_pos()).unwrap_or(screen_rect.min);
+            let pointer = ui
+                .input(|i| i.pointer.interact_pos())
+                .unwrap_or(screen_rect.min);
             let primary_down = ui.input(|i| i.pointer.primary_down());
             let primary_pressed = ui.input(|i| i.pointer.primary_pressed());
             let released = ui.input(|i| i.pointer.any_released());

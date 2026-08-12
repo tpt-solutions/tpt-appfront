@@ -16,7 +16,10 @@ pub fn open_dialog(params: &serde_json::Value) -> serde_json::Value {
         .get("title")
         .and_then(|v| v.as_str())
         .unwrap_or("Open");
-    let multiple = params.get("multiple").and_then(|v| v.as_bool()).unwrap_or(false);
+    let multiple = params
+        .get("multiple")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let pick_dir = params.get("dir").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let mut picker = rfd::FileDialog::new().set_title(title);
@@ -102,16 +105,52 @@ pub fn dialog_capabilities() -> Vec<crate::Capability> {
     use crate::{Capability, ParamKind, ParamSpec};
     let params = |_required: bool| {
         vec![
-            ParamSpec { name: "title".into(), required: false, kind: ParamKind::String, default: None },
-            ParamSpec { name: "multiple".into(), required: false, kind: ParamKind::Boolean, default: None },
-            ParamSpec { name: "dir".into(), required: false, kind: ParamKind::Boolean, default: None },
-            ParamSpec { name: "filter_name".into(), required: false, kind: ParamKind::String, default: None },
-            ParamSpec { name: "filter_ext".into(), required: false, kind: ParamKind::Array, default: None },
-            ParamSpec { name: "file_name".into(), required: false, kind: ParamKind::String, default: None },
+            ParamSpec {
+                name: "title".into(),
+                required: false,
+                kind: ParamKind::String,
+                default: None,
+            },
+            ParamSpec {
+                name: "multiple".into(),
+                required: false,
+                kind: ParamKind::Boolean,
+                default: None,
+            },
+            ParamSpec {
+                name: "dir".into(),
+                required: false,
+                kind: ParamKind::Boolean,
+                default: None,
+            },
+            ParamSpec {
+                name: "filter_name".into(),
+                required: false,
+                kind: ParamKind::String,
+                default: None,
+            },
+            ParamSpec {
+                name: "filter_ext".into(),
+                required: false,
+                kind: ParamKind::Array,
+                default: None,
+            },
+            ParamSpec {
+                name: "file_name".into(),
+                required: false,
+                kind: ParamKind::String,
+                default: None,
+            },
         ]
     };
     vec![
-        Capability { action: "dialog.open".into(), params: params(false) },
-        Capability { action: "dialog.save".into(), params: params(false) },
+        Capability {
+            action: "dialog.open".into(),
+            params: params(false),
+        },
+        Capability {
+            action: "dialog.save".into(),
+            params: params(false),
+        },
     ]
 }

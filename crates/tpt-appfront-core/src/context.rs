@@ -21,11 +21,12 @@
 //! build of the tree (builder closures run nested on the call stack, which is
 //! exactly the scope a provider should cover).
 
-use crate::signal::Signal;
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use crate::signal::Signal;
 
 /// A piece of shared, reactive state that can be provided to a subtree and
 /// consumed by any descendant.

@@ -2,17 +2,17 @@
 
 use std::sync::Arc;
 
-use tpt_appfront_core::HydrationPayload;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
+use tpt_appfront_core::HydrationPayload;
 
 use crate::client_kind::{self, ClientKind};
-use crate::pwa::{manifest, manifest_link, registration_script, service_worker, update_available_script};
-use crate::router::caching;
+use crate::pwa::{
+    manifest, manifest_link, registration_script, service_worker, update_available_script,
+};
 use crate::router::command::{Command, CommandResponse};
-use crate::router::csrf;
-use crate::router::SmartRouter;
+use crate::router::{caching, csrf, SmartRouter};
 
 /// Query parameters accepted by every route.
 #[derive(serde::Deserialize, Default)]
@@ -53,8 +53,10 @@ fn csp_response(mut resp: Response, csp: &str, csrf: bool) -> Response {
     }
     if csrf {
         let token = csrf::generate_token();
-        resp.headers_mut()
-            .insert(axum::http::header::SET_COOKIE, csrf::set_cookie_header(&token));
+        resp.headers_mut().insert(
+            axum::http::header::SET_COOKIE,
+            csrf::set_cookie_header(&token),
+        );
     }
     resp
 }
@@ -68,7 +70,12 @@ where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     let ua = headers.get("user-agent").and_then(|v| v.to_str().ok());
-    let kind = client_kind::detect(ua, query.client.as_deref());
+    let extra_ai = state
+        .extra_ai_agents
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>();
+    let kind = client_kind::detect_with(ua, query.client.as_deref(), &extra_ai);
 
     match kind {
         ClientKind::Human => human_shell(&state).await.into_response(),
@@ -154,9 +161,7 @@ where
     social_opengraph(&state, &headers).await
 }
 
-pub(crate) async fn pwa_service_worker<Msg>(
-    state: State<Arc<SmartRouter<Msg>>>,
-) -> Response
+pub(crate) async fn pwa_service_worker<Msg>(state: State<Arc<SmartRouter<Msg>>>) -> Response
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
@@ -171,16 +176,17 @@ where
     }
 }
 
-pub(crate) async fn pwa_manifest<Msg>(
-    state: State<Arc<SmartRouter<Msg>>>,
-) -> Response
+pub(crate) async fn pwa_manifest<Msg>(state: State<Arc<SmartRouter<Msg>>>) -> Response
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     match &state.pwa {
         Some(cfg) => (
             StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/manifest+json")],
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/manifest+json",
+            )],
             manifest(cfg),
         )
             .into_response(),
@@ -272,20 +278,13 @@ init().catch(e => console.error('appfront init failed', e));
 /// input unchanged otherwise. The replacements are idempotent for the shell
 /// shapes produced above. `nonce` is forwarded to the registration script so
 /// its inline `<script>` satisfies the document CSP.
-fn inject_pwa<Msg>(
-    mut page: String,
-    state: &Arc<SmartRouter<Msg>>,
-    nonce: &str,
-) -> String {
+fn inject_pwa<Msg>(mut page: String, state: &Arc<SmartRouter<Msg>>, nonce: &str) -> String {
     if state.pwa.is_none() {
         return page;
     }
     let cfg = state.pwa.as_ref().unwrap();
     if let Some(head_end) = page.find("</head>") {
-        page.insert_str(
-            head_end,
-            &format!("\n    {}", manifest_link()),
-        );
+        page.insert_str(head_end, &format!("\n    {}", manifest_link()));
     }
     if let Some(body_end) = page.rfind("</body>") {
         page.insert_str(

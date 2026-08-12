@@ -6,7 +6,11 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-fn start_server() -> (std::process::Child, BufReader<std::process::ChildStdout>, std::process::ChildStdin) {
+fn start_server() -> (
+    std::process::Child,
+    BufReader<std::process::ChildStdout>,
+    std::process::ChildStdin,
+) {
     let exe = env!("CARGO_BIN_EXE_tpt-appfront-mcp-e2e-helper");
     let mut child = Command::new(exe)
         .stdin(Stdio::piped())
@@ -28,14 +32,20 @@ fn stdio_transport_answers_initialize_and_tools_list() {
         stdin.flush().unwrap();
     };
 
-    write_line(&mut stdin, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    write_line(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+    );
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
     assert!(line.contains("\"id\":1"));
     assert!(line.contains("\"protocolVersion\":\"2024-11-05\""));
     assert!(line.contains("\"name\":\"mcp-e2e\""));
 
-    write_line(&mut stdin, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+    write_line(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+    );
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
     assert!(line.contains("\"name\":\"query_state\""));
@@ -52,8 +62,14 @@ fn stdio_transport_answers_initialize_and_tools_list() {
     assert!(line.contains("increment"));
 
     // A notification gets no response line; the next request still answers.
-    write_line(&mut stdin, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
-    write_line(&mut stdin, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_state","arguments":{}}}"#);
+    write_line(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+    );
+    write_line(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_state","arguments":{}}}"#,
+    );
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
     assert!(line.contains("\"id\":4"));
@@ -66,7 +82,9 @@ fn stdio_transport_answers_initialize_and_tools_list() {
 #[test]
 fn stdio_transport_unknown_method_returns_error() {
     let (mut child, mut stdout, mut stdin) = start_server();
-    stdin.write_all(r#"{"jsonrpc":"2.0","id":9,"method":"frobnicate"}"#.as_bytes()).unwrap();
+    stdin
+        .write_all(r#"{"jsonrpc":"2.0","id":9,"method":"frobnicate"}"#.as_bytes())
+        .unwrap();
     stdin.write_all(b"\n").unwrap();
     stdin.flush().unwrap();
     stdin.flush().unwrap();

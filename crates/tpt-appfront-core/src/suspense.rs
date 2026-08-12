@@ -95,10 +95,18 @@ mod tests {
     #[test]
     fn shows_fallback_while_loading_then_content_when_ready() {
         let data = Resource::<String>::new(|| Err("loading".to_string()));
-        let s = Suspense::new(|| UITree::container(|c: &mut ContainerBuilder<()>| { c.text("loaded"); }))
-            .track(&data)
-            .fallback(|| UITree::container(|c: &mut ContainerBuilder<()>| { c.text("loading..."); }))
-            .build();
+        let s = Suspense::new(|| {
+            UITree::container(|c: &mut ContainerBuilder<()>| {
+                c.text("loaded");
+            })
+        })
+        .track(&data)
+        .fallback(|| {
+            UITree::container(|c: &mut ContainerBuilder<()>| {
+                c.text("loading...");
+            })
+        })
+        .build();
         match s.kind {
             NodeKind::Container { children } => match &children[0].kind {
                 NodeKind::Text { text } => assert_eq!(text, "loading..."),
@@ -108,10 +116,18 @@ mod tests {
         }
 
         data.set_result(Ok("done".to_string()));
-        let s2 = Suspense::new(|| UITree::container(|c: &mut ContainerBuilder<()>| { c.text("loaded"); }))
-            .track(&data)
-            .fallback(|| UITree::container(|c: &mut ContainerBuilder<()>| { c.text("loading..."); }))
-            .build();
+        let s2 = Suspense::new(|| {
+            UITree::container(|c: &mut ContainerBuilder<()>| {
+                c.text("loaded");
+            })
+        })
+        .track(&data)
+        .fallback(|| {
+            UITree::container(|c: &mut ContainerBuilder<()>| {
+                c.text("loading...");
+            })
+        })
+        .build();
         match s2.kind {
             NodeKind::Container { children } => match &children[0].kind {
                 NodeKind::Text { text } => assert_eq!(text, "loaded"),
@@ -128,6 +144,9 @@ mod tests {
         let s = Suspense::new(|| UITree::container(|_: &mut ContainerBuilder<()>| {}))
             .track(&a)
             .track(&b);
-        assert!(!s.is_ready(), "boundary waits on the still-loading resource");
+        assert!(
+            !s.is_ready(),
+            "boundary waits on the still-loading resource"
+        );
     }
 }

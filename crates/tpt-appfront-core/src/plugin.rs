@@ -2,7 +2,7 @@
 //!
 //! A [`Plugin`] is a self-contained unit of cross-cutting functionality that an
 //! app registers at startup. It has a typed state `S` (shared via the existing
-//! [`Context`][crate::context::Context] mechanism) and a set of *hooks* that
+//! [`Context`] mechanism) and a set of *hooks* that
 //! run at well-defined points in the app lifecycle: before/after the tree is
 //! built, and around each render. This gives apps an extension point without
 //! baking backend-specific fields into [`UITree`][crate::UITree].
@@ -25,15 +25,16 @@
 //! the shared app state, never a DOM/canvas/TUI handle, so the same plugin
 //! works on every backend.
 
-use crate::context::Context;
 use std::cell::Cell;
 use std::rc::Rc;
+
+use crate::context::Context;
 
 /// A plugin's read-only view of app + plugin state during a hook.
 ///
 /// `S` is the plugin's own state type (see [`Plugin::State`]); `App` is the
 /// application's shared state type, if any. A plugin can read its own state and
-/// any [`Context`][crate::context::Context] in scope, but cannot mutate the
+/// any [`Context`] in scope, but cannot mutate the
 /// tree — mutation happens through `App`/`S` signals the plugin holds.
 pub struct PluginCtx<'a, S, App = ()> {
     /// The plugin's own shared state.
@@ -153,7 +154,7 @@ impl<App: 'static> PluginRegistry<App> {
     }
 
     /// Registers a plugin, storing its initial state. Returns the plugin's name
-    /// so callers can wire up its [`Context`][crate::context::Context] if
+    /// so callers can wire up its [`Context`] if
     /// desired. Panics if a plugin with the same name is already registered.
     pub fn register<P: Plugin + 'static>(&mut self, plugin: P) -> &'static str
     where
@@ -172,7 +173,11 @@ impl<App: 'static> PluginRegistry<App> {
     }
 
     /// Registers a plugin together with an existing shared state value.
-    pub fn register_with_state<P: Plugin + 'static>(&mut self, plugin: P, state: P::State) -> &'static str {
+    pub fn register_with_state<P: Plugin + 'static>(
+        &mut self,
+        plugin: P,
+        state: P::State,
+    ) -> &'static str {
         let name = plugin.name();
         if self.plugins.iter().any(|p| p.name() == name) {
             panic!("appfront plugin registry: duplicate plugin name `{name}`");
@@ -245,7 +250,7 @@ impl<App: 'static> Clone for PluginRegistry<App> {
 }
 
 /// Convenience: provides a plugin's state to a subtree as a
-/// [`Context`][crate::context::Context] so descendant components can read it.
+/// [`Context`] so descendant components can read it.
 ///
 /// Returns the [`Context`] so callers can keep a handle for updates. Wrap the
 /// builder closure in [`provide_context`][crate::context::provide_context] so

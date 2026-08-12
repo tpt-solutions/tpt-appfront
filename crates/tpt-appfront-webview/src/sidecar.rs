@@ -273,10 +273,11 @@ fn spawn_pump<R: io::Read + Send + 'static>(reader: R, stream: Stream, sink: Arc
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
+
+    use super::*;
 
     struct CountingSink(Arc<AtomicUsize>);
     impl LogSink for CountingSink {
@@ -315,7 +316,10 @@ mod tests {
         thread::sleep(Duration::from_millis(500));
         sup.shutdown();
 
-        assert!(count.load(Ordering::SeqCst) >= 2, "expected stdout+stderr lines");
+        assert!(
+            count.load(Ordering::SeqCst) >= 2,
+            "expected stdout+stderr lines"
+        );
     }
 
     #[test]

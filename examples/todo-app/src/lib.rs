@@ -1,8 +1,9 @@
-use tpt_appfront_core::{create_effect, view, Signal, UITree};
 use std::cell::RefCell;
 use std::rc::Rc;
-use wasm_bindgen::JsCast;
+
+use tpt_appfront_core::{create_effect, view, Signal, UITree};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 #[derive(Debug, Clone)]
 enum Msg {
@@ -100,7 +101,8 @@ pub fn start() -> Result<(), JsValue> {
     }
 
     // Live "X tasks remaining" line: a reactive text node bound to `remaining`.
-    let (remaining_node, remaining_handle) = tpt_appfront_dom::reactive_text(&document, remaining.clone())?;
+    let (remaining_node, remaining_handle) =
+        tpt_appfront_dom::reactive_text(&document, remaining.clone())?;
     form.append_child(&remaining_node)?;
     // Whole-process root mount: forgetting is an explicit choice here, not
     // reactive_text's default behavior.

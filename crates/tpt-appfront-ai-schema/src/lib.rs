@@ -9,7 +9,6 @@ pub use ai_schema::{
     to_ai_schema, to_ai_schema_value, AiSchemaOutput, DataElement, InteractiveElement,
 };
 pub use json_ld::to_json_ld;
-
 use tpt_appfront_core::UITree;
 
 /// Convenience: returns both formats as a pair `(json_ld, ai_schema)`.

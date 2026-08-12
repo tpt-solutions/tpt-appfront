@@ -1,7 +1,7 @@
 //! Error boundaries: isolate a subtree so a panic while building it doesn't
 //! take down the whole render (Phase 5 / `#61`).
 //!
-//! A [`Boundary`] wraps a subtree-building closure and a fallback closure. If
+//! A [`error_boundary`] wraps a subtree-building closure and a fallback closure. If
 //! the primary closure panics while building, the boundary catches the unwind
 //! (via [`std::panic::catch_unwind`]) and substitutes the fallback tree
 //! instead. This mirrors React's error-boundary idea but at the *tree-build*
@@ -19,8 +19,9 @@
 //! );
 //! ```
 
-use crate::UITree;
 use std::panic::AssertUnwindSafe;
+
+use crate::UITree;
 
 /// Result of recovering from a boundary: either the primary subtree built fine,
 /// or it panicked and we have the fallback (plus the panic message, if one was

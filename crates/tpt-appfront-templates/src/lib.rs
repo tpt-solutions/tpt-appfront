@@ -38,7 +38,8 @@ pub fn login_form<Msg: Clone + 'static>(cfg: &LoginFormConfig<Msg>) -> UITree<Ms
     let on_submit = &cfg.on_submit;
     let mut b = ContainerBuilder::new();
     b.container(|c: &mut ContainerBuilder<Msg>| {
-        c.heading(1, cfg.title.clone()).class("text-2xl font-bold mb-4");
+        c.heading(1, cfg.title.clone())
+            .class("text-2xl font-bold mb-4");
         c.input(cfg.username.clone())
             .class("mb-2 w-full")
             .attr("placeholder", "Username");
@@ -118,15 +119,15 @@ pub fn settings_list<Msg: Clone + 'static>(cfg: &SettingsListConfig<Msg>) -> UIT
     let on_edit = &cfg.on_edit;
     let on_delete = &cfg.on_delete;
     UITree::container(|c: &mut ContainerBuilder<Msg>| {
-        c.heading(1, cfg.title.clone()).class("text-2xl font-bold mb-4");
+        c.heading(1, cfg.title.clone())
+            .class("text-2xl font-bold mb-4");
         c.list(|items: &mut ContainerBuilder<Msg>| {
             for (id, label) in &cfg.rows {
                 let row_id = id.clone();
                 let row_label = label.clone();
                 items
                     .container(|row: &mut ContainerBuilder<Msg>| {
-                        row.text(row_label)
-                            .class("flex-1");
+                        row.text(row_label).class("flex-1");
                         row.button("Edit")
                             .class("mr-2 px-3 py-1 rounded border")
                             .on_click((on_edit)(row_id.clone()));
@@ -145,7 +146,9 @@ pub fn settings_list<Msg: Clone + 'static>(cfg: &SettingsListConfig<Msg>) -> UIT
 /// about the node types these templates build.
 #[allow(dead_code)]
 fn _assert_node_kinds<Msg>() -> NodeKind<Msg> {
-    NodeKind::Container { children: Vec::new() }
+    NodeKind::Container {
+        children: Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -214,10 +217,7 @@ mod tests {
     fn settings_list_builds_edit_and_delete_per_row() {
         let list = settings_list(&SettingsListConfig {
             title: "Settings".into(),
-            rows: vec![
-                ("1".into(), "First".into()),
-                ("2".into(), "Second".into()),
-            ],
+            rows: vec![("1".into(), "First".into()), ("2".into(), "Second".into())],
             on_edit: Box::new(Msg::Edit),
             on_delete: Box::new(Msg::Delete),
         });
@@ -225,4 +225,3 @@ mod tests {
         assert_eq!(count_buttons(&list), 4);
     }
 }
-

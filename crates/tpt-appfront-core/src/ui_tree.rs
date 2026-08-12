@@ -17,17 +17,33 @@ pub struct UITree<Msg> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeKind<Msg> {
-    Container { children: Vec<UITree<Msg>> },
-    Heading { level: u8, text: String },
-    Text { text: String },
-    Button { label: String },
-    Input { value: String },
+    Container {
+        children: Vec<UITree<Msg>>,
+    },
+    Heading {
+        level: u8,
+        text: String,
+    },
+    Text {
+        text: String,
+    },
+    Button {
+        label: String,
+    },
+    Input {
+        value: String,
+    },
     /// Multi-line text input.
-    Textarea { value: String },
+    Textarea {
+        value: String,
+    },
     /// A single boolean toggle, e.g. `<input type="checkbox">`. Two-way bound
     /// via [`NodeMeta::on_toggle`] rather than [`NodeMeta::on_input`] since its
     /// value is a `bool`, not a `String`.
-    Checkbox { label: String, checked: bool },
+    Checkbox {
+        label: String,
+        checked: bool,
+    },
     /// A single-choice dropdown. `options` is `(value, label)` pairs;
     /// `selected` is the currently-chosen option's `value`. Two-way bound via
     /// [`NodeMeta::on_input`] (the new selected value).
@@ -45,7 +61,9 @@ pub enum NodeKind<Msg> {
         options: Vec<(String, String)>,
         selected: String,
     },
-    List { items: Vec<UITree<Msg>> },
+    List {
+        items: Vec<UITree<Msg>>,
+    },
     DataGrid {
         columns: Vec<String>,
         rows: Vec<Vec<String>>,
@@ -61,6 +79,38 @@ pub enum NodeKind<Msg> {
         target: String,
         content: Box<UITree<Msg>>,
     },
+    /// An inline image (`<img>` in HTML, `egui::Image` on canvas, a line in
+    /// the TUI). `alt` is required so screen readers and crawlers get a
+    /// description — see the ARIA/accessibility gap in todo.md Phase 20.
+    Image {
+        src: String,
+        alt: String,
+    },
+    /// A hyperlink (`<a href>` in HTML). `meta.ai.action` can still describe a
+    /// navigable target for AI agents; `meta.on_click` dispatches a `Msg` for
+    /// in-app (SPA) navigation instead of a hard navigation.
+    Link {
+        href: String,
+        text: String,
+    },
+    /// An embedded audio/video player. `media_type` selects audio vs video;
+    /// `alt` is the accessible label / caption.
+    Media {
+        src: String,
+        alt: String,
+        media_type: MediaType,
+    },
+}
+
+/// Distinguishes [`NodeKind::Media`] sources so backends pick the right
+/// element (`<audio>` vs `<video>`, `egui`'s audio/video surface, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MediaType {
+    /// An `<audio>` source.
+    #[default]
+    Audio,
+    /// A `<video>` source.
+    Video,
 }
 
 /// AI-agent metadata attached to any node (see `docs/ai-schema.md`).
@@ -73,6 +123,11 @@ pub struct AiMeta {
     pub params: Vec<(String, String)>,
     /// Human-readable description of what this element does.
     pub description: Option<String>,
+    /// Explicit page/section title. On the root node, this overrides the
+    /// AI-schema title heuristic (which otherwise names the page after the
+    /// first `DataElement`'s text — easily mis-named when a breadcrumb/aside
+    /// renders before the real heading).
+    pub title: Option<String>,
 }
 
 /// Two-way-binding callback for string-valued form nodes (`Input`,
@@ -82,7 +137,7 @@ pub struct AiMeta {
 /// runtime value instead of a value baked in at tree-build time. `Arc<dyn Fn
 /// + Send + Sync>` (not `Rc`) — same reasoning as
 /// `tpt_appfront_server::router::CommandHandler`: a `UITree` can end up behind
-/// an `Arc<SmartRouter<Msg>>` shared across an Axum server's worker threads,
+/// an `Arc&lt;SmartRouter&lt;Msg&gt;&gt;` shared across an Axum server's worker threads,
 /// which requires every field to be `Send + Sync`.
 pub type OnInput<Msg> = std::sync::Arc<dyn Fn(String) -> Msg + Send + Sync>;
 
@@ -201,7 +256,9 @@ impl<Msg> UITree<Msg> {
     /// Builds a `Container` node from a closure, mirroring the spec's
     /// `UITree::container(|c| { ... })` ergonomics.
     pub fn container(build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> Self {
-        let mut builder = ContainerBuilder { children: Vec::new() };
+        let mut builder = ContainerBuilder {
+            children: Vec::new(),
+        };
         build(&mut builder);
         UITree::leaf(NodeKind::Container {
             children: builder.children,
@@ -233,10 +290,7 @@ impl<Msg> UITree<Msg> {
                         walk(item, target, out);
                     }
                 }
-                NodeKind::Portal {
-                    target: t,
-                    content,
-                } => {
+                NodeKind::Portal { target: t, content } => {
                     if t == target {
                         out.push((**content).clone());
                     } else {
@@ -308,7 +362,10 @@ impl<Msg> UITree<Msg> {
                 | NodeKind::Textarea { .. }
                 | NodeKind::Checkbox { .. }
                 | NodeKind::Select { .. }
-                | NodeKind::Radio { .. } => {}
+                | NodeKind::Radio { .. }
+                | NodeKind::Image { .. }
+                | NodeKind::Link { .. }
+                | NodeKind::Media { .. } => {}
             }
         }
         walk(self, &mut 1);
@@ -316,7 +373,7 @@ impl<Msg> UITree<Msg> {
 }
 
 /// Payload serialised into `<script id="__APPFRONT_STATE__">` during SSR and
-/// consumed by [`hydrate`][crate::dom::hydrate] on the client to resume
+/// consumed by `hydrate` on the client to resume
 /// interactivity without re-creating DOM nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HydrationPayload<Msg> {
@@ -364,7 +421,10 @@ impl<Msg> ContainerBuilder<Msg> {
         }
     }
 
-    pub fn container(&mut self, build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> NodeRef<'_, Msg> {
+    pub fn container(
+        &mut self,
+        build: impl FnOnce(&mut ContainerBuilder<Msg>),
+    ) -> NodeRef<'_, Msg> {
         let node = UITree::container(build);
         self.children.push(node);
         let index = self.children.len() - 1;
@@ -461,7 +521,9 @@ impl<Msg> ContainerBuilder<Msg> {
     }
 
     pub fn list(&mut self, build: impl FnOnce(&mut ContainerBuilder<Msg>)) -> NodeRef<'_, Msg> {
-        let mut inner = ContainerBuilder { children: Vec::new() };
+        let mut inner = ContainerBuilder {
+            children: Vec::new(),
+        };
         build(&mut inner);
         self.push(NodeKind::List {
             items: inner.children,
@@ -479,14 +541,51 @@ impl<Msg> ContainerBuilder<Msg> {
         target: impl Into<String>,
         build: impl FnOnce(&mut ContainerBuilder<Msg>),
     ) -> NodeRef<'_, Msg> {
-        let mut inner = ContainerBuilder { children: Vec::new() };
+        let mut inner = ContainerBuilder {
+            children: Vec::new(),
+        };
         build(&mut inner);
-        let single = inner.into_only_child().unwrap_or_else(|| {
-            UITree::container(|_| {})
-        });
+        let single = inner.into_only_child().expect(
+            "portal body must contain exactly one root node (wrap multiple children in a container); \
+             a portal with zero or more than one root child was a silent blank overlay before this check",
+        );
         self.push(NodeKind::Portal {
             target: target.into(),
             content: Box::new(single),
+        })
+    }
+
+    /// An inline image. `alt` is required for accessibility (screen readers /
+    /// crawlers); it becomes the `alt` attribute on `<img>` and the TUI/canvas
+    /// accessible label.
+    pub fn image(&mut self, src: impl Into<String>, alt: impl Into<String>) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Image {
+            src: src.into(),
+            alt: alt.into(),
+        })
+    }
+
+    /// A hyperlink. `meta.on_click` dispatches a `Msg` for in-app (SPA)
+    /// navigation; otherwise the `href` is used for a normal navigation.
+    pub fn link(&mut self, href: impl Into<String>, text: impl Into<String>) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Link {
+            href: href.into(),
+            text: text.into(),
+        })
+    }
+
+    /// An embedded audio/video player. `media_type` selects `<audio>` vs
+    /// `<video>` (and the canvas/TUI equivalent); `alt` is the accessible label.
+    pub fn media(
+        &mut self,
+        src: impl Into<String>,
+        alt: impl Into<String>,
+        media_type: MediaType,
+    ) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Media {
+            src: src.into(),
+            alt: alt.into(),
+            media_type,
         })
     }
 
@@ -561,6 +660,14 @@ impl<'a, Msg> NodeRef<'a, Msg> {
 
     pub fn ai_description(mut self, desc: impl Into<String>) -> Self {
         self.meta_mut().ai.description = Some(desc.into());
+        self
+    }
+
+    /// Sets an explicit AI-schema page/section title (see [`AiMeta::title`]).
+    /// On the root node this overrides the AI-schema title heuristic that would
+    /// otherwise name the page after the first `DataElement`'s text.
+    pub fn ai_title(mut self, title: impl Into<String>) -> Self {
+        self.meta_mut().ai.title = Some(title.into());
         self
     }
 
@@ -692,7 +799,10 @@ mod tests {
 
         assert_eq!(children[2].meta.data_appfront_id, Some(5));
 
-        let NodeKind::Container { children: inner_children } = &children[2].kind else {
+        let NodeKind::Container {
+            children: inner_children,
+        } = &children[2].kind
+        else {
             panic!("expected container");
         };
         assert_eq!(inner_children[0].meta.data_appfront_id, Some(6));
@@ -712,8 +822,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&payload).expect("serialize");
-        let restored: HydrationPayload<Event> =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: HydrationPayload<Event> = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(restored.tree.meta.data_appfront_id, Some(1));
         assert_eq!(restored.signals.get("count"), signals.get("count"));

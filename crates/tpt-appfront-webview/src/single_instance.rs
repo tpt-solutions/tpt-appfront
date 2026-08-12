@@ -5,11 +5,12 @@
 //! data directory; if a previous lock holder exists we report the existing
 //! instance's "show" request (via a small handshake file) and refuse to start.
 
-use anyhow::{Context, Result};
-use fs4::fs_std::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use fs4::fs_std::FileExt;
 
 /// Resolves the lock directory, derived from the app identifier so two
 /// different apps don't collide.

@@ -12,18 +12,18 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tpt_appfront_core::UITree;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue};
 use axum::routing::{get, post};
 use axum::Router;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::PeerIpKeyExtractor;
+use tower_governor::key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor};
 use tower_governor::GovernorLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+use tpt_appfront_core::UITree;
 
 use crate::pwa::PwaConfig;
 
@@ -42,7 +42,30 @@ pub use cors::CorsPolicy;
 /// write route should ship without a body-size limit from day one.
 const COMMAND_BODY_LIMIT_BYTES: usize = 16 * 1024;
 
+/// Rate-limiting key extractor that picks the client IP per
+/// [`SmartRouter::trust_forwarded_for`]. When that flag is set (i.e. the app
+/// runs behind a trusted reverse proxy that sets `X-Forwarded-For` /
+/// `X-Real-Ip` / `Forwarded`), it delegates to [`SmartIpKeyExtractor`] so the
+/// real client IP is used; otherwise it delegates to [`PeerIpKeyExtractor`]
+/// (the peer socket IP). Both extractors share `type Key = IpAddr`, so this
+/// single type lets the chosen strategy be wired in without two divergent
+/// `GovernorLayer` types.
+#[derive(Clone, Copy, Default)]
+struct ProxyAwareKeyExtractor {
+    trust_forwarded_for: bool,
+}
 
+impl tower_governor::key_extractor::KeyExtractor for ProxyAwareKeyExtractor {
+    type Key = std::net::IpAddr;
+
+    fn extract<T>(&self, req: &axum::http::Request<T>) -> Result<Self::Key, tower_governor::errors::GovernorError> {
+        if self.trust_forwarded_for {
+            SmartIpKeyExtractor.extract(req)
+        } else {
+            PeerIpKeyExtractor.extract(req)
+        }
+    }
+}
 
 /// Configuration for the smart router.
 pub struct SmartRouter<Msg> {
@@ -61,8 +84,8 @@ pub struct SmartRouter<Msg> {
     pub wasm_path: String,
     /// When `true`, human browsers receive a hydration-ready page: SSR HTML
     /// with `data-appfront-id` attributes, a serialised `HydrationPayload`,
-    /// and the WASM script. The client then calls [`hydrate`] instead of
-    /// [`mount`][tpt_appfront_dom::mount].
+    /// and the WASM script. The client then calls `hydrate` instead of
+    /// `mount`.
     pub enable_hydration: bool,
     /// Named signal values carried in the hydration payload so that
     /// `Signal::hydrated("name", default)` on the client can restore
@@ -92,7 +115,7 @@ pub struct SmartRouter<Msg> {
     /// default; only enforced against requests that already carry the
     /// router's own CSRF cookie (set on document responses), so direct API/
     /// agent callers that never loaded a page here are unaffected. See
-    /// [`csrf`] module docs.
+    /// `csrf` module docs.
     pub csrf: bool,
     /// Rate limit applied to the read routes (`/`, `/ai-schema.json`,
     /// `/opengraph`). Defaults to a much more generous
@@ -104,6 +127,16 @@ pub struct SmartRouter<Msg> {
     /// to reject the request with `401 Unauthorized`. Lets an app plug in
     /// its own session/token check without the router prescribing one.
     pub auth_hook: Option<std::sync::Arc<AuthHook>>,
+    /// Extra User-Agent substrings (in addition to [`client_kind::AI_AGENTS`])
+    /// that should be detected as AI agents. Set via
+    /// [`SmartRouterBuilder::extra_ai_agents`].
+    pub extra_ai_agents: Vec<String>,
+    /// When `true`, per-IP rate limiting uses `X-Forwarded-For` /
+    /// `X-Real-Ip` / `Forwarded` (delegating to `SmartIpKeyExtractor`) instead
+    /// of the raw peer socket IP. Set this only when those headers are
+    /// guaranteed to come from a trusted reverse proxy — see
+    /// [`SmartRouterBuilder::trust_forwarded_for`].
+    pub trust_forwarded_for: bool,
     /// Rendered-content cache for the deterministic read routes; populated
     /// lazily on first request. See [`caching`] module docs.
     html_cache: std::sync::OnceLock<(String, String)>,
@@ -129,6 +162,12 @@ pub struct SmartRouterBuilder<Msg> {
     rate_limit: RateLimitConfig,
     pwa: Option<PwaConfig>,
     cors: CorsPolicy,
+    /// Extra User-Agent substrings treated as AI agents (see
+    /// [`SmartRouter::extra_ai_agents`]).
+    extra_ai_agents: Vec<String>,
+    /// Whether rate limiting trusts forwarded headers (see
+    /// [`SmartRouter::trust_forwarded_for`]).
+    trust_forwarded_for: bool,
 }
 
 impl<Msg> SmartRouterBuilder<Msg> {
@@ -144,16 +183,21 @@ impl<Msg> SmartRouterBuilder<Msg> {
             command_handler: None,
             allowed_actions: None,
             csrf: true,
-            read_rate_limit: RateLimitConfig { per_second: 50, burst: 100 },
+            read_rate_limit: RateLimitConfig {
+                per_second: 50,
+                burst: 100,
+            },
             auth_hook: None,
             rate_limit: RateLimitConfig::default(),
             pwa: None,
             cors: CorsPolicy::default(),
+            extra_ai_agents: Vec::new(),
+            trust_forwarded_for: false,
         }
     }
 
     /// Toggles double-submit-cookie CSRF protection on `POST /command` (on
-    /// by default). See [`csrf`] module docs for the threat model.
+    /// by default). See `csrf` module docs for the threat model.
     pub fn csrf(mut self, enabled: bool) -> Self {
         self.csrf = enabled;
         self
@@ -248,6 +292,27 @@ impl<Msg> SmartRouterBuilder<Msg> {
         self
     }
 
+    /// Extends the AI-agent User-Agent detection with custom substrings, on
+    /// top of the hardcoded [`client_kind::AI_AGENTS`] list. Useful for
+    /// internal/branded agents whose UA isn't a known public crawler.
+    pub fn extra_ai_agents(
+        mut self,
+        agents: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.extra_ai_agents = agents.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Controls whether per-IP rate limiting trusts `X-Forwarded-For` /
+    /// `X-Real-Ip` / `Forwarded` (delegating to `SmartIpKeyExtractor`) instead
+    /// of the raw peer socket IP. Only enable behind a trusted reverse proxy
+    /// (nginx/Cloudflare), or the client can spoof its rate-limit key. Off by
+    /// default, which keeps the safer `PeerIpKeyExtractor` behavior.
+    pub fn trust_forwarded_for(mut self, trust: bool) -> Self {
+        self.trust_forwarded_for = trust;
+        self
+    }
+
     pub fn build(self) -> SmartRouter<Msg> {
         let wasm_shell_template = r#"<!DOCTYPE html>
 <html lang="en">
@@ -287,6 +352,8 @@ init().catch(e => console.error('appfront init failed', e));
             rate_limit: self.rate_limit,
             pwa: self.pwa,
             cors: self.cors,
+            extra_ai_agents: self.extra_ai_agents,
+            trust_forwarded_for: self.trust_forwarded_for,
             html_cache: std::sync::OnceLock::new(),
             ai_schema_cache: std::sync::OnceLock::new(),
             opengraph_cache: std::sync::OnceLock::new(),
@@ -350,7 +417,9 @@ where
         GovernorConfigBuilder::default()
             .per_second(rate_limit.per_second)
             .burst_size(rate_limit.burst)
-            .key_extractor(PeerIpKeyExtractor)
+            .key_extractor(ProxyAwareKeyExtractor {
+                trust_forwarded_for: state.trust_forwarded_for,
+            })
             .finish()
             .expect("valid governor rate-limit config"),
     );
@@ -361,7 +430,9 @@ where
         GovernorConfigBuilder::default()
             .per_second(read_rate_limit.per_second)
             .burst_size(read_rate_limit.burst)
-            .key_extractor(PeerIpKeyExtractor)
+            .key_extractor(ProxyAwareKeyExtractor {
+                trust_forwarded_for: state.trust_forwarded_for,
+            })
             .finish()
             .expect("valid governor rate-limit config"),
     );
@@ -376,10 +447,15 @@ where
         .route("/", get(handlers::root_handler::<Msg>))
         .route("/ai-schema.json", get(handlers::ai_schema_handler::<Msg>))
         .route("/opengraph", get(handlers::opengraph_handler::<Msg>))
-        .route("/service-worker.js", get(handlers::pwa_service_worker::<Msg>))
+        .route(
+            "/service-worker.js",
+            get(handlers::pwa_service_worker::<Msg>),
+        )
         .route("/manifest.webmanifest", get(handlers::pwa_manifest::<Msg>))
         .layer(cors::cors_layer(&cors))
-        .layer(GovernorLayer { config: read_governor_conf });
+        .layer(GovernorLayer {
+            config: read_governor_conf,
+        });
 
     // The single write route: body-size-limited and rate-limited, and NOT
     // CORS-exposed, so a third-party page can't invoke app commands for the
@@ -388,7 +464,9 @@ where
         "/command",
         post(handlers::command_handler::<Msg>)
             .route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES))
-            .route_layer(GovernorLayer { config: governor_conf }),
+            .route_layer(GovernorLayer {
+                config: governor_conf,
+            }),
     );
 
     // Baseline security headers applied to every response — explicit rather
@@ -421,10 +499,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tpt_appfront_core::ContainerBuilder;
     use axum::http::HeaderMap;
     use axum::response::Response;
+    use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
     use crate::router::handlers::{ai_agent_json, crawler_html, human_shell, social_opengraph};
 
     type Msg = ();
@@ -673,10 +752,7 @@ mod tests {
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|cmd| {
                 assert_eq!(cmd.action, "greet");
-                assert_eq!(
-                    cmd.params.get("name").and_then(|v| v.as_str()),
-                    Some("Ada")
-                );
+                assert_eq!(cmd.params.get("name").and_then(|v| v.as_str()), Some("Ada"));
                 CommandResponse::ok("greeted Ada")
             })
             .allowed_actions(["greet"])
@@ -734,7 +810,10 @@ mod tests {
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("ok"))
-            .rate_limit(RateLimitConfig { per_second: 1, burst: 3 })
+            .rate_limit(RateLimitConfig {
+                per_second: 1,
+                burst: 3,
+            })
             .build();
         let app = build_router(router);
 
@@ -767,7 +846,10 @@ mod tests {
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("ok"))
-            .rate_limit(RateLimitConfig { per_second: 1, burst: 1 })
+            .rate_limit(RateLimitConfig {
+                per_second: 1,
+                burst: 1,
+            })
             .build();
         let app = build_router(router);
 
@@ -872,8 +954,7 @@ mod tests {
     #[tokio::test]
     async fn root_routes_by_ua() {
         let router = test_router();
-        use axum::http::Request;
-        use axum::http::StatusCode;
+        use axum::http::{Request, StatusCode};
         use tower::util::ServiceExt;
 
         let app = build_router(router);
@@ -934,7 +1015,9 @@ mod tests {
         use tower::util::ServiceExt;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
-            .cors(CorsPolicy::Origins(vec!["https://trusted.example".to_string()]))
+            .cors(CorsPolicy::Origins(vec![
+                "https://trusted.example".to_string()
+            ]))
             .build();
         let app = build_router(router);
 

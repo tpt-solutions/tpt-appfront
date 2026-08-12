@@ -5,8 +5,9 @@
 //! `window.__appfront.post("clipboard.write", { text })`. Capability-gated by
 //! the [`crate::Acl`].
 
-use serde_json::json;
 use std::sync::Mutex;
+
+use serde_json::json;
 
 /// A process-wide clipboard handle. [`arboard::Clipboard`] is not `Sync`, so we
 /// wrap it in a mutex and lazily initialise on first use.

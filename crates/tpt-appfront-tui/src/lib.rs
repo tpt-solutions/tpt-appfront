@@ -18,15 +18,14 @@ use anyhow::{Context, Result};
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
-
 use tpt_appfront_core::{NodeKind, UITree};
 
 /// A focusable element discovered while walking the tree, in document order.
@@ -66,26 +65,33 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
     let mut out = Vec::new();
     fn walk<Msg: Clone>(ui: &UITree<Msg>, out: &mut Vec<InteractiveNode<Msg>>) {
         let id = ui.meta.data_appfront_id.unwrap_or(0);
-        let node = |kind, options: Vec<(String, String)>, initial_value: Option<String>| InteractiveNode {
-            id,
-            kind,
-            on_click: ui.meta.on_click.clone(),
-            options,
-            initial_value,
-        };
+        let node =
+            |kind, options: Vec<(String, String)>, initial_value: Option<String>| InteractiveNode {
+                id,
+                kind,
+                on_click: ui.meta.on_click.clone(),
+                options,
+                initial_value,
+            };
         match &ui.kind {
             NodeKind::Button { .. } => out.push(node(InteractiveKind::Button, Vec::new(), None)),
             NodeKind::Input { .. } => out.push(node(InteractiveKind::Input, Vec::new(), None)),
-            NodeKind::Textarea { .. } => out.push(node(InteractiveKind::Textarea, Vec::new(), None)),
-            NodeKind::Checkbox { checked, .. } => {
-                out.push(node(InteractiveKind::Checkbox, Vec::new(), Some(checked.to_string())))
+            NodeKind::Textarea { .. } => {
+                out.push(node(InteractiveKind::Textarea, Vec::new(), None))
             }
+            NodeKind::Checkbox { checked, .. } => out.push(node(
+                InteractiveKind::Checkbox,
+                Vec::new(),
+                Some(checked.to_string()),
+            )),
             NodeKind::Select { options, selected } => out.push(node(
                 InteractiveKind::Select,
                 options.clone(),
                 Some(selected.clone()),
             )),
-            NodeKind::Radio { options, selected, .. } => out.push(node(
+            NodeKind::Radio {
+                options, selected, ..
+            } => out.push(node(
                 InteractiveKind::Radio,
                 options.clone(),
                 Some(selected.clone()),
@@ -162,7 +168,8 @@ fn render_node<Msg: Clone>(
             if children.is_empty() {
                 return;
             }
-            let constraints: Vec<Constraint> = (0..children.len()).map(|_| Constraint::Min(1)).collect();
+            let constraints: Vec<Constraint> =
+                (0..children.len()).map(|_| Constraint::Min(1)).collect();
             let chunks = Layout::vertical(constraints).split(area);
             for (child, chunk) in children.iter().zip(chunks.iter()) {
                 render_node(child, frame, *chunk, inputs, checks, selections, focus_id);
@@ -175,7 +182,11 @@ fn render_node<Msg: Clone>(
             frame.render_widget(Paragraph::new(text.clone()), area);
         }
         NodeKind::Button { label } => {
-            let style = if focused { focus_style() } else { Style::default() };
+            let style = if focused {
+                focus_style()
+            } else {
+                Style::default()
+            };
             frame.render_widget(Paragraph::new(format!("[ {label} ]")).style(style), area);
         }
         NodeKind::Input { value } => {
@@ -211,8 +222,15 @@ fn render_node<Msg: Clone>(
         NodeKind::Checkbox { label, checked } => {
             let c = checks.get(&id.unwrap_or(0)).copied().unwrap_or(*checked);
             let mark = if c { "x" } else { " " };
-            let style = if focused { focus_style() } else { Style::default() };
-            frame.render_widget(Paragraph::new(format!("[{mark}] {label}")).style(style), area);
+            let style = if focused {
+                focus_style()
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(format!("[{mark}] {label}")).style(style),
+                area,
+            );
         }
         NodeKind::Select { options, selected } => {
             let cur = selections
@@ -224,10 +242,16 @@ fn render_node<Msg: Clone>(
                 .find(|(v, _)| v == &cur)
                 .map(|(_, l)| l.as_str())
                 .unwrap_or(cur.as_str());
-            let style = if focused { focus_style() } else { Style::default() };
+            let style = if focused {
+                focus_style()
+            } else {
+                Style::default()
+            };
             frame.render_widget(Paragraph::new(format!("< {label} >")).style(style), area);
         }
-        NodeKind::Radio { options, selected, .. } => {
+        NodeKind::Radio {
+            options, selected, ..
+        } => {
             let cur = selections
                 .get(&id.unwrap_or(0))
                 .cloned()
@@ -464,14 +488,20 @@ impl<Msg: Clone> TuiDriver<Msg> {
             }
             KeyCode::Char(c) => {
                 let node = &self.interactive[self.focus];
-                if matches!(node.kind, InteractiveKind::Input | InteractiveKind::Textarea) {
+                if matches!(
+                    node.kind,
+                    InteractiveKind::Input | InteractiveKind::Textarea
+                ) {
                     self.inputs.entry(node.id).or_default().push(c);
                 }
                 None
             }
             KeyCode::Backspace => {
                 let node = &self.interactive[self.focus];
-                if matches!(node.kind, InteractiveKind::Input | InteractiveKind::Textarea) {
+                if matches!(
+                    node.kind,
+                    InteractiveKind::Input | InteractiveKind::Textarea
+                ) {
                     if let Some(buf) = self.inputs.get_mut(&node.id) {
                         buf.pop();
                     }
@@ -552,11 +582,7 @@ pub fn buffer_to_string(buf: &Buffer) -> String {
 /// Renders `ui` to an off-screen `TestBackend` of `width` x `height` and
 /// returns the resulting buffer. Used by the crate's own headless tests and
 /// handy for app-level snapshot tests.
-pub fn render_to_buffer<Msg: Clone>(
-    ui: &UITree<Msg>,
-    width: u16,
-    height: u16,
-) -> Buffer {
+pub fn render_to_buffer<Msg: Clone>(ui: &UITree<Msg>, width: u16, height: u16) -> Buffer {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test backend");
     let driver = TuiDriver::new(ui);
@@ -578,8 +604,9 @@ pub fn render_to_buffer<Msg: Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {
@@ -590,9 +617,7 @@ mod tests {
         UITree::container(|c: &mut ContainerBuilder<Msg>| {
             c.heading(1, "Counter TUI");
             c.text("Press + to count");
-            c.button("+1")
-                .on_click(Msg::Increment)
-                .key("inc");
+            c.button("+1").on_click(Msg::Increment).key("inc");
             c.input("type here").key("name");
         })
     }
@@ -623,7 +648,10 @@ mod tests {
         let id = driver.interactive[0].id;
         assert_eq!(driver.checks().get(&id), None);
 
-        let enter = KeyEvent::new(KeyCode::Enter, ratatui::crossterm::event::KeyModifiers::NONE);
+        let enter = KeyEvent::new(
+            KeyCode::Enter,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         driver.on_key(enter);
         assert_eq!(driver.checks().get(&id), Some(&true));
         driver.on_key(enter);
@@ -640,7 +668,10 @@ mod tests {
         let id = driver.interactive[1].id;
         assert_eq!(driver.selections().get(&id), None);
 
-        let right = KeyEvent::new(KeyCode::Right, ratatui::crossterm::event::KeyModifiers::NONE);
+        let right = KeyEvent::new(
+            KeyCode::Right,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         driver.on_key(right);
         assert_eq!(driver.selections().get(&id).map(String::as_str), Some("b"));
         driver.on_key(right);
@@ -657,7 +688,10 @@ mod tests {
     fn enter_on_button_dispatches_msg() {
         let ui = sample_ui();
         let mut driver = TuiDriver::new(&ui);
-        let key = KeyEvent::new(KeyCode::Enter, ratatui::crossterm::event::KeyModifiers::NONE);
+        let key = KeyEvent::new(
+            KeyCode::Enter,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         assert_eq!(driver.on_key(key), Some(Msg::Increment));
         assert!(!driver.quit());
     }
@@ -666,7 +700,10 @@ mod tests {
     fn space_activates_button_too() {
         let ui = sample_ui();
         let mut driver = TuiDriver::new(&ui);
-        let key = KeyEvent::new(KeyCode::Char(' '), ratatui::crossterm::event::KeyModifiers::NONE);
+        let key = KeyEvent::new(
+            KeyCode::Char(' '),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         assert_eq!(driver.on_key(key), Some(Msg::Increment));
     }
 
@@ -678,15 +715,23 @@ mod tests {
         driver.on_key(tab);
         assert_eq!(driver.focus_id(), Some(driver.interactive[1].id));
 
-        let a = KeyEvent::new(KeyCode::Char('a'), ratatui::crossterm::event::KeyModifiers::NONE);
-        let b = KeyEvent::new(KeyCode::Char('b'), ratatui::crossterm::event::KeyModifiers::NONE);
+        let a = KeyEvent::new(
+            KeyCode::Char('a'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
+        let b = KeyEvent::new(
+            KeyCode::Char('b'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         driver.on_key(a);
         driver.on_key(b);
         let id = driver.interactive[1].id;
         assert_eq!(driver.inputs().get(&id).map(String::as_str), Some("ab"));
 
-        let bs =
-            KeyEvent::new(KeyCode::Backspace, ratatui::crossterm::event::KeyModifiers::NONE);
+        let bs = KeyEvent::new(
+            KeyCode::Backspace,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         driver.on_key(bs);
         assert_eq!(driver.inputs().get(&id).map(String::as_str), Some("a"));
     }
@@ -695,7 +740,10 @@ mod tests {
     fn typing_on_button_is_ignored() {
         let ui = sample_ui();
         let mut driver = TuiDriver::new(&ui);
-        let c = KeyEvent::new(KeyCode::Char('x'), ratatui::crossterm::event::KeyModifiers::NONE);
+        let c = KeyEvent::new(
+            KeyCode::Char('x'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         assert_eq!(driver.on_key(c), None);
         assert!(driver.inputs().values().all(|v| v.is_empty()));
     }
@@ -725,6 +773,9 @@ mod tests {
         let s = buffer_to_string(&buf);
         // Focused button renders inside brackets; the bracketed form only
         // appears for the focused node.
-        assert!(s.contains("[ +1 ]"), "focused button should be bracketed: {s}");
+        assert!(
+            s.contains("[ +1 ]"),
+            "focused button should be bracketed: {s}"
+        );
     }
 }

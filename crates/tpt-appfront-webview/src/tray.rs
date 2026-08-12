@@ -84,13 +84,15 @@ impl TrayController {
 #[cfg(all(feature = "tray", windows))]
 pub mod win {
     //! Minimal Win32 system tray via `windows-sys`.
-    use super::*;
     use std::collections::HashMap;
+
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::Shell::{NIF_ICON, NIF_MESSAGE, NIF_TIP, NOTIFYICONDATAW};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, MF_STRING, WM_USER,
     };
+
+    use super::*;
 
     const WM_TRAY_CALLBACK: u32 = WM_USER + 1;
     const ID_TRAY_ACTIVATE: u32 = 1000;
@@ -145,7 +147,11 @@ pub mod win {
                     continue;
                 }
                 self.menu.insert(id, item.id.clone());
-                let wide: Vec<u16> = item.label.encode_utf16().chain(std::iter::once(0)).collect();
+                let wide: Vec<u16> = item
+                    .label
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
                 unsafe {
                     AppendMenuW(hmenu, MF_STRING, id as usize, wide.as_ptr());
                 }

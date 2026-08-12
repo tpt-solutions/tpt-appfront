@@ -537,8 +537,16 @@ pub fn start() -> Result<(), JsValue> {{
     Ok(())
 }}
 "#,
-        pieces_csv = pieces.iter().map(|p| p.name()).collect::<Vec<_>>().join(","),
-        pieces_list = pieces.iter().map(|p| p.name()).collect::<Vec<_>>().join(", "),
+        pieces_csv = pieces
+            .iter()
+            .map(|p| p.name())
+            .collect::<Vec<_>>()
+            .join(","),
+        pieces_list = pieces
+            .iter()
+            .map(|p| p.name())
+            .collect::<Vec<_>>()
+            .join(", "),
     )
 }
 
@@ -872,7 +880,11 @@ mod tests {
 
     #[test]
     fn canvas_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = canvas_cargo_toml("my-app", "path = \"/repo/tpt-appfront-core\"", "path = \"/repo/tpt-appfront-canvas\"");
+        let out = canvas_cargo_toml(
+            "my-app",
+            "path = \"/repo/tpt-appfront-core\"",
+            "path = \"/repo/tpt-appfront-canvas\"",
+        );
         assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
         assert!(out.contains("tpt-appfront-canvas = path = \"/repo/tpt-appfront-canvas\""));
         assert!(out.contains("name = \"my-app\""));
@@ -881,7 +893,11 @@ mod tests {
 
     #[test]
     fn dom_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = dom_cargo_toml("my-app", "path = \"/repo/tpt-appfront-core\"", "path = \"/repo/tpt-appfront-dom\"");
+        let out = dom_cargo_toml(
+            "my-app",
+            "path = \"/repo/tpt-appfront-core\"",
+            "path = \"/repo/tpt-appfront-dom\"",
+        );
         assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
         assert!(out.contains("tpt-appfront-dom = path = \"/repo/tpt-appfront-dom\""));
         assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
@@ -890,7 +906,11 @@ mod tests {
 
     #[test]
     fn tui_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = tui_cargo_toml("my-app", "path = \"/repo/tpt-appfront-core\"", "path = \"/repo/tpt-appfront-tui\"");
+        let out = tui_cargo_toml(
+            "my-app",
+            "path = \"/repo/tpt-appfront-core\"",
+            "path = \"/repo/tpt-appfront-tui\"",
+        );
         assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
         assert!(out.contains("tpt-appfront-tui = path = \"/repo/tpt-appfront-tui\""));
         assert!(looks_like_toml(&out));

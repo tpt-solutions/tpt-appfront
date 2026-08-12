@@ -3,7 +3,7 @@
 //! [`VirtualScroll::visible_range`] to render only the items currently in
 //! view plus a small overscan buffer, instead of every item in the
 //! collection. Backends that don't scroll interactively (`tpt-appfront-html`,
-//! `tpt-appfront-ai-schema`) simply ignore [`NodeMeta::virtual_scroll`] and
+//! `tpt-appfront-ai-schema`) simply ignore [`crate::ui_tree::NodeMeta::virtual_scroll`] and
 //! render everything, which is correct for SSR/crawl/agent consumption.
 
 use serde::{Deserialize, Serialize};

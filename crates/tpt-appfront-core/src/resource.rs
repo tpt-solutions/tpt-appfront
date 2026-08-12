@@ -12,14 +12,15 @@
 //! view re-renders. Keeping the core runtime-free is intentional: the same
 //! `Resource` works identically on every backend.
 //!
-//! The [`spawn_resource`] bridge and the [`crate::suspense`] boundary build on
+//! The `spawn_resource` bridge and the [`crate::suspense`] boundary build on
 //! this: they turn an `async fn` into a `Resource` (driving the future via a
 //! caller-supplied executor) and render a fallback while the resource is
 //! `Loading`, swapping to the real subtree once it `Ready`s — with automatic
 //! cancellation on reload/unmount (see [`crate::suspense::Suspense`]).
 
-use crate::signal::Signal;
 use std::fmt::Debug;
+
+use crate::signal::Signal;
 
 /// The lifecycle state of a [`Resource`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,10 +262,7 @@ mod tests {
     fn load_async_enters_loading_then_resolves_when_current() {
         let r = Resource::<i32>::ready(0);
         let before = r.generation();
-        r.load_async(
-            sync_spawn,
-            async { Ok(123) },
-        );
+        r.load_async(sync_spawn, async { Ok(123) });
         // `load_async` immediately bumps the generation and goes Loading; the
         // synchronous spawn resolves it and commits because the gen is current.
         assert!(r.generation() > before, "generation bumped");
@@ -292,13 +290,19 @@ mod tests {
 
         // A newer load starts while the old one is still "in flight".
         res.reload();
-        assert!(!res.is_current(gen), "reload invalidated the old generation");
+        assert!(
+            !res.is_current(gen),
+            "reload invalidated the old generation"
+        );
 
         // The stale result is dropped because its generation is obsolete.
         if res.is_current(gen) {
             res.set_result(Ok(999));
         }
-        assert!(res.is_loading(), "stale result was cancelled; still Loading");
+        assert!(
+            res.is_loading(),
+            "stale result was cancelled; still Loading"
+        );
         assert_eq!(res.ready_value(), None);
     }
 

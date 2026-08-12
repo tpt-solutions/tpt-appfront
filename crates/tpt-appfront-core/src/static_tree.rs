@@ -13,11 +13,12 @@
 //! every frame (canvas' immediate-mode `build_ui`, DOM hydration) skip that
 //! work for inert content.
 
-use crate::UITree;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use crate::UITree;
 
 thread_local! {
     /// `id -> cached tree` for the process. Keyed by a per-node unique id the

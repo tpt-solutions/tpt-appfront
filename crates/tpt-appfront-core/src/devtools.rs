@@ -11,7 +11,7 @@
 
 use crate::agent::{AgentState, ElementSummary};
 use crate::signal::signal_activity;
-use crate::ui_tree::{NodeKind, UITree};
+use crate::ui_tree::{MediaType, NodeKind, UITree};
 
 /// A complete devtools report: the tree view, the agent-state view, and the
 /// signal-activity view.
@@ -44,12 +44,14 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::Checkbox { label, checked } => {
             format!("Checkbox \"{label}\" checked={checked}")
         }
-        NodeKind::Select { options, selected } => format!(
-            "Select [{options:?}] selected=\"{selected}\""
-        ),
-        NodeKind::Radio { name, options, selected } => format!(
-            "Radio name=\"{name}\" [{options:?}] selected=\"{selected}\""
-        ),
+        NodeKind::Select { options, selected } => {
+            format!("Select [{options:?}] selected=\"{selected}\"")
+        }
+        NodeKind::Radio {
+            name,
+            options,
+            selected,
+        } => format!("Radio name=\"{name}\" [{options:?}] selected=\"{selected}\""),
         NodeKind::List { items } => format!("List ({}) items", items.len()),
         NodeKind::DataGrid { columns, rows } => {
             format!(
@@ -60,6 +62,15 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
             )
         }
         NodeKind::Portal { target, .. } => format!("Portal -> \"{target}\""),
+        NodeKind::Image { alt, .. } => format!("Image alt=\"{alt}\""),
+        NodeKind::Link { href, text } => format!("Link \"{text}\" -> {href}"),
+        NodeKind::Media { media_type, alt, .. } => format!(
+            "{} alt=\"{alt}\"",
+            match media_type {
+                MediaType::Audio => "Audio",
+                MediaType::Video => "Video",
+            }
+        ),
     }
 }
 

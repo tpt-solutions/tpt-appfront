@@ -12,7 +12,6 @@ mod text;
 pub use app::CanvasApp;
 pub use auto_optimizer::AutoOptimizer;
 pub use text::TextMeasurer;
-
 use tpt_appfront_core::UITree;
 
 /// Opens a native window and runs `build_ui` every frame, dispatching any

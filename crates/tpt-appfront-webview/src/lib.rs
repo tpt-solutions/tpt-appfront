@@ -28,13 +28,15 @@
 //! From custom JS you can also call `window.__appfront.post(action, params)`
 //! directly.
 
-use anyhow::Result;
-use governor::{Quota, RateLimiter};
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use wry::http::{header::CONTENT_TYPE, Request, Response};
+use anyhow::Result;
+use governor::{Quota, RateLimiter};
+use wry::http::header::CONTENT_TYPE;
+use wry::http::{Request, Response};
 
 mod sidecar;
 pub use sidecar::{LogSink, SidecarConfig, SidecarSupervisor, Stream};
@@ -105,6 +107,44 @@ pub struct WebviewOptions {
     /// local, synchronous, in-process IPC rather than a network route, so
     /// there is no concept of a per-client key to limit by.
     pub max_commands_per_second: u32,
+    /// Optional hook invoked whenever an IPC message is rejected or fails
+    /// (oversized, malformed, not grantable by the [`Acl`], rate-limited, or the
+    /// app `on_command` returns an error). Lets the host route the event to
+    /// telemetry instead of relying on the crate's own log output. `None` keeps
+    /// the default behaviour (the crate logs via `eprintln!`/log-sink only).
+    pub on_ipc_rejection: Option<Arc<dyn Fn(IpcRejection) + Send + Sync>>,
+}
+
+/// A rejected or failed IPC message, surfaced to the host via
+/// [`WebviewOptions::on_ipc_rejection`] so it can report rejected/malformed IPC
+/// to telemetry rather than relying on the crate's own `eprintln!`/log-sink
+/// output. Mirrors every place [`handle_ipc`] would otherwise silently drop the
+/// message.
+pub enum IpcRejection {
+    /// Message exceeded [`MAX_IPC_MESSAGE_BYTES`].
+    TooLarge {
+        bytes: usize,
+    },
+    /// `serde_json::from_str` failed.
+    Malformed {
+        error: String,
+    },
+    /// No `action` field present.
+    MissingAction,
+    /// `action` not granted by the ACL, or its params failed validation.
+    ActionDenied {
+        action: String,
+        reason: String,
+    },
+    /// Per-process rate limit exceeded.
+    RateLimited {
+        action: String,
+    },
+    /// The app `on_command` closure returned an error.
+    DispatchError {
+        action: String,
+        error: String,
+    },
 }
 
 impl WebviewOptions {
@@ -134,6 +174,7 @@ impl WebviewOptions {
             dist_dir,
             acl: Acl { capabilities },
             max_commands_per_second,
+            on_ipc_rejection: None,
         }
     }
 }
@@ -159,7 +200,11 @@ impl Acl {
     /// Validates an incoming IPC message's parameters against the grant for
     /// `action`. Returns the (possibly defaulted) validated params, or an error
     /// describing why the message is rejected.
-    pub fn validate(&self, action: &str, params: &serde_json::Value) -> Result<serde_json::Value, AclError> {
+    pub fn validate(
+        &self,
+        action: &str,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, AclError> {
         let cap = self
             .capability(action)
             .ok_or_else(|| AclError::ActionNotGranted(action.to_string()))?;
@@ -357,14 +402,12 @@ where
         .with_window(WindowConfig::from_options("main", &opts))
         .with_acl(opts.acl)
         .with_max_commands_per_second(opts.max_commands_per_second)
+        .with_ipc_rejection(opts.on_ipc_rejection.unwrap_or_else(|| Arc::new(|_| {})))
         .run(on_command)
 }
 
 /// Serves a single file from `dist_dir` over the custom protocol.
-fn serve(
-    dist_dir: &Path,
-    request: &Request<Vec<u8>>,
-) -> wry::Result<Response<Cow<'static, [u8]>>> {
+fn serve(dist_dir: &Path, request: &Request<Vec<u8>>) -> wry::Result<Response<Cow<'static, [u8]>>> {
     let path = request.uri().path();
     let rel = path.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
@@ -373,7 +416,10 @@ fn serve(
     // front, then canonicalize and verify the result is still rooted at
     // `dist_dir` so a crafted URI like `/../../etc/passwd` can't read files
     // outside the app's bundle (path-traversal).
-    if rel.split('/').any(|seg| seg == ".." || seg.starts_with("..")) {
+    if rel
+        .split('/')
+        .any(|seg| seg == ".." || seg.starts_with(".."))
+    {
         return Ok(not_found());
     }
     let Ok(root) = dist_dir.canonicalize() else {
@@ -405,9 +451,7 @@ fn not_found() -> Response<Cow<'static, [u8]>> {
         .status(404)
         .header(CONTENT_TYPE, "text/plain")
         .body(Cow::Borrowed(b"404 Not Found" as &[u8]))
-        .unwrap_or_else(|_| {
-            Response::new(Cow::Borrowed(b"404 Not Found" as &[u8]))
-        })
+        .unwrap_or_else(|_| Response::new(Cow::Borrowed(b"404 Not Found" as &[u8])))
 }
 
 /// Maximum IPC message size accepted before parsing. Mirrors the 16 KiB body
@@ -437,10 +481,17 @@ fn new_ipc_rate_limiter(max_commands_per_second: u32) -> IpcRateLimiter {
 }
 
 /// Parses an IPC message, checks the ACL and rate limit, and dispatches
-/// to `on_command`.
+/// to `on_command`. `on_reject` is invoked (in addition to the crate's own
+/// log output) at every rejection point so the host can surface it to
+/// telemetry.
 #[cfg_attr(not(test), allow(dead_code))]
-fn handle_ipc<F>(acl: &Acl, limiter: &IpcRateLimiter, on_command: &F, message: &str)
-where
+fn handle_ipc<F>(
+    acl: &Acl,
+    limiter: &IpcRateLimiter,
+    on_command: &F,
+    on_reject: &dyn Fn(IpcRejection),
+    message: &str,
+) where
     F: Fn(&str, serde_json::Value) -> std::result::Result<(), String>,
 {
     if message.len() > MAX_IPC_MESSAGE_BYTES {
@@ -449,12 +500,18 @@ where
             message.len(),
             MAX_IPC_MESSAGE_BYTES
         );
+        on_reject(IpcRejection::TooLarge {
+            bytes: message.len(),
+        });
         return;
     }
     let parsed: serde_json::Value = match serde_json::from_str(message) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("[appfront-webview] ignoring malformed IPC message: {e}");
+            on_reject(IpcRejection::Malformed {
+                error: e.to_string(),
+            });
             return;
         }
     };
@@ -462,31 +519,47 @@ where
         Some(a) => a.to_string(),
         None => {
             eprintln!("[appfront-webview] ignoring IPC message without `action`");
+            on_reject(IpcRejection::MissingAction);
             return;
         }
     };
-    let raw_params = parsed.get("params").cloned().unwrap_or(serde_json::Value::Null);
+    let raw_params = parsed
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let validated = match acl.validate(&action, &raw_params) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("[appfront-webview] rejected IPC action `{action}`: {e:?}");
+            on_reject(IpcRejection::ActionDenied {
+                action,
+                reason: format!("{e:?}"),
+            });
             return;
         }
     };
     if limiter.check().is_err() {
-        eprintln!(
-            "[appfront-webview] rejected IPC action `{action}` (rate limit exceeded)"
-        );
+        eprintln!("[appfront-webview] rejected IPC action `{action}` (rate limit exceeded)");
+        on_reject(IpcRejection::RateLimited { action });
         return;
     }
     if let Err(e) = on_command(&action, validated) {
         eprintln!("[appfront-webview] command `{action}` failed: {e}");
+        on_reject(IpcRejection::DispatchError {
+            action,
+            error: e,
+        });
     }
 }
 
 /// Best-effort MIME type from a file extension.
 fn mime_for(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("html") | Some("htm") => "text/html",
         Some("js") => "text/javascript",
         Some("mjs") => "text/javascript",
@@ -503,8 +576,9 @@ fn mime_for(path: &Path) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::cell::RefCell;
+
+    use super::*;
 
     fn cap(action: &str, params: Vec<ParamSpec>) -> Capability {
         Capability {
@@ -525,7 +599,13 @@ mod tests {
             Ok(())
         };
 
-        handle_ipc(&acl, &limiter, &on_command, r#"{"action":"reset_everything"}"#);
+        handle_ipc(
+            &acl,
+            &limiter,
+            &on_command,
+            &|_: IpcRejection| {},
+            r#"{"action":"reset_everything"}"#,
+        );
 
         assert!(calls.borrow().is_empty());
     }
@@ -547,16 +627,17 @@ mod tests {
         // precise length rather than guessing the JSON overhead.
         let suffix = "\"}";
         let prefix = "{\"action\":\"increment\",\"p\":\"";
-        let pad_for = |target: usize| "a".repeat(target.saturating_sub(prefix.len() + suffix.len()));
+        let pad_for =
+            |target: usize| "a".repeat(target.saturating_sub(prefix.len() + suffix.len()));
 
         let within = format!("{prefix}{}{suffix}", pad_for(MAX_IPC_MESSAGE_BYTES));
         assert_eq!(within.len(), MAX_IPC_MESSAGE_BYTES, "within.len()");
-        handle_ipc(&acl, &limiter, &on_command, &within);
+        handle_ipc(&acl, &limiter, &on_command, &|_: IpcRejection| {}, &within);
         assert_eq!(*calls.borrow(), 1);
 
         let over = format!("{prefix}{}{suffix}", pad_for(MAX_IPC_MESSAGE_BYTES + 1));
         assert_eq!(over.len(), MAX_IPC_MESSAGE_BYTES + 1, "over.len()");
-        handle_ipc(&acl, &limiter, &on_command, &over);
+        handle_ipc(&acl, &limiter, &on_command, &|_: IpcRejection| {}, &over);
         assert_eq!(*calls.borrow(), 1);
     }
 
@@ -573,12 +654,12 @@ mod tests {
         };
 
         for _ in 0..3 {
-            handle_ipc(&acl, &limiter, &on_command, r#"{"action":"increment"}"#);
+            handle_ipc(&acl, &limiter, &on_command, &|_: IpcRejection| {}, r#"{"action":"increment"}"#);
         }
         assert_eq!(*calls.borrow(), 3);
 
         // Burst allowance (3) is now exhausted.
-        handle_ipc(&acl, &limiter, &on_command, r#"{"action":"increment"}"#);
+        handle_ipc(&acl, &limiter, &on_command, &|_: IpcRejection| {}, r#"{"action":"increment"}"#);
         assert_eq!(*calls.borrow(), 3);
     }
 
@@ -598,6 +679,7 @@ mod tests {
             &acl,
             &limiter,
             &on_command,
+            &|_: IpcRejection| {},
             r#"{"action":"increment","params":{"evil":1}}"#,
         );
         assert_eq!(*calls.borrow(), 0);
@@ -634,6 +716,7 @@ mod tests {
                 calls.borrow_mut().push((action.to_string(), params));
                 Ok(())
             },
+            &|_: IpcRejection| {},
             r#"{"action":"open"}"#,
         );
         assert!(calls.borrow().is_empty());
@@ -646,6 +729,7 @@ mod tests {
                 calls.borrow_mut().push((action.to_string(), params));
                 Ok(())
             },
+            &|_: IpcRejection| {},
             r#"{"action":"open","params":{"id":5}}"#,
         );
         assert!(calls.borrow().is_empty());
@@ -658,6 +742,7 @@ mod tests {
                 calls.borrow_mut().push((action.to_string(), params));
                 Ok(())
             },
+            &|_: IpcRejection| {},
             r#"{"action":"open","params":{"id":"abc"}}"#,
         );
         let captured = calls.borrow();
@@ -665,5 +750,33 @@ mod tests {
         assert_eq!(captured[0].0, "open");
         assert_eq!(captured[0].1["id"], "abc");
         assert_eq!(captured[0].1["max"], 10);
+    }
+
+    #[test]
+    fn handle_ipc_invokes_rejection_hook_for_denied_action() {
+        let acl = Acl {
+            capabilities: vec![cap("increment", vec![])],
+        };
+        let limiter = new_ipc_rate_limiter(10);
+        let rejections = RefCell::new(Vec::new());
+        let on_reject = |r: IpcRejection| rejections.borrow_mut().push(r);
+        let on_command = |_action: &str, _params: serde_json::Value| -> Result<(), String> {
+            Ok(())
+        };
+
+        handle_ipc(
+            &acl,
+            &limiter,
+            &on_command,
+            &on_reject,
+            r#"{"action":"reset_everything"}"#,
+        );
+
+        let rej = rejections.borrow();
+        assert_eq!(rej.len(), 1);
+        assert!(matches!(
+            &rej[0],
+            IpcRejection::ActionDenied { action, .. } if action == "reset_everything"
+        ));
     }
 }
