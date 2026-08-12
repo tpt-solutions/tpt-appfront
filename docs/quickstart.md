@@ -67,6 +67,52 @@ tpt-appfront add component Card
 tpt-appfront add page Settings
 ```
 
+## `generate --llm` (live model-backed)
+
+The default `generate` is offline and rule-based (keyword-matched against a few
+known UI patterns). For open-ended prompts, pass `--llm` to call a model
+provider and produce a `view!` snippet:
+
+```sh
+export ANTHROPIC_API_KEY=sk-...
+tpt-appfront generate --prompt "a kanban board with drag handles" --llm
+```
+
+Five providers ship, all behind the `llm` Cargo feature:
+
+| `--provider` | Key env var            | Default model       |
+|--------------|------------------------|---------------------|
+| `anthropic`  | `ANTHROPIC_API_KEY`    | `claude-sonnet-4-5` |
+| `openai`     | `OPENAI_API_KEY`       | `gpt-4o`            |
+| `openrouter` | `OPENROUTER_API_KEY`   | `openai/gpt-4o`     |
+| `grok`       | `XAI_API_KEY`          | `grok-3`            |
+| `ollama`     | *(none — local)*       | *(requires `--model`)* |
+
+```sh
+tpt-appfront generate --prompt "a dashboard with live metrics" --llm --provider openai --model gpt-4o
+tpt-appfront generate --prompt "a local RAG chat" --llm --provider ollama --model llama3.1
+# self-hosted / proxy endpoints:
+tpt-appfront generate --prompt "..." --llm --provider openai --base-url https://my-proxy.example/v1/chat/completions
+```
+
+- **Feature-gated**: `--llm` only works when the CLI is built with the `llm`
+  Cargo feature (`cargo install tpt-appfront-cli --features llm`). Without it,
+  the command fails loudly — it never silently falls back to the offline
+  generator.
+- **Network egress + API key**: each provider calls its own endpoint. The
+  matching key env var must be set (Ollama needs none, but requires an explicit
+  `--model`); a missing key (or Ollama without `--model`) is a clear error — no
+  fallback to another provider or to the offline generator.
+- **`--provider` / `--model` / `--base-url`**: pick the provider, model id
+  (falls back to the provider default except Ollama), and optionally override the
+  endpoint. Adding an OpenAI-compatible provider is a one-line `PROVIDER_CONFIGS`
+  table entry in `crates/tpt-appfront-cli/src/llm/mod.rs`.
+- **Never hard-errors on imperfect output**: the reply's first fenced code block
+  is extracted and syntax-checked with `syn`. If it doesn't parse, the snippet is
+  still printed with a `// WARNING:` banner for you to fix by hand, rather than
+  the command failing. Wire the emitted `Msg` variants into your app's `Msg`
+  enum.
+
 ## Init presets
 
 Instead of the bare counter, scaffold a "real" UI shape with `--preset`. Presets

@@ -31,8 +31,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use tpt_appfront_core::{
-    create_effect, reconcile_keys, ui_tree::MediaType, HydrationPayload, KeyedDiff, NodeKind,
-    Router, UITree,
+    apply_auto_virtual_scroll, create_effect, reconcile_keys, ui_tree::MediaType, HydrationPayload,
+    KeyedDiff, NodeKind, Router, UITree,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -135,6 +135,21 @@ pub fn mount_router<Msg>(
 where
     Msg: Clone + 'static,
 {
+    mount_router_with(container, router, dispatch, false)
+}
+
+/// Like [`mount_router`], but with `auto_optimize` enabled: large unconfigured
+/// `List`/`DataGrid` nodes are windowed automatically on every route render
+/// (canvas parity via [`apply_auto_virtual_scroll`]).
+pub fn mount_router_with<Msg>(
+    container: &Element,
+    router: &Router<Msg>,
+    dispatch: Rc<dyn Fn(Msg)>,
+    auto_optimize: bool,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
     let document = web_sys::window()
         .expect("no window")
         .document()
@@ -164,7 +179,11 @@ where
         let router = router.clone();
         let container = container.clone();
         move || {
-            let view = router.current_view();
+            let mut view = router.current_view();
+            if auto_optimize {
+                let h = container.client_height() as f32;
+                apply_auto_virtual_scroll(&mut view, h);
+            }
             let _: Result<(), wasm_bindgen::JsValue> = (|| {
                 let existing = container.first_child();
                 match existing {
@@ -324,6 +343,41 @@ where
     })
 }
 
+/// Like [`render`], but with `auto_optimize` enabled: large unconfigured
+/// `List`/`DataGrid` nodes are windowed automatically on every reconcile, the
+/// same auto-tune treatment `CanvasApp::auto_optimize` gives the canvas backend
+/// and `TuiDriver::auto_optimize` gives the TUI backend.
+pub fn render_with<Msg>(
+    container: &Element,
+    view: Rc<dyn Fn() -> UITree<Msg>>,
+    dispatch: Rc<dyn Fn(Msg)>,
+    auto_optimize: bool,
+) -> Result<tpt_appfront_core::EffectHandle, wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    let initial = view();
+    let mut root = mount(container, &initial, dispatch)?;
+
+    // `Element` is a refcounted handle to a JS object, so cloning it is cheap
+    // and gives the effect an owned, `'static` value to read `client_height`
+    // from on every reconcile.
+    let container = container.clone();
+    let handle = create_effect({
+        let view = Rc::clone(&view);
+        move || {
+            let mut new_ui = view();
+            if auto_optimize {
+                let h = container.client_height() as f32;
+                apply_auto_virtual_scroll(&mut new_ui, h);
+            }
+            let _ = root.render(&new_ui);
+        }
+    });
+
+    Ok(handle)
+}
+
 /// Mounts `ui` into `container` and returns an [`EffectHandle`] that keeps the
 /// mounted subtree reconciled against `view()` on every signal change. Each
 /// effect run diffs the freshly-built `UITree` against the mounted one and
@@ -344,18 +398,7 @@ pub fn render<Msg>(
 where
     Msg: Clone + 'static,
 {
-    let initial = view();
-    let mut root = mount(container, &initial, dispatch)?;
-
-    let handle = create_effect({
-        let view = Rc::clone(&view);
-        move || {
-            let new_ui = view();
-            let _ = root.render(&new_ui);
-        }
-    });
-
-    Ok(handle)
+    render_with(container, view, dispatch, false)
 }
 
 /// Diffs `new_ui` against the live `mounted` record and updates the DOM *in
@@ -627,8 +670,11 @@ where
         if header_changed {
             thead.set_inner_html("");
             let header_row = document.create_element("tr")?;
+            let _ = header_row.set_attribute("role", "row");
             for column in columns {
                 let th = document.create_element("th")?;
+                let _ = th.set_attribute("scope", "col");
+                let _ = th.set_attribute("role", "columnheader");
                 th.set_text_content(Some(column));
                 header_row.append_child(&th)?;
             }
@@ -719,8 +765,11 @@ fn append_data_row(
     row: &[String],
 ) -> Result<(), wasm_bindgen::JsValue> {
     let tr = document.create_element("tr")?;
+    // ARIA grid row (todo.md #20).
+    let _ = tr.set_attribute("role", "row");
     for cell in row {
         let td = document.create_element("td")?;
+        let _ = td.set_attribute("role", "gridcell");
         td.set_text_content(Some(cell));
         tr.append_child(&td)?;
     }
@@ -875,17 +924,34 @@ where
         NodeKind::Input { value } => {
             let el = document.create_element("input")?;
             el.set_attribute("value", value)?;
+            // Stable `id` so an author-supplied `<label for>` can associate with
+            // this control (todo.md #20: label `for=`/`id` wiring).
+            if let Some(id) = ui.meta.data_appfront_id {
+                let _ = el.set_attribute("id", &format!("af-{id}"));
+            }
             el.into()
         }
         NodeKind::Textarea { value } => {
             let el = document.create_element("textarea")?;
+            if let Some(id) = ui.meta.data_appfront_id {
+                let _ = el.set_attribute("id", &format!("af-{id}"));
+            }
             el.set_text_content(Some(value));
             el.into()
         }
         NodeKind::Checkbox { label, checked } => {
             let el = document.create_element("label")?;
+            // Explicit label association (`for`/`id`) in addition to the wrapping
+            // `<label>`, so the control is named for assistive tech even if the
+            // implicit containment is missed (todo.md #20).
+            if let Some(id) = ui.meta.data_appfront_id {
+                let _ = el.set_attribute("for", &format!("af-{id}"));
+            }
             let input = document.create_element("input")?;
             input.set_attribute("type", "checkbox")?;
+            if let Some(id) = ui.meta.data_appfront_id {
+                let _ = input.set_attribute("id", &format!("af-{id}"));
+            }
             if *checked {
                 input.set_attribute("checked", "")?;
             }
@@ -899,6 +965,17 @@ where
         }
         NodeKind::Select { options, selected } => {
             let el = document.create_element("select")?;
+            if let Some(id) = ui.meta.data_appfront_id {
+                let _ = el.set_attribute("id", &format!("af-{id}"));
+            }
+            // A native `<select>` already exposes the correct implicit role; the
+            // remaining gap is an accessible name when there's no associated
+            // `<label>` (todo.md #20: Select ARIA).
+            if let Some(desc) = &ui.meta.ai.description {
+                if !desc.is_empty() {
+                    let _ = el.set_attribute("aria-label", desc);
+                }
+            }
             for (value, label) in options {
                 let opt = document.create_element("option")?;
                 opt.set_attribute("value", value)?;
@@ -918,12 +995,19 @@ where
             let el = document.create_element("div")?;
             // `role="radiogroup"` groups the options for assistive tech.
             let _ = el.set_attribute("role", "radiogroup");
-            for (value, label) in options {
+            for (i, (value, label)) in options.iter().enumerate() {
+                let opt_id = ui
+                    .meta
+                    .data_appfront_id
+                    .map(|g| format!("af-{g}-{i}"))
+                    .unwrap_or_else(|| format!("af-opt-{i}"));
                 let label_el = document.create_element("label")?;
+                let _ = label_el.set_attribute("for", &opt_id);
                 let input = document.create_element("input")?;
                 input.set_attribute("type", "radio")?;
                 input.set_attribute("name", name)?;
                 input.set_attribute("value", value)?;
+                let _ = input.set_attribute("id", &opt_id);
                 if value == selected {
                     input.set_attribute("checked", "")?;
                 }
@@ -938,13 +1022,18 @@ where
         }
         NodeKind::DataGrid { columns, rows } => {
             let table = document.create_element("table")?;
+            // `role="grid"` plus `role="row"`/`role="columnheader"`/`role="gridcell"`
+            // make the table a proper ARIA grid (todo.md #20).
+            let _ = table.set_attribute("role", "grid");
 
             let thead = document.create_element("thead")?;
             let header_row = document.create_element("tr")?;
+            let _ = header_row.set_attribute("role", "row");
             for column in columns {
                 let th = document.create_element("th")?;
                 // `scope="col"` tells screen readers each header describes its column.
                 let _ = th.set_attribute("scope", "col");
+                let _ = th.set_attribute("role", "columnheader");
                 th.set_text_content(Some(column));
                 header_row.append_child(&th)?;
             }
@@ -1088,15 +1177,18 @@ where
 // Keeps event `Closure`s alive for as long as their DOM node lives, keyed by
 // a stable per-node id so a re-render that replaces the handler can find and
 // drop the old one. `unmount` clears the entry when it clears the handler.
-type LiveClosures = std::cell::RefCell<HashMap<u32, Vec<Closure<dyn FnMut()>>>>;
+// Keyed by `u64`, not `u32`: the node pointer is widened before hashing so the
+// mapping stays correct if wasm64/`memory64` ever lands (a `u32` truncation of
+// a pointer would silently collide identities and drop the wrong closures).
+type LiveClosures = std::cell::RefCell<HashMap<u64, Vec<Closure<dyn FnMut()>>>>;
 thread_local! {
     static LIVE_CLOSURES: LiveClosures = std::cell::RefCell::new(HashMap::new());
 }
 
 /// Stable identity for a DOM node across renders (unique for the node's
 /// lifetime), used to map closures for cleanup.
-fn node_id(node: &Node) -> u32 {
-    (node as *const Node as u32) ^ (node.node_type() as u32).wrapping_mul(0x9e3779b1)
+fn node_id(node: &Node) -> u64 {
+    (node as *const Node as u64) ^ ((node.node_type() as u64) << 32).wrapping_mul(0x9e3779b1)
 }
 
 fn track_closure(node: &Node, closure: Closure<dyn FnMut()>) {

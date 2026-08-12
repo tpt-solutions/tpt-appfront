@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::{NodeKind, UITree};
+
 /// Configuration for windowed rendering of a fixed-height-item list.
 /// Set via [`NodeRef::virtual_scroll`][crate::NodeRef::virtual_scroll].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -44,7 +46,55 @@ impl VirtualScroll {
         self.overscan = overscan;
         self
     }
+}
 
+/// Item count at/above which [`apply_auto_virtual_scroll`] windows a
+/// `List`/`DataGrid` that doesn't already configure one. Below this a list is
+/// cheap enough that windowing it would cost more than it saves.
+pub const AUTO_VSCROLL_THRESHOLD_ITEMS: usize = 50;
+/// Default per-item height (px) assumed when auto-virtualizing a list whose
+/// real item height isn't known until layout.
+pub const AUTO_VSCROLL_ITEM_HEIGHT: f32 = 24.0;
+
+/// Recursively applies a [`VirtualScroll`] to any `List`/`DataGrid` node that
+/// doesn't already configure one and is large enough to benefit. This is the
+/// "applied" half of the frame-profiler's `virtual_scrolling` recommendation,
+/// reused by every backend (canvas, DOM, TUI) so large unconfigured
+/// collections get windowed automatically when auto-optimize is enabled.
+pub fn apply_auto_virtual_scroll<Msg: Clone>(ui: &mut UITree<Msg>, viewport_height: f32) {
+    let count = match &ui.kind {
+        NodeKind::List { items } => items.len(),
+        NodeKind::DataGrid { rows, .. } => rows.len(),
+        _ => 0,
+    };
+    if ui.meta.virtual_scroll.is_none() && count >= AUTO_VSCROLL_THRESHOLD_ITEMS {
+        ui.meta.virtual_scroll = Some(VirtualScroll::new(
+            AUTO_VSCROLL_ITEM_HEIGHT,
+            viewport_height.max(1.0),
+        ));
+    }
+
+    match &mut ui.kind {
+        NodeKind::Container { children } => {
+            for child in children {
+                apply_auto_virtual_scroll(child, viewport_height);
+            }
+        }
+        NodeKind::List { items } => {
+            for child in items {
+                apply_auto_virtual_scroll(child, viewport_height);
+            }
+        }
+        NodeKind::Portal { content, .. } => {
+            apply_auto_virtual_scroll(content, viewport_height);
+        }
+        // `DataGrid` rows are plain strings (no nested `UITree`), and the other
+        // node kinds have no recursive children.
+        _ => {}
+    }
+}
+
+impl VirtualScroll {
     /// Computes which item indices (of `total_items`) fall within the
     /// viewport plus overscan, and the pixel-height spacers needed above/
     /// below that window so the scrollable area's total height (and thus

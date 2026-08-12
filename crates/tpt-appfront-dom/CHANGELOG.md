@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `requestAnimationFrame` coalescing of text updates into one flush per frame.
 - Streaming hydration (`hydrate`): attaches listeners to server-rendered DOM via
   `data-appfront-id`, islands-only hydration of interactive subtrees.
+- Accessibility: form controls (`Input`/`Textarea`/`Select`/`Checkbox`/`Radio`) emit a
+  stable `id` (`af-<data_appfront_id>`); `Checkbox`/`Radio` use an explicit `<label for>`
+  association; `Select` surfaces `meta.ai.description` as `aria-label`; `DataGrid` renders
+  `role="grid"` plus `role="row"`/`role="columnheader"`/`role="gridcell"` (reconciliation
+  re-applies the same roles when it recreates rows/headers).
 
 ## [0.1.0]
 

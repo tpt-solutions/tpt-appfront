@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scaffolded app prints its `UITree` (via `tpt_appfront_core::devtools::inspect_tree`).
 - Friendlier tool-not-found errors (`missing_tool_hint`) for `trunk`/cargo-packager, and
   an explicit message when `--desktop-webview` is run without a `ui/index.html`.
+- `doctor --a11y`: a deterministic, no-AST heuristic lint over the project's `src/` that
+  flags `UITree` builder calls likely missing an accessible name (images with empty `alt`,
+  links with empty text, buttons with an empty label). Informational only — never fails the
+  run; fits the existing `doctor`/`optimize --analyze` heuristic-scan pattern.
 
 ## [0.1.0]
 

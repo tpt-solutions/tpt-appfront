@@ -108,6 +108,20 @@ jobs:
           cargo test -p tpt-appfront-dom --target wasm32-unknown-unknown --no-run
           wasm-bindgen-test-runner target/wasm32-unknown-unknown/debug/deps/tpt_appfront_dom-*.wasm
 
+  cli-llm:
+    name: CLI `llm` feature (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The `llm` feature pulls in network/model-provider deps (ureq, serde,
+      # syn). Lint it explicitly so that path can't bit-rot without needing
+      # network access in CI (the tests are network-free — see llm/mod.rs).
+      - run: cargo clippy -p tpt-appfront-cli --all-targets --features llm -- -D warnings
+
   audit:
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest

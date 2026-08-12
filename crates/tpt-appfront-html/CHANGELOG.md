@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `render_page` emits OpenGraph meta tags for social bots.
 - Utility-class rendering: `styling::inline_style` is applied as a `style="..."`
   attribute alongside `class`.
+- Accessibility: form controls (`Input`/`Textarea`/`Select`/`Checkbox`/`Radio`) emit a
+  stable `id` (`af-<data_appfront_id>`); `Checkbox`/`Radio` use an explicit `<label for>`
+  association; `Select` surfaces `meta.ai.description` as `aria-label`; `DataGrid` renders
+  `role="grid"` plus `role="row"`/`role="columnheader"`/`role="gridcell"`.
 
 ## [0.1.0]
 

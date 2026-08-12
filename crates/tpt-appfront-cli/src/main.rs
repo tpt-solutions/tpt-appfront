@@ -1,5 +1,7 @@
 mod generate;
 mod ingest;
+#[cfg(feature = "llm")]
+mod llm;
 mod presets;
 mod templates;
 
@@ -110,6 +112,11 @@ enum Command {
         /// Directory of the project to inspect (defaults to the current dir).
         #[arg(long, default_value = ".")]
         project: PathBuf,
+        /// Run a deterministic, no-AST heuristic accessibility lint over the
+        /// project's `src/` (flags images/links/buttons that look like they're
+        /// missing accessible names). Informational only — never fails the run.
+        #[arg(long)]
+        a11y: bool,
     },
     /// Build with size optimizations and report the resulting artifact size.
     Optimize {
@@ -132,8 +139,9 @@ enum Command {
         analyze: bool,
     },
     /// Generate a `view!` UI scaffold from a text prompt. Offline and
-    /// rule-based (keyword-matched against known patterns) — not a live LLM
-    /// call, so it needs no API key or network access.
+    /// rule-based (keyword-matched against known patterns) by default — not a
+    /// live LLM call. Pass `--llm` for a live, model-backed scaffold (needs the
+    /// `llm` CLI feature and an API key; see `docs/quickstart.md`).
     Generate {
         /// Description of the UI to scaffold, e.g. "a login form".
         #[arg(long)]
@@ -141,6 +149,19 @@ enum Command {
         /// Write the generated snippet to this file instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Use a live LLM provider instead of the offline rule-based generator.
+        /// Requires this CLI to be built with the `llm` feature.
+        #[arg(long)]
+        llm: bool,
+        /// Which LLM provider to use with `--llm` (only `anthropic` today).
+        #[arg(long, default_value = "anthropic")]
+        provider: String,
+        /// Model id passed to the provider (e.g. `claude-sonnet-4-5`).
+        #[arg(long, default_value = "claude-sonnet-4-5")]
+        model: String,
+        /// Override the provider's default API endpoint (self-hosted/proxy).
+        #[arg(long)]
+        base_url: Option<String>,
     },
     /// Ingest existing static / server-rendered HTML and emit a `view!`
     /// builder skeleton (structure + classes only; inline event handlers
@@ -227,7 +248,13 @@ fn main() -> anyhow::Result<()> {
             bundle,
         } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
-        Command::Doctor { project } => doctor(&project),
+        Command::Doctor { project, a11y } => {
+            if a11y {
+                doctor_a11y(&project)
+            } else {
+                doctor(&project)
+            }
+        }
         Command::Optimize {
             target,
             project,
@@ -241,7 +268,14 @@ fn main() -> anyhow::Result<()> {
                 optimize(&target, &project, auto, bundle)
             }
         }
-        Command::Generate { prompt, out } => generate_ui(&prompt, out.as_deref()),
+        Command::Generate {
+            prompt,
+            out,
+            llm,
+            provider,
+            model,
+            base_url,
+        } => generate_ui(&prompt, out.as_deref(), llm, &provider, &model, base_url.as_deref()),
         Command::Ingest { input, out } => ingest::ingest_file(&input, out.as_deref()),
         Command::Add { kind } => match kind {
             AddKind::Component { name, project } => add_component(&name, &project),
@@ -256,8 +290,33 @@ fn main() -> anyhow::Result<()> {
 // generate
 // ---------------------------------------------------------------------------
 
-fn generate_ui(prompt: &str, out: Option<&Path>) -> anyhow::Result<()> {
-    let snippet = generate::generate(prompt);
+fn generate_ui(
+    prompt: &str,
+    out: Option<&Path>,
+    llm: bool,
+    provider: &str,
+    model: &str,
+    base_url: Option<&str>,
+) -> anyhow::Result<()> {
+    let snippet = if llm {
+        #[cfg(feature = "llm")]
+        {
+            llm::generate(prompt, provider, model, base_url)?
+        }
+        #[cfg(not(feature = "llm"))]
+        {
+            // Referenced so the params stay used (and the warning-free build) when
+            // the `llm` feature is off; the only path here is a clear error.
+            let _ = (provider, model, base_url);
+            anyhow::bail!(
+                "`generate --llm` requires this CLI to be built with the `llm` feature. \
+                 Rebuild/install with `cargo install tpt-appfront-cli --features llm` (or \
+                 `cargo build --features llm`)."
+            )
+        }
+    } else {
+        generate::generate(prompt)
+    };
     match out {
         Some(path) => {
             fs::write(path, &snippet).with_context(|| format!("writing {}", path.display()))?;
@@ -1185,6 +1244,81 @@ fn optimize_analyze(project: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `tpt-appfront doctor --a11y`: a deterministic, no-AST heuristic scan that
+/// flags `UITree` usages in the project's `src/` that are likely missing an
+/// accessible name — images with empty `alt`, links with empty text, and
+/// buttons with an empty label. Prints a report; informational only and always
+/// returns `Ok` so it can't break a CI pipeline that simply runs it (fits the
+/// `optimize --analyze` heuristic-scan pattern, todo.md #20).
+fn doctor_a11y(project: &Path) -> anyhow::Result<()> {
+    let mut hits: Vec<(PathBuf, usize, String)> = Vec::new();
+    collect_a11y_matches(&project.join("src"), &mut hits);
+
+    if hits.is_empty() {
+        println!(
+            "a11y: no obvious issues found in src/ (heuristic scan). \
+             Review form controls for an associated <label for> and DataGrid/Select roles."
+        );
+    } else {
+        println!("a11y lint found {} item(s) to review:", hits.len());
+        for (path, line, msg) in &hits {
+            println!("  - {}:{} — {msg}", path.display(), line);
+        }
+        println!("a11y: done (heuristic — review the flags above).");
+    }
+    Ok(())
+}
+
+/// Recursively scans `.rs` files under `dir` for accessibility smells,
+/// recording each as `(path, line, message)`. The checks are line-based and
+/// intentionally dumb (no parsing of the `UITree` AST): they look for the
+/// common empty-string-literal mistakes on `image`/`link`/`button` builder
+/// calls.
+fn collect_a11y_matches(dir: &Path, hits: &mut Vec<(PathBuf, usize, String)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_a11y_matches(&path, hits);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            if let Ok(content) = fs::read_to_string(&path) {
+                for (i, line) in content.lines().enumerate() {
+                    if let Some(msg) = a11y_flag(line) {
+                        hits.push((path.clone(), i + 1, msg));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Returns an accessibility warning for a single source line, or `None`.
+/// Heuristic only — flags the most common missing-accessible-name mistakes in
+/// `UITree` builder calls.
+fn a11y_flag(line: &str) -> Option<String> {
+    let t = line.trim();
+    // `image(src, alt)`: an empty alt string (`""`) is the second argument.
+    if t.contains(".image(") && (t.contains(", \"\"") || t.contains(",\"\"") || t.contains(", \"\")") || t.contains(",\"\")")) {
+        return Some(
+            "image with empty alt text (`\"\"`) — confirm it's decorative, or give it a description"
+                .to_string(),
+        );
+    }
+    // `link(href, text)`: an empty link text is the second argument.
+    if t.contains(".link(") && (t.contains(", \"\"") || t.contains(",\"\"") || t.contains(", \"\")") || t.contains(",\"\")")) {
+        return Some(
+            "link with empty text — links need accessible text, not just an href".to_string(),
+        );
+    }
+    // `button(label)`: an empty label is the (only) argument.
+    if t.contains(".button(") && (t.contains(".button(\"\")") || t.contains(".button( \"\")")) {
+        return Some("button with empty label — buttons need an accessible name".to_string());
+    }
+    None
+}
+
 /// Recursively scans `.rs` files under `dir` for `List`/`DataGrid` usage marks
 /// (`.list(`/`.data_grid(`/`.rows(`), recording each matching `path:line`.
 fn collect_rs_matches(dir: &Path, hits: &mut Vec<(PathBuf, usize)>) {
@@ -1792,13 +1926,85 @@ mod tests {
             "ui.rs"
         ])
         .is_ok());
+        // New `--llm` / `--provider` / `--model` flags parse alongside `--prompt`.
+        assert!(Cli::try_parse_from([
+            "tpt-appfront",
+            "generate",
+            "--prompt",
+            "a dashboard",
+            "--llm",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-sonnet-4-5"
+        ])
+        .is_ok());
         assert!(Cli::try_parse_from(["tpt-appfront", "generate"]).is_err());
+    }
+
+    #[cfg(not(feature = "llm"))]
+    #[test]
+    fn generate_llm_bails_without_feature() {
+        // Without the `llm` feature compiled in, `--llm` must error loudly
+        // rather than silently producing the offline snippet.
+        let err = generate_ui("a dashboard", None, true, "anthropic", "claude-sonnet-4-5", None)
+            .expect_err("expected a feature error without the `llm` feature");
+        assert!(err.to_string().contains("`llm` feature"), "got: {err}");
     }
 
     #[test]
     fn doctor_flags_parse() {
         assert!(Cli::try_parse_from(["appfront", "doctor"]).is_ok());
         assert!(Cli::try_parse_from(["appfront", "doctor", "--project", "."]).is_ok());
+        assert!(Cli::try_parse_from(["appfront", "doctor", "--a11y"]).is_ok());
+    }
+
+    #[test]
+    fn a11y_flag_flags_missing_accessible_names() {
+        assert_eq!(
+            a11y_flag(r#"    c.image("logo.png", "")"#),
+            Some(
+                "image with empty alt text (`\"\"`) — confirm it's decorative, or give it a description"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            a11y_flag(r#"c.link("/x", "")"#),
+            Some("link with empty text — links need accessible text, not just an href".to_string())
+        );
+        assert_eq!(
+            a11y_flag(r#"c.button("")"#),
+            Some("button with empty label — buttons need an accessible name".to_string())
+        );
+        // Decorative-but-named and non-empty cases are clean.
+        assert_eq!(a11y_flag(r#"c.image("x", "a cat")"#), None);
+        assert_eq!(a11y_flag(r#"c.button("Click")"#), None);
+        assert_eq!(a11y_flag(r#"c.data_grid(...)"#), None);
+    }
+
+    #[test]
+    fn doctor_a11y_recurses_src_and_reports_findings() {
+        let dir = std::env::temp_dir().join(format!("tpt-a11y-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src").join("widgets")).unwrap();
+        fs::write(
+            dir.join("src").join("main.rs"),
+            "fn main() { let _ = c.image(\"a.png\", \"\"); }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src").join("widgets").join("nav.rs"),
+            "fn nav() { let _ = c.link(\"/home\", \"\"); let _ = c.button(\"Go\"); }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src").join("ok.rs"),
+            "fn ok() { let _ = c.image(\"b\", \"chart\"); }\n",
+        )
+        .unwrap();
+        // Informational only — must not bail/panic.
+        assert!(doctor_a11y(&dir).is_ok());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

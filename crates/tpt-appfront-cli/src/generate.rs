@@ -9,13 +9,13 @@
 
 /// One recognized UI pattern: a set of trigger keywords and the `view!`
 /// snippet to emit when any of them appear in the prompt (case-insensitive).
-struct Pattern {
-    name: &'static str,
-    keywords: &'static [&'static str],
-    snippet: &'static str,
+pub(crate) struct Pattern {
+    pub(crate) name: &'static str,
+    pub(crate) keywords: &'static [&'static str],
+    pub(crate) snippet: &'static str,
 }
 
-const PATTERNS: &[Pattern] = &[
+pub(crate) const PATTERNS: &[Pattern] = &[
     Pattern {
         name: "counter",
         keywords: &["counter", "increment", "count"],

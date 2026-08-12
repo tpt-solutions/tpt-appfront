@@ -80,4 +80,4 @@ pub use tpt_appfront_macros::{component, rsx, view};
 pub use ui_tree::{
     AiMeta, ContainerBuilder, HydrationPayload, NodeKind, NodeMeta, NodeRef, UITree,
 };
-pub use virtual_scroll::{VirtualScroll, VisibleRange};
+pub use virtual_scroll::{apply_auto_virtual_scroll, VirtualScroll, VisibleRange};

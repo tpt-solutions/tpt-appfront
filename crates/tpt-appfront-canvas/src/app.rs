@@ -5,19 +5,14 @@
 use std::rc::Rc;
 
 use taffy::TaffyTree;
-use tpt_appfront_core::{NodeKind, UITree, VirtualScroll};
+use tpt_appfront_core::{apply_auto_virtual_scroll, UITree};
+
+#[cfg(test)]
+use tpt_appfront_core::{NodeKind, VirtualScroll};
 
 use crate::auto_optimizer::{AutoOptimizer, OptimizerState};
 use crate::text::TextMeasurer;
 use crate::{layout, paint};
-
-/// Item count at/above which `auto_optimize` applies a `VirtualScroll` to a
-/// `List`/`DataGrid` that doesn't already configure one. Below this a list is
-/// cheap enough that windowing it would cost more than it saves.
-const AUTO_VSCROLL_THRESHOLD_ITEMS: usize = 50;
-/// Default per-item height (px) assumed when auto-virtualizing a list whose
-/// real item height isn't known until layout.
-const AUTO_VSCROLL_ITEM_HEIGHT: f32 = 24.0;
 
 pub struct CanvasApp<Msg: Clone + 'static> {
     build_ui: Box<dyn FnMut() -> UITree<Msg>>,
@@ -120,48 +115,6 @@ impl<Msg: Clone + 'static> eframe::App for CanvasApp<Msg> {
     #[cfg(target_arch = "wasm32")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(&mut *self)
-    }
-}
-
-/// Recursively applies a [`VirtualScroll`] to any `List`/`DataGrid` node that
-/// doesn't already configure one and is large enough to benefit, when
-/// auto-optimize is enabled and the frame profiler recommends it. This is the
-/// "applied" half of the `AutoOptimizer` for the canvas backend (todo.md Phase
-/// 11 stretch follow-through): the profiler decides, and this acts on it.
-fn apply_auto_virtual_scroll<Msg: Clone>(ui: &mut UITree<Msg>, viewport_height: f32) {
-    apply_auto_virtual_scroll_inner(ui, viewport_height);
-}
-
-fn apply_auto_virtual_scroll_inner<Msg: Clone>(ui: &mut UITree<Msg>, viewport_height: f32) {
-    let count = match &ui.kind {
-        NodeKind::List { items } => items.len(),
-        NodeKind::DataGrid { rows, .. } => rows.len(),
-        _ => 0,
-    };
-    if ui.meta.virtual_scroll.is_none() && count >= AUTO_VSCROLL_THRESHOLD_ITEMS {
-        ui.meta.virtual_scroll = Some(VirtualScroll::new(
-            AUTO_VSCROLL_ITEM_HEIGHT,
-            viewport_height.max(1.0),
-        ));
-    }
-
-    match &mut ui.kind {
-        NodeKind::Container { children } => {
-            for child in children {
-                apply_auto_virtual_scroll_inner(child, viewport_height);
-            }
-        }
-        NodeKind::List { items } => {
-            for child in items {
-                apply_auto_virtual_scroll_inner(child, viewport_height);
-            }
-        }
-        NodeKind::Portal { content, .. } => {
-            apply_auto_virtual_scroll_inner(content, viewport_height);
-        }
-        // `DataGrid` rows are plain strings (no nested `UITree`), and the other
-        // node kinds have no recursive children.
-        _ => {}
     }
 }
 

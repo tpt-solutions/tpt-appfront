@@ -26,7 +26,9 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
-use tpt_appfront_core::{ui_tree::MediaType, NodeKind, UITree, VirtualScroll};
+use tpt_appfront_core::{
+    apply_auto_virtual_scroll, ui_tree::MediaType, NodeKind, UITree, VirtualScroll,
+};
 
 /// A focusable element discovered while walking the tree, in document order.
 /// `tpt-appfront-dom`/`tpt-appfront-canvas` wire these to pointer events; here they're
@@ -393,6 +395,9 @@ pub struct TuiDriver<Msg: Clone> {
     checks: HashMap<u64, bool>,
     selections: HashMap<u64, String>,
     quit: bool,
+    /// When set, large unconfigured `List`/`DataGrid` nodes are auto-windowed
+    /// via [`apply_auto_virtual_scroll`] on every render.
+    auto_optimize: bool,
 }
 
 impl<Msg: Clone> TuiDriver<Msg> {
@@ -409,7 +414,18 @@ impl<Msg: Clone> TuiDriver<Msg> {
             checks: HashMap::new(),
             selections: HashMap::new(),
             quit: false,
+            auto_optimize: false,
         }
+    }
+
+    /// Enables automatic application of the frame-profiler's `virtual_scrolling`
+    /// recommendation: when enabled, large unconfigured `List`/`DataGrid` nodes
+    /// get windowed automatically on every render — the same auto-tune treatment
+    /// the canvas backend (`CanvasApp::auto_optimize`) already provides. Set
+    /// before calling [`run`]/[`run_with`].
+    pub fn auto_optimize(mut self, enabled: bool) -> Self {
+        self.auto_optimize = enabled;
+        self
     }
 
     /// The number of focusable nodes (used to wrap focus navigation).
@@ -594,6 +610,17 @@ pub fn run<Msg: Clone + 'static>(
     build_ui: impl Fn() -> UITree<Msg>,
     on_event: impl Fn(Msg),
 ) -> Result<()> {
+    run_with(build_ui, on_event, false)
+}
+
+/// Like [`run`], but lets the caller enable `auto_optimize` — when `true`,
+/// large unconfigured `List`/`DataGrid` nodes are windowed automatically on
+/// every render (mirroring `CanvasApp::auto_optimize`).
+pub fn run_with<Msg: Clone + 'static>(
+    build_ui: impl Fn() -> UITree<Msg>,
+    on_event: impl Fn(Msg),
+    auto_optimize: bool,
+) -> Result<()> {
     enable_raw_mode().context("enable_raw_mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
@@ -601,12 +628,15 @@ pub fn run<Msg: Clone + 'static>(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
 
-    let mut driver = TuiDriver::new(&build_ui());
+    let mut driver = TuiDriver::new(&build_ui()).auto_optimize(auto_optimize);
 
     loop {
         terminal
             .draw(|frame| {
-                let ui = build_ui();
+                let mut ui = build_ui();
+                if auto_optimize {
+                    apply_auto_virtual_scroll(&mut ui, frame.area().height as f32);
+                }
                 render(
                     &ui,
                     frame,
@@ -654,13 +684,30 @@ pub fn buffer_to_string(buf: &Buffer) -> String {
 /// returns the resulting buffer. Used by the crate's own headless tests and
 /// handy for app-level snapshot tests.
 pub fn render_to_buffer<Msg: Clone>(ui: &UITree<Msg>, width: u16, height: u16) -> Buffer {
+    render_to_buffer_with(ui, width, height, false)
+}
+
+/// Like [`render_to_buffer`], but with `auto_optimize` enabled — large
+/// unconfigured `List`/`DataGrid` nodes are windowed before rendering, so
+/// headless tests can assert the auto-tune path behaves like an explicit
+/// [`VirtualScroll`].
+pub fn render_to_buffer_with<Msg: Clone>(
+    ui: &UITree<Msg>,
+    width: u16,
+    height: u16,
+    auto_optimize: bool,
+) -> Buffer {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test backend");
-    let driver = TuiDriver::new(ui);
+    let driver = TuiDriver::new(ui).auto_optimize(auto_optimize);
     terminal
         .draw(|frame| {
+            let mut ui = ui.clone();
+            if auto_optimize {
+                apply_auto_virtual_scroll(&mut ui, frame.area().height as f32);
+            }
             render(
-                ui,
+                &ui,
                 frame,
                 frame.area(),
                 driver.inputs(),
@@ -869,5 +916,43 @@ mod tests {
             !s.contains("row 99"),
             "far rows should be virtualized out of the visible buffer: {s}"
         );
+    }
+
+    #[test]
+    fn auto_virtual_scroll_windows_large_unconfigured_list() {
+        // Same 100-item list but WITHOUT an explicit `VirtualScroll`: with
+        // auto_optimize on, the backend must window it automatically (the
+        // canvas `CanvasApp::auto_optimize` parity for TUI).
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.list(|l: &mut ContainerBuilder<Msg>| {
+                for i in 0..100 {
+                    l.text(format!("row {i}"));
+                }
+            });
+        });
+        let buf = render_to_buffer_with(&ui, 40, 10, true);
+        let s = buffer_to_string(&buf);
+        assert!(s.contains("row 0"), "first rows should render: {s}");
+        assert!(
+            !s.contains("row 99"),
+            "far rows should be auto-virtualized out of the visible buffer: {s}"
+        );
+    }
+
+    #[test]
+    fn auto_virtual_scroll_respects_existing_config() {
+        // A small list (below the auto threshold) must NOT be windowed by
+        // auto_optimize, and an explicit config must survive.
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.list(|l: &mut ContainerBuilder<Msg>| {
+                for i in 0..5 {
+                    l.text(format!("row {i}"));
+                }
+            })
+            .virtual_scroll(VirtualScroll::new(1.0, 50.0));
+        });
+        let buf = render_to_buffer_with(&ui, 40, 10, true);
+        let s = buffer_to_string(&buf);
+        assert!(s.contains("row 4"), "small list should render all rows: {s}");
     }
 }
