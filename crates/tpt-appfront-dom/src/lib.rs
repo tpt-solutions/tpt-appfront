@@ -212,6 +212,12 @@ where
 /// Best-effort check that a live DOM node corresponds to a `UITree` root kind,
 /// so the router can decide whether to reconcile in place or full-replace.
 fn kind_matches_dom<Msg>(node: &Node, ui: &UITree<Msg>) -> bool {
+    // Text nodes are not Elements — check the node type directly, otherwise
+    // every tree with `Text` children would fail reconciliation here and the
+    // in-place text update in `reconcile_node` would be unreachable.
+    if matches!(ui.kind, NodeKind::Text { .. }) {
+        return node.node_type() == web_sys::Node::TEXT_NODE;
+    }
     let el = match node.dyn_ref::<Element>() {
         Some(el) => el,
         None => return false,
@@ -330,17 +336,60 @@ where
         .document()
         .expect("no document");
     let node = render_node(&document, ui, &dispatch)?;
-    let mounted = MountedNode {
-        node: node.clone(),
-        handles: Vec::new(),
-        children: Vec::new(),
-    };
+    let mounted = record_mount_tree(ui, &node);
     container.append_child(&node)?;
     Ok(MountedRoot {
         container: container.clone(),
         mounted,
         dispatch,
     })
+}
+
+/// Walks a freshly rendered DOM subtree alongside the `UITree` that produced
+/// it and records child [`MountedNode`]s. Without this, the first
+/// `MountedRoot::render` reconcile sees an empty child record list and
+/// re-creates (appends) every child instead of diffing in place.
+///
+/// `render_node` appends exactly one DOM node per `Container`/`List` child in
+/// order, so the k-th UI child maps to the k-th live child node. Deeper
+/// subtree kinds (DataGrid's table internals, Checkbox's nested input) are
+/// reconciled by direct DOM queries, so they need no records here.
+fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
+    let children: Vec<MountedNode> = match (&ui.kind, node.dyn_ref::<Element>()) {
+        (NodeKind::Container { children: ui_children }, Some(el)) => ui_children
+            .iter()
+            .enumerate()
+            .filter_map(|(i, child_ui)| {
+                el.child_nodes().get(i as u32).map(|child_node| {
+                    record_mount_tree(child_ui, &child_node)
+                })
+            })
+            .collect(),
+        // Non-windowed grids: one record per `tbody` row (rows are leaves —
+        // cell updates go through `update_row_cells`, not child reconcile).
+        (NodeKind::DataGrid { rows, .. }, Some(el)) if ui.meta.virtual_scroll.is_none() => el
+            .query_selector("tbody")
+            .ok()
+            .flatten()
+            .map(|tbody| {
+                (0..rows.len())
+                    .filter_map(|i| {
+                        tbody.child_nodes().get(i as u32).map(|tr| MountedNode {
+                            node: tr,
+                            handles: Vec::new(),
+                            children: Vec::new(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    MountedNode {
+        node: node.clone(),
+        handles: Vec::new(),
+        children,
+    }
 }
 
 /// Like [`render`], but with `auto_optimize` enabled: large unconfigured
@@ -601,11 +650,7 @@ where
             next.push(existing);
         } else {
             let node = render_node(document, new_child, dispatch)?;
-            let mounted = MountedNode {
-                node: node.clone(),
-                handles: Vec::new(),
-                children: Vec::new(),
-            };
+            let mounted = record_mount_tree(new_child, &node);
             position_child(parent, &node, i)?;
             next.push(mounted);
         }
@@ -850,6 +895,14 @@ fn apply_meta_to_element<Msg>(el: Option<&Element>, ui: &UITree<Msg>) {
             let params_json =
                 serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default();
             let _ = el.set_attribute("data-ai-params", &params_json);
+        }
+    }
+    // Author-supplied attributes (`title`, `aria-*`, …). Set when absent or
+    // changed; attrs removed from the tree are left in place (attrs are meant
+    // as declarative metadata, not dynamic state).
+    for (name, value) in &ui.meta.attrs {
+        if el.get_attribute(name).as_deref() != Some(value) {
+            let _ = el.set_attribute(name, value);
         }
     }
 }
@@ -1100,6 +1153,12 @@ where
     if let Some(class) = &ui.meta.class {
         if let Some(el) = node.dyn_ref::<Element>() {
             el.set_attribute("class", class)?;
+        }
+    }
+
+    for (name, value) in &ui.meta.attrs {
+        if let Some(el) = node.dyn_ref::<Element>() {
+            el.set_attribute(name, value)?;
         }
     }
 
