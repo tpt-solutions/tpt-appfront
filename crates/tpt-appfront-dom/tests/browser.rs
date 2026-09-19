@@ -145,3 +145,45 @@ fn conditional_subtree_swap_unmounts_old_listeners() {
     assert_eq!(container.children().length(), 0);
     assert!(container.query_selector("button").unwrap().is_none());
 }
+
+#[wasm_bindgen_test]
+fn render_with_kind_mismatch_remounts_without_duplicating() {
+    // `render_with`'s effect falls back to unmount+remount when a nested
+    // node's kind changes (e.g. `Text` -> `List`, which `reconcile_node`
+    // can't reconcile in place and reports via `Err`). `MountedRoot::unmount`
+    // used to try to detach its node from *its own container's parent*
+    // instead of its container — a no-op that silently failed via a
+    // swallowed `Err`, so the "old" root was never actually removed and
+    // the fallback's `mount()` call appended a second, sibling copy of the
+    // whole tree next to it instead of replacing it.
+    let document = document();
+    let container = document.create_element("div").unwrap();
+
+    let show_list: Signal<bool> = Signal::new(false);
+    let view: Rc<dyn Fn() -> UITree<()>> = {
+        let show_list = show_list.clone();
+        Rc::new(move || {
+            UITree::container(|c| {
+                if show_list.get() {
+                    c.list(|l| {
+                        l.text("item one");
+                    });
+                } else {
+                    c.text("idle");
+                }
+            })
+        })
+    };
+    let handle = tpt_appfront_dom::render(&container, view, dispatch()).unwrap();
+
+    assert_eq!(container.text_content().as_deref(), Some("idle"));
+    assert_eq!(container.query_selector_all("div").unwrap().length(), 1, "exactly one root div before the flip");
+
+    show_list.set(true);
+
+    assert_eq!(container.text_content().as_deref(), Some("item one"), "stale content must not remain after the flip");
+    assert_eq!(container.query_selector_all("div").unwrap().length(), 1, "the remount must replace the old root, not duplicate it");
+    assert_eq!(container.query_selector_all("ul").unwrap().length(), 1);
+
+    std::mem::forget(handle);
+}

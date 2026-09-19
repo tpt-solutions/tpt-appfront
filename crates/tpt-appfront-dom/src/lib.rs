@@ -109,9 +109,18 @@ where
     /// owns. The `MountedRoot` must not be used afterward.
     pub fn unmount(self) {
         self.mounted.unmount();
-        if let Some(parent) = self.container.parent_node() {
-            let _ = parent.remove_child(&self.mounted.node);
-        }
+        // `self.container` is `self.mounted.node`'s actual parent (`mount`
+        // appends into it directly: `container.append_child(&node)`) — not
+        // `self.container`'s *own* parent, which is what `.parent_node()`
+        // was reaching for. That mismatch made `remove_child` throw
+        // (silently, via the `let _ =` that already existed here) because
+        // `self.mounted.node` was never a child of that grandparent
+        // element, so the old root was never actually detached. Every
+        // caller that unmounts-then-remounts into the same container
+        // (`render_with`'s kind-mismatch fallback, a router's route
+        // change) ended up *appending* a second full copy of the tree
+        // next to the still-attached "old" one instead of replacing it.
+        let _ = self.container.remove_child(&self.mounted.node);
     }
 }
 
@@ -263,10 +272,11 @@ where
         }
         Some(mounted) => {
             // Root kind changed: unmount the old subtree, mount the new one.
+            // Same fix as `MountedRoot::unmount` — `container` is
+            // `mounted.node`'s actual parent (it was `container.append_child`ed
+            // directly), not `container`'s own parent.
             mounted.unmount();
-            if let Some(parent) = container.parent_node() {
-                let _ = parent.remove_child(&mounted.node);
-            }
+            let _ = container.remove_child(&mounted.node);
             let node = render_node(document, new_ui, dispatch)?;
             container.append_child(&node)?;
             Ok(())
@@ -438,6 +448,7 @@ where
                 Some(r) => r.render(&new_ui).is_err(),
                 None => true,
             };
+            web_sys::console::log_1(&format!("DEBUG render_with: needs_remount={needs_remount}").into());
             if needs_remount {
                 if let Some(old) = slot.take() {
                     old.unmount();
