@@ -406,12 +406,15 @@ where
     Msg: Clone + 'static,
 {
     let initial = view();
-    let mut root = mount(container, &initial, dispatch)?;
+    let root = mount(container, &initial, Rc::clone(&dispatch))?;
 
     // `Element` is a refcounted handle to a JS object, so cloning it is cheap
     // and gives the effect an owned, `'static` value to read `client_height`
     // from on every reconcile.
     let container = container.clone();
+    // `Option` so a kind-mismatch remount (below) can `.take()` the old root
+    // to consume it via `unmount()`, which takes `self` by value.
+    let root = std::cell::RefCell::new(Some(root));
     let handle = create_effect({
         let view = Rc::clone(&view);
         move || {
@@ -420,7 +423,29 @@ where
                 let h = container.client_height() as f32;
                 apply_auto_virtual_scroll(&mut new_ui, h);
             }
-            let _ = root.render(&new_ui);
+            let mut slot = root.borrow_mut();
+            // `MountedRoot::render`'s own contract: `Err` means the new
+            // tree's root kind is incompatible with the mounted DOM and the
+            // caller "should unmount and re-mount". This used to be
+            // `let _ = root.render(&new_ui)`, silently dropping that `Err`
+            // — which meant *any* reactive state transition that changed a
+            // node's kind anywhere in the tree (e.g. a `match` arm going
+            // from rendering plain text to a `List`) left the DOM stuck on
+            // stale content with no error, since `Err` from a kind mismatch
+            // propagates up through every ancestor `reconcile_children`/
+            // `reconcile_node` call via `?`, aborting the whole reconcile.
+            let needs_remount = match slot.as_mut() {
+                Some(r) => r.render(&new_ui).is_err(),
+                None => true,
+            };
+            if needs_remount {
+                if let Some(old) = slot.take() {
+                    old.unmount();
+                }
+                if let Ok(new_root) = mount(&container, &new_ui, Rc::clone(&dispatch)) {
+                    *slot = Some(new_root);
+                }
+            }
         }
     });
 
