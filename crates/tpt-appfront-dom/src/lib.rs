@@ -536,6 +536,17 @@ where
                     )?;
                 }
                 NodeKind::List { items: new_items } => {
+                    if new_items.len() != mounted.children.len() {
+                        // Fresh mounts wrap every item in an <li data-key=...>;
+                        // the generic keyed diff below renders bare item nodes,
+                        // so it cannot append or remove list entries safely.
+                        // A count change is the rare structural case — hand it
+                        // to render_with's full unmount/re-mount path, which
+                        // re-creates the wrappers and rebinds item listeners.
+                        return Err(wasm_bindgen::JsValue::from_str(
+                            "list item count changed; full replace required",
+                        ));
+                    }
                     reconcile_children(
                         document,
                         dispatch,
