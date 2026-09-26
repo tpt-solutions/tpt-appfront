@@ -61,6 +61,21 @@ impl WindowConfig {
     }
 }
 
+/// What an app command produced.
+///
+/// `NoReply` is the legacy fire-and-forget contract (`AppBuilder::run`):
+/// nothing is ever delivered to the page, even if it passed a `requestId`.
+/// `Reply` carries a JSON payload delivered via
+/// `window.__appfrontResolve(requestId, result)` when the page asked for one
+/// (`AppBuilder::run_with_value_handler`).
+pub enum CommandOutcome {
+    NoReply,
+    Reply(serde_json::Value),
+}
+
+/// Type-erased app command handler as dispatch sees it.
+pub type CommandHandler = dyn Fn(&str, serde_json::Value) -> std::result::Result<CommandOutcome, String>;
+
 /// The application builder. Accumulates windows, sidecar, shortcuts, deep-link
 /// scheme, and lifecycle options, then [`AppBuilder::run`]s the event loop.
 pub struct AppBuilder {
@@ -195,9 +210,43 @@ impl AppBuilder {
     /// Runs the app. `on_command` receives every dispatched action: app-defined
     /// actions plus the synthetic `shortcut:<id>`, `deeplink`, and `filedrop`
     /// events.
+    /// Runs the event loop with a fire-and-forget command handler: command
+    /// results are never delivered back to the page, even when it passes a
+    /// `requestId`. Use [`AppBuilder::run_with_value_handler`] when the page
+    /// needs command results.
     pub fn run<F>(self, on_command: F) -> Result<()>
     where
         F: Fn(&str, serde_json::Value) -> std::result::Result<(), String> + 'static,
+    {
+        self.run_inner(std::rc::Rc::new(
+            move |action: &str, params: serde_json::Value| {
+                on_command(action, params).map(|_| CommandOutcome::NoReply)
+            },
+        ))
+    }
+
+    /// Runs the event loop with a value-returning command handler: every
+    /// `Ok` payload is delivered to the page via
+    /// `window.__appfrontResolve(requestId, result)` when the IPC message
+    /// carried a `requestId`, and `Err` is logged + surfaced through the
+    /// rejection hook as before. Commands run on the event-loop thread, so
+    /// long-running work belongs on a thread the handler joins with a
+    /// timeout.
+    pub fn run_with_value_handler<F>(self, on_command: F) -> Result<()>
+    where
+        F: Fn(&str, serde_json::Value) -> std::result::Result<serde_json::Value, String> + 'static,
+    {
+        self.run_inner(std::rc::Rc::new(
+            move |action: &str, params: serde_json::Value| {
+                on_command(action, params).map(CommandOutcome::Reply)
+            },
+        ))
+    }
+
+    fn run_inner(
+        self,
+        on_command: std::rc::Rc<CommandHandler>,
+    ) -> Result<()>
     {
         // Single-instance enforcement.
         if self.single_instance {
@@ -274,7 +323,7 @@ impl AppBuilder {
         let app_id = self.app_id.clone();
         let persisted = self.persisted_state;
         let log_sink = self.log_sink.clone();
-        let on_command = std::rc::Rc::new(on_command);
+        let on_command = on_command; // already an Rc<CommandHandler>
         let clipboard = std::sync::Arc::new(Clipboard::new());
         let on_reject = self.on_ipc_rejection.clone();
 
@@ -430,7 +479,7 @@ impl AppBuilder {
 fn dispatch_ipc(
     acl: &Acl,
     limiter: &crate::IpcRateLimiter,
-    on_command: &dyn Fn(&str, serde_json::Value) -> std::result::Result<(), String>,
+    on_command: &CommandHandler,
     app_id: &str,
     log_sink: &ArcLogSink,
     clipboard: &std::sync::Arc<Clipboard>,
@@ -557,16 +606,22 @@ fn dispatch_ipc(
 
     // App-defined action (plus synthetic shortcut/deeplink/filedrop which are
     // produced by the event loop, not IPC, and handled there).
-    if let Err(e) = on_command(&action, validated.clone()) {
-        log_sink.emit(
-            crate::sidecar::Stream::Stderr,
-            &format!("[appfront-webview] command `{action}` failed: {e}"),
-        );
-        if let Some(h) = on_reject {
-            h(crate::IpcRejection::DispatchError {
-                action,
-                error: e,
-            });
+    match on_command(&action, validated.clone()) {
+        Ok(CommandOutcome::Reply(value)) => {
+            reply(registry, window_id, request_id, value);
+        }
+        Ok(CommandOutcome::NoReply) => {}
+        Err(e) => {
+            log_sink.emit(
+                crate::sidecar::Stream::Stderr,
+                &format!("[appfront-webview] command `{action}` failed: {e}"),
+            );
+            if let Some(h) = on_reject {
+                h(crate::IpcRejection::DispatchError {
+                    action,
+                    error: e,
+                });
+            }
         }
     }
 }

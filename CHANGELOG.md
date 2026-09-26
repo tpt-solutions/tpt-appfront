@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tpt-appfront-webview`: `AppBuilder::run_with_value_handler` — app IPC
+  commands can now resolve the page's `requestId` promise with a JSON
+  payload (the legacy `run` keeps its fire-and-forget contract; nothing is
+  delivered to pages that didn't ask).
 - `tpt-appfront-templates`: backend-agnostic starter UIs (`login_form`,
   `dashboard_shell`, `settings_list`) as stateless `UITree` builder functions.
 - `tpt-appfront-cli`: `ingest` (HTML → `view!` skeleton), `add component` /
