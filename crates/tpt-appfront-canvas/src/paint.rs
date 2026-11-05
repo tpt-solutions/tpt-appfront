@@ -71,9 +71,13 @@ pub fn paint<Msg: Clone>(
             dispatch_after(ui, id, rect, &response, &node.ui.meta, dispatch);
             #[cfg(feature = "accesskit")]
             {
-                response.set_accessible_name(label.as_str());
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.as_str())
+                });
                 if let Some(desc) = &node.ui.meta.ai.description {
-                    response.set_accessible_description(desc.as_str());
+                    ui.ctx().accesskit_node_builder(response.id, |builder| {
+                        builder.set_description(desc.as_str());
+                    });
                 }
             }
         }
@@ -99,7 +103,9 @@ pub fn paint<Msg: Clone>(
                     .clone()
                     .or_else(|| node.ui.meta.class.clone())
                     .unwrap_or_else(|| format!("Text input: {value}"));
-                response.set_accessible_name(name);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, name.clone())
+                });
             }
         }
         NodeKind::Textarea { value } => {
@@ -117,14 +123,18 @@ pub fn paint<Msg: Clone>(
                     .clone()
                     .or_else(|| node.ui.meta.class.clone())
                     .unwrap_or_else(|| format!("Text area: {value}"));
-                response.set_accessible_name(name);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, name.clone())
+                });
             }
         }
         NodeKind::Checkbox { label, checked } => {
             let mut checked = *checked;
             let _response = ui.put(rect, egui::Checkbox::new(&mut checked, label.as_str()));
             #[cfg(feature = "accesskit")]
-            _response.set_accessible_name(label.as_str());
+            _response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, true, label.as_str())
+            });
         }
         NodeKind::Select { options, selected } => {
             let label = options
@@ -422,10 +432,14 @@ fn name_accessible_node(
     role: Option<egui::accesskit::Role>,
 ) {
     let response = ui.interact(rect, id, Sense::hover());
-    response.set_accessible_name(name);
-    if let Some(role) = role {
-        response.set_accessible_role(role);
-    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    // egui keeps a Label's text as its value, not its name, so the name is set here.
+    ui.ctx().accesskit_node_builder(id, |builder| {
+        builder.set_label(name);
+        if let Some(role) = role {
+            builder.set_role(role);
+        }
+    });
 }
 
 /// `DataGrid` cells aren't real `RenderNode`s (see `layout::build_data_grid`)
@@ -492,6 +506,15 @@ mod tests {
     /// `egui::Context`, feeding `input` for that single frame. Returns every
     /// `Msg` the paint pass dispatched, in order.
     fn run_paint_frame(ctx: &egui::Context, ui: &UITree<Msg>, input: RawInput) -> Vec<Msg> {
+        paint_frame(ctx, ui, input).0
+    }
+
+    /// Like [`run_paint_frame`], and also returns egui's output for the frame.
+    fn paint_frame(
+        ctx: &egui::Context,
+        ui: &UITree<Msg>,
+        input: RawInput,
+    ) -> (Vec<Msg>, egui::FullOutput) {
         let mut tree: TaffyTree<()> = TaffyTree::new();
         let mut measurer = TextMeasurer::new();
         let root = layout::build(&mut tree, &mut measurer, ui);
@@ -508,14 +531,37 @@ mod tests {
         let dispatched_clone = dispatched.clone();
         let dispatch: Rc<dyn Fn(Msg)> = Rc::new(move |msg| dispatched_clone.borrow_mut().push(msg));
 
-        let _ = ctx.run_ui(input, |ui| {
+        let output = ctx.run_ui(input, |ui| {
             let origin = ui.min_rect().min;
             let mut id_seed = 0u64;
             paint(ui, &tree, &root, origin, &dispatch, &mut id_seed);
         });
         drop(dispatch);
 
-        Rc::try_unwrap(dispatched).unwrap().into_inner()
+        (Rc::try_unwrap(dispatched).unwrap().into_inner(), output)
+    }
+
+    #[cfg(feature = "accesskit")]
+    #[test]
+    fn widgets_publish_their_accessible_names_to_accesskit() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go");
+            c.heading(1, "Title");
+        });
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let (_, output) = paint_frame(&ctx, &ui, RawInput::default());
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("an accesskit update for the frame");
+        let labels: Vec<String> = update
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().map(str::to_string))
+            .collect();
+        assert!(labels.iter().any(|l| l == "Go"), "{labels:?}");
+        assert!(labels.iter().any(|l| l == "Title"), "{labels:?}");
     }
 
     #[test]
