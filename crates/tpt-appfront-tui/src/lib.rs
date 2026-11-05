@@ -17,23 +17,24 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::buffer::Buffer;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
+use tpt_appfront_core::{KeyEvent as UiKeyEvent, OnKeyDown};
 use tpt_appfront_core::{
-    apply_auto_virtual_scroll, ui_tree::MediaType, NodeKind, UITree, VirtualScroll,
+    NodeKind, UITree, VirtualScroll, apply_auto_virtual_scroll, ui_tree::MediaType,
 };
 
 /// A focusable element discovered while walking the tree, in document order.
 /// `tpt-appfront-dom`/`tpt-appfront-canvas` wire these to pointer events; here they're
 /// wired to keyboard navigation (Tab/Enter/Space/arrows).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct InteractiveNode<Msg> {
     /// The node's `data_appfront_id` (assigned by [`UITree::assign_ids`]).
     pub id: u64,
@@ -50,6 +51,12 @@ pub struct InteractiveNode<Msg> {
     /// [`TuiDriver::inputs`] falls back to the `Input`/`Textarea` node's own
     /// `value` until edited).
     pub initial_value: Option<String>,
+    /// `NodeMeta::on_focus`, dispatched when focus moves onto this node.
+    pub on_focus: Option<Msg>,
+    /// `NodeMeta::on_blur`, dispatched when focus moves off this node.
+    pub on_blur: Option<Msg>,
+    /// `NodeMeta::on_keydown`, called with each key while this node has focus.
+    pub on_keydown: Option<OnKeyDown<Msg>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +67,21 @@ pub enum InteractiveKind {
     Checkbox,
     Select,
     Radio,
+}
+
+impl<Msg: std::fmt::Debug> std::fmt::Debug for InteractiveNode<Msg> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InteractiveNode")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("on_click", &self.on_click)
+            .field("options", &self.options)
+            .field("initial_value", &self.initial_value)
+            .field("on_focus", &self.on_focus)
+            .field("on_blur", &self.on_blur)
+            .field("on_keydown", &self.on_keydown.as_ref().map(|_| "<fn>"))
+            .finish()
+    }
 }
 
 /// Walks the tree (after IDs are assigned) and collects every focusable node.
@@ -74,6 +96,9 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
                 on_click: ui.meta.on_click.clone(),
                 options,
                 initial_value,
+                on_focus: ui.meta.on_focus.clone(),
+                on_blur: ui.meta.on_blur.clone(),
+                on_keydown: ui.meta.on_keydown.clone(),
             };
         match &ui.kind {
             NodeKind::Button { .. } => out.push(node(InteractiveKind::Button, Vec::new(), None)),
@@ -371,7 +396,11 @@ fn render_node<Msg: Clone>(
                 area,
             );
         }
-        NodeKind::Media { src, alt, media_type } => {
+        NodeKind::Media {
+            src,
+            alt,
+            media_type,
+        } => {
             let kind = match media_type {
                 MediaType::Audio => "audio",
                 MediaType::Video => "video",
@@ -489,64 +518,59 @@ impl<Msg: Clone> TuiDriver<Msg> {
         self.selections.insert(id, value);
     }
 
-    /// Feeds a key event to the driver. Returns a `Msg` to dispatch (for an
-    /// activated button) when one is produced; otherwise `None`. Mutates the
-    /// focused control's live state for character/backspace keys (`Input`/
-    /// `Textarea`), Enter/Space (`Checkbox` toggle, or cycling a `Select`/
-    /// `Radio` forward), and Left/Right/Up/Down (cycling a focused `Select`/
-    /// `Radio`; moving focus for every other kind).
-    pub fn on_key(&mut self, key: KeyEvent) -> Option<Msg> {
+    /// Moves focus by `delta` interactive nodes, wrapping at the ends. Dispatches the old node's
+    /// `on_blur` and the new node's `on_focus` when the focused node changes.
+    fn step_focus(&mut self, delta: isize, out: &mut Vec<Msg>) {
+        let len = self.interactive.len() as isize;
+        let next = (self.focus as isize + delta).rem_euclid(len) as usize;
+        if next == self.focus {
+            return;
+        }
+        if let Some(msg) = self.interactive[self.focus].on_blur.clone() {
+            out.push(msg);
+        }
+        self.focus = next;
+        if let Some(msg) = self.interactive[self.focus].on_focus.clone() {
+            out.push(msg);
+        }
+    }
+
+    /// Feeds a key event to the driver and returns the messages to dispatch, in order.
+    ///
+    /// The focused node's `on_keydown` sees the key first. If it returns a message, that message
+    /// is the whole result and the built-in handling is skipped. Otherwise the built-in handling
+    /// runs: Tab, arrows and Esc move focus or quit, Enter and Space activate or toggle the
+    /// focused control, and characters and Backspace edit the focused `Input` or `Textarea`.
+    /// Focus changes dispatch `on_blur` and `on_focus` as they happen.
+    pub fn on_key(&mut self, key: KeyEvent) -> Vec<Msg> {
         if key.kind != KeyEventKind::Press {
-            return None;
+            return Vec::new();
         }
         if self.interactive.is_empty() {
             // No interactive nodes: only Esc quits.
             if key.code == KeyCode::Esc {
                 self.quit = true;
             }
-            return None;
+            return Vec::new();
         }
+        if let Some(on_keydown) = self.interactive[self.focus].on_keydown.clone() {
+            if let Some(msg) = on_keydown(ui_key_event(&key)) {
+                return vec![msg];
+            }
+        }
+        let mut out = Vec::new();
         let is_cyclable = matches!(
             self.interactive[self.focus].kind,
             InteractiveKind::Select | InteractiveKind::Radio
         );
         match key.code {
-            KeyCode::Esc => {
-                self.quit = true;
-                None
-            }
-            KeyCode::Tab => {
-                self.focus = (self.focus + 1) % self.interactive.len();
-                None
-            }
-            KeyCode::BackTab => {
-                self.focus = self
-                    .focus
-                    .checked_sub(1)
-                    .unwrap_or(self.interactive.len() - 1)
-                    % self.interactive.len();
-                None
-            }
-            KeyCode::Down | KeyCode::Right if is_cyclable => {
-                self.cycle_option(1);
-                None
-            }
-            KeyCode::Up | KeyCode::Left if is_cyclable => {
-                self.cycle_option(-1);
-                None
-            }
-            KeyCode::Down | KeyCode::Right => {
-                self.focus = (self.focus + 1) % self.interactive.len();
-                None
-            }
-            KeyCode::Up | KeyCode::Left => {
-                self.focus = self
-                    .focus
-                    .checked_sub(1)
-                    .unwrap_or(self.interactive.len() - 1)
-                    % self.interactive.len();
-                None
-            }
+            KeyCode::Esc => self.quit = true,
+            KeyCode::Tab => self.step_focus(1, &mut out),
+            KeyCode::BackTab => self.step_focus(-1, &mut out),
+            KeyCode::Down | KeyCode::Right if is_cyclable => self.cycle_option(1),
+            KeyCode::Up | KeyCode::Left if is_cyclable => self.cycle_option(-1),
+            KeyCode::Down | KeyCode::Right => self.step_focus(1, &mut out),
+            KeyCode::Up | KeyCode::Left => self.step_focus(-1, &mut out),
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let kind = self.interactive[self.focus].kind;
                 match kind {
@@ -564,13 +588,13 @@ impl<Msg: Clone> TuiDriver<Msg> {
                             })
                             .unwrap_or(false);
                         self.checks.insert(id, !current);
-                        None
                     }
-                    InteractiveKind::Select | InteractiveKind::Radio => {
-                        self.cycle_option(1);
-                        None
+                    InteractiveKind::Select | InteractiveKind::Radio => self.cycle_option(1),
+                    _ => {
+                        if let Some(msg) = self.interactive[self.focus].on_click.clone() {
+                            out.push(msg);
+                        }
                     }
-                    _ => self.interactive[self.focus].on_click.clone(),
                 }
             }
             KeyCode::Char(c) => {
@@ -581,7 +605,6 @@ impl<Msg: Clone> TuiDriver<Msg> {
                 ) {
                     self.inputs.entry(node.id).or_default().push(c);
                 }
-                None
             }
             KeyCode::Backspace => {
                 let node = &self.interactive[self.focus];
@@ -593,10 +616,42 @@ impl<Msg: Clone> TuiDriver<Msg> {
                         buf.pop();
                     }
                 }
-                None
             }
-            _ => None,
+            _ => {}
         }
+        out
+    }
+}
+
+/// The terminal key as the portable [`UiKeyEvent`] that `on_keydown` handlers receive. Names follow
+/// the DOM's `KeyboardEvent.key`. The terminal has no physical key code, so `code` is empty.
+/// Shift-Tab is reported as `Tab` with `shift` set.
+fn ui_key_event(key: &KeyEvent) -> UiKeyEvent {
+    let name = match key.code {
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Esc => "Escape".to_string(),
+        KeyCode::Tab | KeyCode::BackTab => "Tab".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Up => "ArrowUp".to_string(),
+        KeyCode::Down => "ArrowDown".to_string(),
+        KeyCode::Left => "ArrowLeft".to_string(),
+        KeyCode::Right => "ArrowRight".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        _ => String::new(),
+    };
+    UiKeyEvent {
+        key: name,
+        code: String::new(),
+        ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+        shift: key.modifiers.contains(KeyModifiers::SHIFT) || key.code == KeyCode::BackTab,
+        alt: key.modifiers.contains(KeyModifiers::ALT),
+        meta: key.modifiers.contains(KeyModifiers::SUPER),
+        repeat: key.kind == KeyEventKind::Repeat,
     }
 }
 
@@ -651,7 +706,7 @@ pub fn run_with<Msg: Clone + 'static>(
 
         if event::poll(Duration::from_millis(100)).context("poll")? {
             if let Event::Key(key) = event::read().context("read event")? {
-                if let Some(msg) = driver.on_key(key) {
+                for msg in driver.on_key(key) {
                     on_event(msg);
                 }
                 if driver.quit() {
@@ -729,6 +784,9 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {
         Increment,
+        Focus(&'static str),
+        Blur(&'static str),
+        Key(String),
     }
 
     fn sample_ui() -> UITree<Msg> {
@@ -810,7 +868,7 @@ mod tests {
             KeyCode::Enter,
             ratatui::crossterm::event::KeyModifiers::NONE,
         );
-        assert_eq!(driver.on_key(key), Some(Msg::Increment));
+        assert_eq!(driver.on_key(key), vec![Msg::Increment]);
         assert!(!driver.quit());
     }
 
@@ -822,7 +880,7 @@ mod tests {
             KeyCode::Char(' '),
             ratatui::crossterm::event::KeyModifiers::NONE,
         );
-        assert_eq!(driver.on_key(key), Some(Msg::Increment));
+        assert_eq!(driver.on_key(key), vec![Msg::Increment]);
     }
 
     #[test]
@@ -862,7 +920,7 @@ mod tests {
             KeyCode::Char('x'),
             ratatui::crossterm::event::KeyModifiers::NONE,
         );
-        assert_eq!(driver.on_key(c), None);
+        assert!(driver.on_key(c).is_empty());
         assert!(driver.inputs().values().all(|v| v.is_empty()));
     }
 
@@ -953,6 +1011,112 @@ mod tests {
         });
         let buf = render_to_buffer_with(&ui, 40, 10, true);
         let s = buffer_to_string(&buf);
-        assert!(s.contains("row 4"), "small list should render all rows: {s}");
+        assert!(
+            s.contains("row 4"),
+            "small list should render all rows: {s}"
+        );
+    }
+
+    fn key_of(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, ratatui::crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn focus_moves_dispatch_blur_then_focus() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("a")
+                .on_focus(Msg::Focus("a"))
+                .on_blur(Msg::Blur("a"));
+            c.button("b")
+                .on_focus(Msg::Focus("b"))
+                .on_blur(Msg::Blur("b"));
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Tab)),
+            vec![Msg::Blur("a"), Msg::Focus("b")]
+        );
+        // Wraps back to the first node.
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Tab)),
+            vec![Msg::Blur("b"), Msg::Focus("a")]
+        );
+        // Shift-Tab goes back.
+        assert_eq!(
+            driver.on_key(KeyEvent::new(
+                KeyCode::BackTab,
+                ratatui::crossterm::event::KeyModifiers::SHIFT
+            )),
+            vec![Msg::Blur("a"), Msg::Focus("b")]
+        );
+    }
+
+    #[test]
+    fn a_single_focusable_node_gets_no_focus_messages() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("only")
+                .on_focus(Msg::Focus("only"))
+                .on_blur(Msg::Blur("only"));
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert!(driver.on_key(key_of(KeyCode::Tab)).is_empty());
+    }
+
+    #[test]
+    fn keydown_that_handles_a_key_replaces_the_built_in_handling() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("go")
+                .on_click(Msg::Increment)
+                .on_keydown(|k| Some(Msg::Key(k.key)));
+            c.button("next").on_click(Msg::Increment);
+        });
+        let mut driver = TuiDriver::new(&ui);
+        // Enter would normally activate the button (on_click); the handler takes it instead.
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Enter)),
+            vec![Msg::Key("Enter".into())]
+        );
+        // Tab is also handled by the handler, so focus does not move.
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Tab)),
+            vec![Msg::Key("Tab".into())]
+        );
+        assert_eq!(driver.focus_id(), Some(driver.interactive[0].id));
+    }
+
+    #[test]
+    fn keydown_that_declines_leaves_the_key_to_the_built_in_handling() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("go").on_click(Msg::Increment).on_keydown(|_| None);
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(driver.on_key(key_of(KeyCode::Enter)), vec![Msg::Increment]);
+    }
+
+    #[test]
+    fn keydown_receives_dom_style_key_names_and_modifiers() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("go")
+                .on_keydown(|k| Some(Msg::Key(format!("{}|{}|{}", k.key, k.shift, k.ctrl))));
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Down)),
+            vec![Msg::Key("ArrowDown|false|false".into())]
+        );
+        assert_eq!(
+            driver.on_key(KeyEvent::new(
+                KeyCode::Char('s'),
+                ratatui::crossterm::event::KeyModifiers::CONTROL
+            )),
+            vec![Msg::Key("s|false|true".into())]
+        );
+        assert_eq!(
+            driver.on_key(KeyEvent::new(
+                KeyCode::BackTab,
+                ratatui::crossterm::event::KeyModifiers::SHIFT
+            )),
+            vec![Msg::Key("Tab|true|false".into())]
+        );
     }
 }

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tpt-appfront-tui`: focus, blur and keydown handlers now run. Tab, Shift-Tab and the arrow keys move focus
+  and dispatch `on_blur`/`on_focus`; the focused node's `on_keydown` sees each key first.
+  **Breaking:** `TuiDriver::on_key` now returns `Vec<Msg>` (all messages from one key, in order) instead of
+  `Option<Msg>`. Callers that used `if let Some(msg)` should iterate instead.
+- `tpt-appfront-canvas`: focus, blur, keydown and pointer-down handlers on buttons, text inputs, text areas and
+  non-widget nodes. A key taken by `on_keydown` is consumed before the widget sees it. Checkboxes and selects
+  do not have these handlers yet.
 - `tpt-appfront-core`: web event handlers on `NodeRef`: `on_focus` and `on_blur` (messages),
   `on_keydown` (returns `Option<Msg>`; `Some` also stops the browser default), `on_pointer_down`
   (client position, button and modifiers) and `on_paste` (clipboard text). Types: `KeyEvent`,

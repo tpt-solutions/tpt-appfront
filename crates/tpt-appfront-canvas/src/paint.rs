@@ -7,9 +7,11 @@ use std::rc::Rc;
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use taffy::TaffyTree;
-use tpt_appfront_core::{ui_tree::MediaType, NodeKind};
+use tpt_appfront_core::{
+    KeyEvent as UiKeyEvent, NodeKind, NodeMeta, PointerEvent as UiPointerEvent, ui_tree::MediaType,
+};
 
-use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
+use crate::layout::{self, CELL_PADDING, GridRowKind, RenderNode, TEXT_FONT_SIZE};
 
 /// Paints `node` (and its subtree) into `ui`, with `origin` being the
 /// absolute screen position of `node`'s parent's content box. `id_seed` is
@@ -63,8 +65,10 @@ pub fn paint<Msg: Clone>(
             if let Some(bg) = style.background {
                 button = button.fill(bg);
             }
+            dispatch_keydown(ui, id, &node.ui.meta, dispatch);
             let response = ui.put(rect, button);
             clicked = response.clicked();
+            dispatch_after(ui, id, rect, &response, &node.ui.meta, dispatch);
             #[cfg(feature = "accesskit")]
             {
                 response.set_accessible_name(label.as_str());
@@ -79,7 +83,9 @@ pub fn paint<Msg: Clone>(
             // `Response` is only needed for the AccessKit name below, so bind
             // it as `_response` to avoid an unused-variable warning when the
             // `accesskit` feature is off.
-            let _response = ui.put(rect, egui::TextEdit::singleline(&mut value));
+            dispatch_keydown(ui, id, &node.ui.meta, dispatch);
+            let response = ui.put(rect, egui::TextEdit::singleline(&mut value).id(id));
+            dispatch_after(ui, id, rect, &response, &node.ui.meta, dispatch);
             #[cfg(feature = "accesskit")]
             {
                 // Give the field a name so a screen reader announces it; prefer
@@ -93,12 +99,14 @@ pub fn paint<Msg: Clone>(
                     .clone()
                     .or_else(|| node.ui.meta.class.clone())
                     .unwrap_or_else(|| format!("Text input: {value}"));
-                _response.set_accessible_name(name);
+                response.set_accessible_name(name);
             }
         }
         NodeKind::Textarea { value } => {
             let mut value = value.clone();
-            let _response = ui.put(rect, egui::TextEdit::multiline(&mut value));
+            dispatch_keydown(ui, id, &node.ui.meta, dispatch);
+            let response = ui.put(rect, egui::TextEdit::multiline(&mut value).id(id));
+            dispatch_after(ui, id, rect, &response, &node.ui.meta, dispatch);
             #[cfg(feature = "accesskit")]
             {
                 let name = node
@@ -109,7 +117,7 @@ pub fn paint<Msg: Clone>(
                     .clone()
                     .or_else(|| node.ui.meta.class.clone())
                     .unwrap_or_else(|| format!("Text area: {value}"));
-                _response.set_accessible_name(name);
+                response.set_accessible_name(name);
             }
         }
         NodeKind::Checkbox { label, checked } => {
@@ -179,15 +187,13 @@ pub fn paint<Msg: Clone>(
             let label = format!("{text} \u{2192} {href}");
             paint_text(ui, pos, &label, TEXT_FONT_SIZE, style.foreground);
             #[cfg(feature = "accesskit")]
-            name_accessible_node(
-                ui,
-                rect,
-                id,
-                text,
-                Some(egui::accesskit::Role::Link),
-            );
+            name_accessible_node(ui, rect, id, text, Some(egui::accesskit::Role::Link));
         }
-        NodeKind::Media { src, alt, media_type } => {
+        NodeKind::Media {
+            src,
+            alt,
+            media_type,
+        } => {
             let kind = match media_type {
                 MediaType::Audio => "audio",
                 MediaType::Video => "video",
@@ -203,9 +209,19 @@ pub fn paint<Msg: Clone>(
         }
     }
 
-    if !clicked && node.ui.meta.on_click.is_some() {
+    // Widgets above have their own response, so they only get the click fallback. Other nodes
+    // get a focusable interaction when they have any handler, which also carries focus and keys.
+    let meta = &node.ui.meta;
+    if is_widget(&node.ui.kind) {
+        if !clicked && meta.on_click.is_some() {
+            let response = ui.interact(rect, id, Sense::click());
+            clicked = response.clicked();
+        }
+    } else if meta.on_click.is_some() || has_input_handlers(meta) {
+        dispatch_keydown(ui, id, meta, dispatch);
         let response = ui.interact(rect, id, Sense::click());
         clicked = response.clicked();
+        dispatch_after(ui, id, rect, &response, meta, dispatch);
     }
 
     if clicked {
@@ -216,6 +232,168 @@ pub fn paint<Msg: Clone>(
 
     for child in &node.children {
         paint(ui, tree, child, pos, dispatch, id_seed);
+    }
+}
+
+/// Nodes that paint their own egui widget, and so have their own response.
+fn is_widget<Msg>(kind: &NodeKind<Msg>) -> bool {
+    matches!(
+        kind,
+        NodeKind::Button { .. }
+            | NodeKind::Input { .. }
+            | NodeKind::Textarea { .. }
+            | NodeKind::Checkbox { .. }
+            | NodeKind::Select { .. }
+    )
+}
+
+fn has_input_handlers<Msg>(meta: &NodeMeta<Msg>) -> bool {
+    meta.on_focus.is_some()
+        || meta.on_blur.is_some()
+        || meta.on_keydown.is_some()
+        || meta.on_pointer_down.is_some()
+}
+
+/// The key name the DOM uses for KeyboardEvent.key, from an egui key. Letters follow Shift.
+fn key_name(key: egui::Key, shift: bool) -> String {
+    let name = key.name();
+    match name {
+        "Up" => "ArrowUp".to_string(),
+        "Down" => "ArrowDown".to_string(),
+        "Left" => "ArrowLeft".to_string(),
+        "Right" => "ArrowRight".to_string(),
+        "Escape" | "Esc" => "Escape".to_string(),
+        "Space" => " ".to_string(),
+        _ if name.len() == 1 && name.chars().all(|c| c.is_ascii_alphabetic()) => {
+            if shift {
+                name.to_ascii_uppercase()
+            } else {
+                name.to_ascii_lowercase()
+            }
+        }
+        _ => name.to_string(),
+    }
+}
+
+fn ui_key_event(key: egui::Key, modifiers: egui::Modifiers, repeat: bool) -> UiKeyEvent {
+    UiKeyEvent {
+        key: key_name(key, modifiers.shift),
+        code: String::new(),
+        ctrl: modifiers.ctrl,
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+        meta: modifiers.mac_cmd,
+        repeat,
+    }
+}
+
+/// The DOM button numbering: 0 primary, 1 middle, 2 secondary, then the extra buttons.
+fn pointer_button_index(button: egui::PointerButton) -> i16 {
+    match button {
+        egui::PointerButton::Primary => 0,
+        egui::PointerButton::Middle => 1,
+        egui::PointerButton::Secondary => 2,
+        egui::PointerButton::Extra1 => 3,
+        egui::PointerButton::Extra2 => 4,
+    }
+}
+
+/// Runs the focused node's keydown handler before its widget sees the keys. A key the handler
+/// takes is consumed, so the widget (for example a button that activates on Enter) does not also
+/// act on it.
+fn dispatch_keydown<Msg: Clone>(
+    ui: &egui::Ui,
+    node_id: egui::Id,
+    meta: &NodeMeta<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+) {
+    let Some(on_keydown) = meta.on_keydown.as_ref() else {
+        return;
+    };
+    // The widget's own id is only known once it has painted, so use the id recorded last frame.
+    let Some(widget_id) = ui.data(|d| d.get_temp::<egui::Id>(node_id)) else {
+        return;
+    };
+    if !ui.memory(|m| m.has_focus(widget_id)) {
+        return;
+    }
+    let presses: Vec<(egui::Key, egui::Modifiers, bool)> = ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers, *repeat)),
+                _ => None,
+            })
+            .collect()
+    });
+    for (key, modifiers, repeat) in presses {
+        if let Some(msg) = on_keydown(ui_key_event(key, modifiers, repeat)) {
+            ui.input_mut(|i| {
+                i.consume_key(modifiers, key);
+            });
+            dispatch(msg);
+        }
+    }
+}
+
+/// Dispatches focus, blur and pointer-down for a node once its widget has been placed. A
+/// pointer-down is a press this frame that started inside rect.
+fn dispatch_after<Msg: Clone>(
+    ui: &egui::Ui,
+    node_id: egui::Id,
+    rect: Rect,
+    response: &egui::Response,
+    meta: &NodeMeta<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+) {
+    // Record the widget's id for the next frame's dispatch_keydown.
+    ui.data_mut(|d| d.insert_temp(node_id, response.id));
+    if response.gained_focus() {
+        if let Some(msg) = meta.on_focus.clone() {
+            dispatch(msg);
+        }
+    }
+    if response.lost_focus() {
+        if let Some(msg) = meta.on_blur.clone() {
+            dispatch(msg);
+        }
+    }
+    let Some(on_pointer_down) = meta.on_pointer_down.as_ref() else {
+        return;
+    };
+    let presses: Vec<(egui::Pos2, egui::PointerButton, egui::Modifiers)> = ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: true,
+                    modifiers,
+                } if rect.contains(*pos) => Some((*pos, *button, *modifiers)),
+                _ => None,
+            })
+            .collect()
+    });
+    for (pos, button, modifiers) in presses {
+        let event = UiPointerEvent {
+            x: f64::from(pos.x),
+            y: f64::from(pos.y),
+            button: pointer_button_index(button),
+            ctrl: modifiers.ctrl,
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+            meta: modifiers.mac_cmd,
+        };
+        if let Some(msg) = on_pointer_down(event) {
+            dispatch(msg);
+        }
     }
 }
 
@@ -305,6 +483,9 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {
         Clicked,
+        Focus,
+        Key(String),
+        Down(i16, i32),
     }
 
     /// Lays `ui` out with `taffy` and paints it into a fresh headless
@@ -440,5 +621,109 @@ mod tests {
         };
 
         assert_eq!(run_paint_frame(&ctx, &ui, click), vec![Msg::Clicked]);
+    }
+
+    fn key_press(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn key_names_follow_the_dom() {
+        assert_eq!(key_name(egui::Key::ArrowUp, false), "ArrowUp");
+        assert_eq!(key_name(egui::Key::Escape, false), "Escape");
+        assert_eq!(key_name(egui::Key::A, false), "a");
+        assert_eq!(key_name(egui::Key::A, true), "A");
+    }
+
+    #[test]
+    fn tab_focuses_a_button_and_dispatches_its_focus_message() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go")
+                .on_click(Msg::Clicked)
+                .on_focus(Msg::Focus)
+                .on_keydown(|k| (k.key == "Enter").then_some(Msg::Key(k.key)));
+        });
+        let ctx = egui::Context::default();
+        // A warm-up frame registers the widget, so that Tab can reach it.
+        run_paint_frame(&ctx, &ui, RawInput::default());
+        let tab = RawInput {
+            events: vec![key_press(egui::Key::Tab)],
+            ..Default::default()
+        };
+        assert_eq!(run_paint_frame(&ctx, &ui, tab), vec![Msg::Focus]);
+    }
+
+    #[test]
+    fn a_handled_enter_reaches_the_keydown_handler_and_not_the_button_click() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go")
+                .on_click(Msg::Clicked)
+                .on_focus(Msg::Focus)
+                .on_keydown(|k| (k.key == "Enter").then_some(Msg::Key(k.key)));
+        });
+        let ctx = egui::Context::default();
+        run_paint_frame(&ctx, &ui, RawInput::default());
+        let tab = RawInput {
+            events: vec![key_press(egui::Key::Tab)],
+            ..Default::default()
+        };
+        run_paint_frame(&ctx, &ui, tab);
+        let enter = RawInput {
+            events: vec![key_press(egui::Key::Enter)],
+            ..Default::default()
+        };
+        assert_eq!(
+            run_paint_frame(&ctx, &ui, enter),
+            vec![Msg::Key("Enter".into())]
+        );
+    }
+
+    #[test]
+    fn a_declined_enter_still_clicks_the_focused_button() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.button("Go").on_click(Msg::Clicked).on_keydown(|_| None);
+        });
+        let ctx = egui::Context::default();
+        run_paint_frame(&ctx, &ui, RawInput::default());
+        let tab = RawInput {
+            events: vec![key_press(egui::Key::Tab)],
+            ..Default::default()
+        };
+        run_paint_frame(&ctx, &ui, tab);
+        let enter = RawInput {
+            events: vec![key_press(egui::Key::Enter)],
+            ..Default::default()
+        };
+        assert_eq!(run_paint_frame(&ctx, &ui, enter), vec![Msg::Clicked]);
+    }
+
+    #[test]
+    fn a_press_on_a_node_dispatches_its_pointer_down_with_the_position() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.text("press me")
+                .on_pointer_down(|p| Some(Msg::Down(p.button, p.x as i32)));
+        });
+        let ctx = egui::Context::default();
+        let pos = EguiPos2::new(10.0, 10.0);
+        run_paint_frame(&ctx, &ui, RawInput::default());
+        let press = RawInput {
+            events: vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(run_paint_frame(&ctx, &ui, press), vec![Msg::Down(0, 10)]);
     }
 }
