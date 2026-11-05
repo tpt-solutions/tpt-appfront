@@ -146,6 +146,55 @@ pub type OnInput<Msg> = std::sync::Arc<dyn Fn(String) -> Msg + Send + Sync>;
 /// [`OnInput`] since a checkbox's value is a `bool`, not a `String`.
 pub type OnToggle<Msg> = std::sync::Arc<dyn Fn(bool) -> Msg + Send + Sync>;
 
+/// A key press, as passed to a keydown handler. See [`NodeRef::on_keydown`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyEvent {
+    /// The key's value, for example `"a"`, `"Enter"` or `"ArrowLeft"`. Depends on the keyboard layout.
+    pub key: String,
+    /// The physical key's code, for example `"KeyA"`. Does not depend on the keyboard layout.
+    pub code: String,
+    /// Whether Ctrl was held.
+    pub ctrl: bool,
+    /// Whether Shift was held.
+    pub shift: bool,
+    /// Whether Alt (Option on macOS) was held.
+    pub alt: bool,
+    /// Whether Meta (Cmd or the Windows key) was held.
+    pub meta: bool,
+    /// Whether this is an auto-repeat of a held key.
+    pub repeat: bool,
+}
+
+/// A pointer press, as passed to a pointer-down handler. See [`NodeRef::on_pointer_down`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PointerEvent {
+    /// Horizontal position in CSS pixels, relative to the viewport.
+    pub x: f64,
+    /// Vertical position in CSS pixels, relative to the viewport.
+    pub y: f64,
+    /// The button pressed: 0 primary, 1 auxiliary (middle), 2 secondary (right).
+    pub button: i16,
+    /// Whether Ctrl was held.
+    pub ctrl: bool,
+    /// Whether Shift was held.
+    pub shift: bool,
+    /// Whether Alt was held.
+    pub alt: bool,
+    /// Whether Meta was held.
+    pub meta: bool,
+}
+
+/// Keydown callback. Returns `Some(msg)` to dispatch `msg` and stop the browser's default action
+/// for the key (for example, arrow keys scrolling), or `None` to leave the key to the browser.
+pub type OnKeyDown<Msg> = std::sync::Arc<dyn Fn(KeyEvent) -> Option<Msg> + Send + Sync>;
+
+/// Pointer-down callback. Returns `Some(msg)` to dispatch it, or `None` to ignore the press.
+pub type OnPointerDown<Msg> = std::sync::Arc<dyn Fn(PointerEvent) -> Option<Msg> + Send + Sync>;
+
+/// Paste callback. Gets the plain text from the clipboard. Returns `Some(msg)` to dispatch it and
+/// stop the browser from inserting the text, or `None` to let the browser paste.
+pub type OnPaste<Msg> = std::sync::Arc<dyn Fn(String) -> Option<Msg> + Send + Sync>;
+
 /// `#[serde(default = "...")]` target for [`NodeMeta::on_input`]. Needed
 /// because plain `#[serde(skip)]` makes serde's derive require `Msg:
 /// Default` (it infers the bound from the field's generic parameters, not
@@ -158,6 +207,21 @@ fn on_input_default<Msg>() -> Option<OnInput<Msg>> {
 /// `#[serde(default = "...")]` target for [`NodeMeta::on_toggle`] — see
 /// [`on_input_default`] for why this can't just be `#[serde(skip)]`.
 fn on_toggle_default<Msg>() -> Option<OnToggle<Msg>> {
+    None
+}
+
+/// `serde` default for [`NodeMeta::on_keydown`]. See [`on_input_default`].
+fn on_keydown_default<Msg>() -> Option<OnKeyDown<Msg>> {
+    None
+}
+
+/// `serde` default for [`NodeMeta::on_pointer_down`]. See [`on_input_default`].
+fn on_pointer_down_default<Msg>() -> Option<OnPointerDown<Msg>> {
+    None
+}
+
+/// `serde` default for [`NodeMeta::on_paste`]. See [`on_input_default`].
+fn on_paste_default<Msg>() -> Option<OnPaste<Msg>> {
     None
 }
 
@@ -176,6 +240,19 @@ pub struct NodeMeta<Msg> {
     /// serializable, same reasoning as `on_input`.
     #[serde(skip, default = "on_toggle_default")]
     pub on_toggle: Option<OnToggle<Msg>>,
+    /// Dispatched when the node gets keyboard focus. Serialized like `on_click`.
+    pub on_focus: Option<Msg>,
+    /// Dispatched when the node loses keyboard focus. Serialized like `on_click`.
+    pub on_blur: Option<Msg>,
+    /// See [`OnKeyDown`]. Not serializable, same reasoning as `on_input`.
+    #[serde(skip, default = "on_keydown_default")]
+    pub on_keydown: Option<OnKeyDown<Msg>>,
+    /// See [`OnPointerDown`]. Not serializable, same reasoning as `on_input`.
+    #[serde(skip, default = "on_pointer_down_default")]
+    pub on_pointer_down: Option<OnPointerDown<Msg>>,
+    /// See [`OnPaste`]. Not serializable, same reasoning as `on_input`.
+    #[serde(skip, default = "on_paste_default")]
+    pub on_paste: Option<OnPaste<Msg>>,
     pub ai: AiMeta,
     /// Stable identifier assigned before SSR so the client hydrator can match
     /// server-rendered DOM nodes back to their `UITree` counterpart.
@@ -216,6 +293,11 @@ impl<Msg> Default for NodeMeta<Msg> {
             on_click: None,
             on_input: None,
             on_toggle: None,
+            on_focus: None,
+            on_blur: None,
+            on_keydown: None,
+            on_pointer_down: None,
+            on_paste: None,
             ai: AiMeta::default(),
             data_appfront_id: None,
             is_dynamic: false,
@@ -236,6 +318,14 @@ impl<Msg: std::fmt::Debug> std::fmt::Debug for NodeMeta<Msg> {
             .field("on_click", &self.on_click)
             .field("on_input", &self.on_input.as_ref().map(|_| "<fn>"))
             .field("on_toggle", &self.on_toggle.as_ref().map(|_| "<fn>"))
+            .field("on_focus", &self.on_focus)
+            .field("on_blur", &self.on_blur)
+            .field("on_keydown", &self.on_keydown.as_ref().map(|_| "<fn>"))
+            .field(
+                "on_pointer_down",
+                &self.on_pointer_down.as_ref().map(|_| "<fn>"),
+            )
+            .field("on_paste", &self.on_paste.as_ref().map(|_| "<fn>"))
             .field("ai", &self.ai)
             .field("data_appfront_id", &self.data_appfront_id)
             .field("is_dynamic", &self.is_dynamic)
@@ -648,6 +738,43 @@ impl<'a, Msg> NodeRef<'a, Msg> {
         self
     }
 
+    /// Dispatches `msg` when the node gets keyboard focus.
+    pub fn on_focus(mut self, msg: Msg) -> Self {
+        self.meta_mut().on_focus = Some(msg);
+        self
+    }
+
+    /// Dispatches `msg` when the node loses keyboard focus.
+    pub fn on_blur(mut self, msg: Msg) -> Self {
+        self.meta_mut().on_blur = Some(msg);
+        self
+    }
+
+    /// Calls `f` on every key press while the node has focus. See [`OnKeyDown`]. Only one
+    /// keydown handler per node: a later call replaces the earlier one.
+    pub fn on_keydown(
+        mut self,
+        f: impl Fn(KeyEvent) -> Option<Msg> + Send + Sync + 'static,
+    ) -> Self {
+        self.meta_mut().on_keydown = Some(std::sync::Arc::new(f));
+        self
+    }
+
+    /// Calls `f` when a pointer button is pressed on the node. See [`OnPointerDown`].
+    pub fn on_pointer_down(
+        mut self,
+        f: impl Fn(PointerEvent) -> Option<Msg> + Send + Sync + 'static,
+    ) -> Self {
+        self.meta_mut().on_pointer_down = Some(std::sync::Arc::new(f));
+        self
+    }
+
+    /// Calls `f` with the clipboard text when text is pasted into the node. See [`OnPaste`].
+    pub fn on_paste(mut self, f: impl Fn(String) -> Option<Msg> + Send + Sync + 'static) -> Self {
+        self.meta_mut().on_paste = Some(std::sync::Arc::new(f));
+        self
+    }
+
     pub fn ai_action(mut self, action: impl Into<String>) -> Self {
         self.meta_mut().ai.action = Some(action.into());
         self
@@ -826,5 +953,89 @@ mod tests {
 
         assert_eq!(restored.tree.meta.data_appfront_id, Some(1));
         assert_eq!(restored.signals.get("count"), signals.get("count"));
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    enum M {
+        Focus,
+        Blur,
+        Key(String),
+        Down(i16),
+        Pasted(String),
+    }
+
+    fn only_child(tree: &UITree<M>) -> &NodeMeta<M> {
+        match &tree.kind {
+            NodeKind::Container { children } => &children[0].meta,
+            other => panic!("expected a container, got {other:?}"),
+        }
+    }
+
+    fn key(name: &str) -> KeyEvent {
+        KeyEvent {
+            key: name.into(),
+            ..KeyEvent::default()
+        }
+    }
+
+    #[test]
+    fn builder_sets_every_event_on_the_node() {
+        let tree = UITree::container(|c| {
+            c.button("x")
+                .on_focus(M::Focus)
+                .on_blur(M::Blur)
+                .on_keydown(|k| (k.key == "Enter").then_some(M::Key(k.key)))
+                .on_pointer_down(|p| Some(M::Down(p.button)))
+                .on_paste(|text| Some(M::Pasted(text)));
+        });
+        let meta = only_child(&tree);
+        assert_eq!(meta.on_focus, Some(M::Focus));
+        assert_eq!(meta.on_blur, Some(M::Blur));
+        let on_keydown = meta.on_keydown.as_ref().expect("keydown");
+        assert_eq!(on_keydown(key("Enter")), Some(M::Key("Enter".into())));
+        assert_eq!(
+            on_keydown(key("a")),
+            None,
+            "unhandled keys are left to the browser"
+        );
+        let on_down = meta.on_pointer_down.as_ref().expect("pointer down");
+        assert_eq!(
+            on_down(PointerEvent {
+                button: 2,
+                ..PointerEvent::default()
+            }),
+            Some(M::Down(2))
+        );
+        let on_paste = meta.on_paste.as_ref().expect("paste");
+        assert_eq!(on_paste("hi".into()), Some(M::Pasted("hi".into())));
+    }
+
+    #[test]
+    fn focus_and_blur_survive_serialization_like_on_click() {
+        let meta = NodeMeta {
+            on_focus: Some(M::Focus),
+            on_blur: Some(M::Blur),
+            ..NodeMeta::default()
+        };
+        let json = serde_json::to_string(&meta).expect("serialize");
+        let back: NodeMeta<M> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.on_focus, Some(M::Focus));
+        assert_eq!(back.on_blur, Some(M::Blur));
+        assert!(back.on_keydown.is_none(), "closures are not serialized");
+    }
+
+    #[test]
+    fn default_meta_has_no_handlers() {
+        let meta = NodeMeta::<M>::default();
+        assert!(meta.on_focus.is_none() && meta.on_blur.is_none());
+        assert!(
+            meta.on_keydown.is_none() && meta.on_pointer_down.is_none() && meta.on_paste.is_none()
+        );
+        assert!(format!("{meta:?}").contains("on_keydown"));
     }
 }

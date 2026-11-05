@@ -32,7 +32,7 @@ use std::rc::Rc;
 
 use tpt_appfront_core::{
     apply_auto_virtual_scroll, create_effect, reconcile_keys, ui_tree::MediaType, HydrationPayload,
-    KeyedDiff, NodeKind, Router, UITree,
+    KeyEvent, KeyedDiff, NodeKind, NodeMeta, PointerEvent, Router, UITree,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -68,6 +68,11 @@ impl MountedNode {
     fn unmount(&self) {
         if let Some(el) = self.node.dyn_ref::<web_sys::HtmlElement>() {
             el.set_onclick(None);
+            el.set_onfocus(None);
+            el.set_onblur(None);
+            el.set_onkeydown(None);
+            el.set_onpointerdown(None);
+            el.set_onpaste(None);
         }
         if let Some(el) = self.node.dyn_ref::<web_sys::HtmlInputElement>() {
             el.set_oninput(None);
@@ -1277,7 +1282,98 @@ where
         }
     }
 
+    attach_focus_and_input_events(&ui.meta, dispatch, &node);
+
     Ok(node)
+}
+
+/// Wires the focus, blur, keydown, pointer-down and paste handlers in `meta` to `node`. Shared
+/// by [`render_node`] and [`attach_listeners`] so that mounting and hydrating behave the same.
+fn attach_focus_and_input_events<Msg: Clone + 'static>(
+    meta: &NodeMeta<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+    node: &Node,
+) {
+    let Some(el) = node.dyn_ref::<web_sys::HtmlElement>() else {
+        return;
+    };
+
+    if let Some(msg) = meta.on_focus.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
+        el.set_onfocus(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
+
+    if let Some(msg) = meta.on_blur.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
+        el.set_onblur(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
+
+    if let Some(on_keydown) = meta.on_keydown.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |ev: web_sys::KeyboardEvent| {
+                let event = KeyEvent {
+                    key: ev.key(),
+                    code: ev.code(),
+                    ctrl: ev.ctrl_key(),
+                    shift: ev.shift_key(),
+                    alt: ev.alt_key(),
+                    meta: ev.meta_key(),
+                    repeat: ev.repeat(),
+                };
+                if let Some(msg) = on_keydown(event) {
+                    ev.prevent_default();
+                    dispatch(msg);
+                }
+            },
+        );
+        el.set_onkeydown(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
+
+    if let Some(on_pointer_down) = meta.on_pointer_down.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |ev: web_sys::PointerEvent| {
+                let event = PointerEvent {
+                    x: f64::from(ev.client_x()),
+                    y: f64::from(ev.client_y()),
+                    button: ev.button(),
+                    ctrl: ev.ctrl_key(),
+                    shift: ev.shift_key(),
+                    alt: ev.alt_key(),
+                    meta: ev.meta_key(),
+                };
+                if let Some(msg) = on_pointer_down(event) {
+                    dispatch(msg);
+                }
+            },
+        );
+        el.set_onpointerdown(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
+
+    if let Some(on_paste) = meta.on_paste.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut(web_sys::ClipboardEvent)>::new(
+            move |ev: web_sys::ClipboardEvent| {
+                let text = ev
+                    .clipboard_data()
+                    .and_then(|data| data.get_data("text/plain").ok())
+                    .unwrap_or_default();
+                if let Some(msg) = on_paste(text) {
+                    ev.prevent_default();
+                    dispatch(msg);
+                }
+            },
+        );
+        el.set_onpaste(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
 }
 
 // Keeps event `Closure`s alive for as long as their DOM node lives, keyed by
@@ -1286,7 +1382,10 @@ where
 // Keyed by `u64`, not `u32`: the node pointer is widened before hashing so the
 // mapping stays correct if wasm64/`memory64` ever lands (a `u32` truncation of
 // a pointer would silently collide identities and drop the wrong closures).
-type LiveClosures = std::cell::RefCell<HashMap<u64, Vec<Closure<dyn FnMut()>>>>;
+//
+// The closures have different signatures (no argument, keyboard, pointer, clipboard), so each is
+// stored type-erased. Dropping the `Box` drops the `Closure`.
+type LiveClosures = std::cell::RefCell<HashMap<u64, Vec<Box<dyn std::any::Any>>>>;
 thread_local! {
     static LIVE_CLOSURES: LiveClosures = std::cell::RefCell::new(HashMap::new());
 }
@@ -1297,9 +1396,9 @@ fn node_id(node: &Node) -> u64 {
     (node as *const Node as u64) ^ ((node.node_type() as u64) << 32).wrapping_mul(0x9e3779b1)
 }
 
-fn track_closure(node: &Node, closure: Closure<dyn FnMut()>) {
+fn track_closure<T: ?Sized + 'static>(node: &Node, closure: Closure<T>) {
     let id = node_id(node);
-    LIVE_CLOSURES.with(|m| m.borrow_mut().entry(id).or_default().push(closure));
+    LIVE_CLOSURES.with(|m| m.borrow_mut().entry(id).or_default().push(Box::new(closure)));
 }
 
 /// Drops and forgets every event `Closure` tracked for `node`, so its
@@ -1686,6 +1785,8 @@ where
             }
         }
     }
+
+    attach_focus_and_input_events(&ui.meta, dispatch, &el.clone().into());
 
     if let Some(action) = &ui.meta.ai.action {
         el.set_attribute("data-ai-action", action)?;

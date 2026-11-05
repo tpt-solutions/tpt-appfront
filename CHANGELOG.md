@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tpt-appfront-core`: web event handlers on `NodeRef`: `on_focus` and `on_blur` (messages),
+  `on_keydown` (returns `Option<Msg>`; `Some` also stops the browser default), `on_pointer_down`
+  (client position, button and modifiers) and `on_paste` (clipboard text). Types: `KeyEvent`,
+  `PointerEvent`, `OnKeyDown`, `OnPointerDown`, `OnPaste`.
+- `tpt-appfront-dom`: the new handlers are wired on mount and on hydration, and removed on unmount.
+  Browser tests in `tests/events.rs` (run by the CI `wasm-tests` job).
 - `tpt-appfront-webview`: `AppBuilder::run_with_value_handler` — app IPC
   commands can now resolve the page's `requestId` promise with a JSON
   payload (the legacy `run` keeps its fire-and-forget contract; nothing is
