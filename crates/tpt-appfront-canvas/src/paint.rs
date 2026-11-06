@@ -412,7 +412,9 @@ fn dispatch_after<Msg: Clone>(
             PointerStep::Press(pos, button, modifiers) => {
                 holding = true;
                 if let Some(on_pointer_down) = meta.on_pointer_down.as_ref() {
-                    if let Some(msg) = on_pointer_down(ui_pointer_event(pos, button, modifiers)) {
+                    if let Some(msg) =
+                        on_pointer_down(ui_pointer_event(pos, button, modifiers, rect))
+                    {
                         dispatch(msg);
                     }
                 }
@@ -422,6 +424,8 @@ fn dispatch_after<Msg: Clone>(
                     let event = UiPointerEvent {
                         x: f64::from(pos.x),
                         y: f64::from(pos.y),
+                        target_width: f64::from(rect.width()),
+                        target_height: f64::from(rect.height()),
                         ..UiPointerEvent::default()
                     };
                     if let Some(msg) = on_move(event) {
@@ -433,7 +437,7 @@ fn dispatch_after<Msg: Clone>(
                 if holding {
                     holding = false;
                     if let Some(on_up) = meta.on_pointer_up.as_ref() {
-                        if let Some(msg) = on_up(ui_pointer_event(pos, button, modifiers)) {
+                        if let Some(msg) = on_up(ui_pointer_event(pos, button, modifiers, rect)) {
                             dispatch(msg);
                         }
                     }
@@ -455,6 +459,7 @@ fn ui_pointer_event(
     pos: egui::Pos2,
     button: egui::PointerButton,
     modifiers: egui::Modifiers,
+    rect: Rect,
 ) -> UiPointerEvent {
     UiPointerEvent {
         x: f64::from(pos.x),
@@ -464,6 +469,8 @@ fn ui_pointer_event(
         shift: modifiers.shift,
         alt: modifiers.alt,
         meta: modifiers.mac_cmd,
+        target_width: f64::from(rect.width()),
+        target_height: f64::from(rect.height()),
     }
 }
 

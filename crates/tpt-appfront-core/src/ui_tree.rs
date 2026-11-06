@@ -165,7 +165,8 @@ pub struct KeyEvent {
     pub repeat: bool,
 }
 
-/// A pointer press, as passed to a pointer-down handler. See [`NodeRef::on_pointer_down`].
+/// A pointer event, as passed to a pointer-down, pointer-move or pointer-up handler. See
+/// [`NodeRef::on_pointer_down`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PointerEvent {
     /// Horizontal position in CSS pixels, relative to the viewport.
@@ -182,6 +183,13 @@ pub struct PointerEvent {
     pub alt: bool,
     /// Whether Meta was held.
     pub meta: bool,
+    /// Width of the node the event was dispatched to, in CSS pixels. `0.0` when the backend does
+    /// not know it. Lets a handler convert a pointer distance into the node's own units.
+    #[serde(default)]
+    pub target_width: f64,
+    /// Height of the node the event was dispatched to, in CSS pixels. `0.0` when unknown.
+    #[serde(default)]
+    pub target_height: f64,
 }
 
 /// Keydown callback. Returns `Some(msg)` to dispatch `msg` and stop the browser's default action

@@ -1351,7 +1351,7 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
                     let _ = target.set_pointer_capture(ev.pointer_id());
                 }
                 if let Some(on_pointer_down) = on_pointer_down.as_ref() {
-                    if let Some(msg) = on_pointer_down(pointer_event_from(&ev)) {
+                    if let Some(msg) = on_pointer_down(pointer_event_from(&ev, &target)) {
                         dispatch(msg);
                     }
                 }
@@ -1363,9 +1363,10 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
 
     if let Some(on_pointer_move) = meta.on_pointer_move.clone() {
         let dispatch = Rc::clone(dispatch);
+        let target = el.clone();
         let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
             move |ev: web_sys::PointerEvent| {
-                if let Some(msg) = on_pointer_move(pointer_event_from(&ev)) {
+                if let Some(msg) = on_pointer_move(pointer_event_from(&ev, &target)) {
                     dispatch(msg);
                 }
             },
@@ -1376,9 +1377,10 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
 
     if let Some(on_pointer_up) = meta.on_pointer_up.clone() {
         let dispatch = Rc::clone(dispatch);
+        let target = el.clone();
         let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
             move |ev: web_sys::PointerEvent| {
-                if let Some(msg) = on_pointer_up(pointer_event_from(&ev)) {
+                if let Some(msg) = on_pointer_up(pointer_event_from(&ev, &target)) {
                     dispatch(msg);
                 }
             },
@@ -1426,8 +1428,10 @@ fn node_id(node: &Node) -> u64 {
     (node as *const Node as u64) ^ ((node.node_type() as u64) << 32).wrapping_mul(0x9e3779b1)
 }
 
-/// The appfront pointer event for a DOM pointer event.
-fn pointer_event_from(ev: &web_sys::PointerEvent) -> PointerEvent {
+/// The appfront pointer event for a DOM pointer event dispatched to `target`, the element that
+/// has the handler.
+fn pointer_event_from(ev: &web_sys::PointerEvent, target: &web_sys::HtmlElement) -> PointerEvent {
+    let rect = target.get_bounding_client_rect();
     PointerEvent {
         x: f64::from(ev.client_x()),
         y: f64::from(ev.client_y()),
@@ -1436,6 +1440,8 @@ fn pointer_event_from(ev: &web_sys::PointerEvent) -> PointerEvent {
         shift: ev.shift_key(),
         alt: ev.alt_key(),
         meta: ev.meta_key(),
+        target_width: rect.width(),
+        target_height: rect.height(),
     }
 }
 
