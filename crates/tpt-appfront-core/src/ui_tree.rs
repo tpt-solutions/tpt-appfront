@@ -191,6 +191,14 @@ pub type OnKeyDown<Msg> = std::sync::Arc<dyn Fn(KeyEvent) -> Option<Msg> + Send 
 /// Pointer-down callback. Returns `Some(msg)` to dispatch it, or `None` to ignore the press.
 pub type OnPointerDown<Msg> = std::sync::Arc<dyn Fn(PointerEvent) -> Option<Msg> + Send + Sync>;
 
+/// Pointer-move callback. Called for every move while the node holds the pointer, so a drag
+/// keeps reporting after the pointer leaves the node. Returns `Some(msg)` to dispatch it.
+pub type OnPointerMove<Msg> = std::sync::Arc<dyn Fn(PointerEvent) -> Option<Msg> + Send + Sync>;
+
+/// Pointer-up callback. Called when a button is released on the node, or on the node that holds
+/// the pointer. Returns `Some(msg)` to dispatch it, or `None` to ignore the release.
+pub type OnPointerUp<Msg> = std::sync::Arc<dyn Fn(PointerEvent) -> Option<Msg> + Send + Sync>;
+
 /// Paste callback. Gets the plain text from the clipboard. Returns `Some(msg)` to dispatch it and
 /// stop the browser from inserting the text, or `None` to let the browser paste.
 pub type OnPaste<Msg> = std::sync::Arc<dyn Fn(String) -> Option<Msg> + Send + Sync>;
@@ -217,6 +225,16 @@ fn on_keydown_default<Msg>() -> Option<OnKeyDown<Msg>> {
 
 /// `serde` default for [`NodeMeta::on_pointer_down`]. See [`on_input_default`].
 fn on_pointer_down_default<Msg>() -> Option<OnPointerDown<Msg>> {
+    None
+}
+
+/// `serde` default for [`NodeMeta::on_pointer_move`]. See [`on_input_default`].
+fn on_pointer_move_default<Msg>() -> Option<OnPointerMove<Msg>> {
+    None
+}
+
+/// `serde` default for [`NodeMeta::on_pointer_up`]. See [`on_input_default`].
+fn on_pointer_up_default<Msg>() -> Option<OnPointerUp<Msg>> {
     None
 }
 
@@ -250,6 +268,12 @@ pub struct NodeMeta<Msg> {
     /// See [`OnPointerDown`]. Not serializable, same reasoning as `on_input`.
     #[serde(skip, default = "on_pointer_down_default")]
     pub on_pointer_down: Option<OnPointerDown<Msg>>,
+    /// See [`OnPointerMove`]. Not serializable, same reasoning as `on_input`.
+    #[serde(skip, default = "on_pointer_move_default")]
+    pub on_pointer_move: Option<OnPointerMove<Msg>>,
+    /// See [`OnPointerUp`]. Not serializable, same reasoning as `on_input`.
+    #[serde(skip, default = "on_pointer_up_default")]
+    pub on_pointer_up: Option<OnPointerUp<Msg>>,
     /// See [`OnPaste`]. Not serializable, same reasoning as `on_input`.
     #[serde(skip, default = "on_paste_default")]
     pub on_paste: Option<OnPaste<Msg>>,
@@ -297,6 +321,8 @@ impl<Msg> Default for NodeMeta<Msg> {
             on_blur: None,
             on_keydown: None,
             on_pointer_down: None,
+            on_pointer_move: None,
+            on_pointer_up: None,
             on_paste: None,
             ai: AiMeta::default(),
             data_appfront_id: None,
@@ -324,6 +350,14 @@ impl<Msg: std::fmt::Debug> std::fmt::Debug for NodeMeta<Msg> {
             .field(
                 "on_pointer_down",
                 &self.on_pointer_down.as_ref().map(|_| "<fn>"),
+            )
+            .field(
+                "on_pointer_move",
+                &self.on_pointer_move.as_ref().map(|_| "<fn>"),
+            )
+            .field(
+                "on_pointer_up",
+                &self.on_pointer_up.as_ref().map(|_| "<fn>"),
             )
             .field("on_paste", &self.on_paste.as_ref().map(|_| "<fn>"))
             .field("ai", &self.ai)
@@ -769,6 +803,25 @@ impl<'a, Msg> NodeRef<'a, Msg> {
         self
     }
 
+    /// Calls `f` for each pointer move while the node holds the pointer (after a press on it, and
+    /// until the button is released). See [`OnPointerMove`].
+    pub fn on_pointer_move(
+        mut self,
+        f: impl Fn(PointerEvent) -> Option<Msg> + Send + Sync + 'static,
+    ) -> Self {
+        self.meta_mut().on_pointer_move = Some(std::sync::Arc::new(f));
+        self
+    }
+
+    /// Calls `f` when a pointer button is released on the node. See [`OnPointerUp`].
+    pub fn on_pointer_up(
+        mut self,
+        f: impl Fn(PointerEvent) -> Option<Msg> + Send + Sync + 'static,
+    ) -> Self {
+        self.meta_mut().on_pointer_up = Some(std::sync::Arc::new(f));
+        self
+    }
+
     /// Calls `f` with the clipboard text when text is pasted into the node. See [`OnPaste`].
     pub fn on_paste(mut self, f: impl Fn(String) -> Option<Msg> + Send + Sync + 'static) -> Self {
         self.meta_mut().on_paste = Some(std::sync::Arc::new(f));
@@ -1016,6 +1069,37 @@ mod event_tests {
     }
 
     #[test]
+    fn pointer_move_and_up_are_stored_and_dispatch_their_messages() {
+        let tree = UITree::container(|c| {
+            c.text("drag me")
+                .on_pointer_move(|p| Some(M::Down(p.button)))
+                .on_pointer_up(|p| (p.button == 0).then_some(M::Focus));
+        });
+        let meta = only_child(&tree);
+        let on_move = meta.on_pointer_move.as_ref().expect("pointer move");
+        assert_eq!(
+            on_move(PointerEvent {
+                button: 1,
+                ..PointerEvent::default()
+            }),
+            Some(M::Down(1))
+        );
+        let on_up = meta.on_pointer_up.as_ref().expect("pointer up");
+        assert_eq!(on_up(PointerEvent::default()), Some(M::Focus));
+        assert_eq!(
+            on_up(PointerEvent {
+                button: 2,
+                ..PointerEvent::default()
+            }),
+            None
+        );
+        assert!(
+            format!("{meta:?}").contains("on_pointer_move"),
+            "debug output names the new handlers"
+        );
+    }
+
+    #[test]
     fn focus_and_blur_survive_serialization_like_on_click() {
         let meta = NodeMeta {
             on_focus: Some(M::Focus),
@@ -1036,6 +1120,7 @@ mod event_tests {
         assert!(
             meta.on_keydown.is_none() && meta.on_pointer_down.is_none() && meta.on_paste.is_none()
         );
+        assert!(meta.on_pointer_move.is_none() && meta.on_pointer_up.is_none());
         assert!(format!("{meta:?}").contains("on_keydown"));
     }
 }

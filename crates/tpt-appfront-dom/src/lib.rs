@@ -72,6 +72,8 @@ impl MountedNode {
             el.set_onblur(None);
             el.set_onkeydown(None);
             el.set_onpointerdown(None);
+            el.set_onpointermove(None);
+            el.set_onpointerup(None);
             el.set_onpaste(None);
         }
         if let Some(el) = self.node.dyn_ref::<web_sys::HtmlInputElement>() {
@@ -1335,25 +1337,53 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
         track_closure(node, closure);
     }
 
-    if let Some(on_pointer_down) = meta.on_pointer_down.clone() {
+    // A node with move or up handlers captures the pointer when it is pressed, so a drag keeps
+    // reporting to it after the pointer leaves the element.
+    let captures = meta.on_pointer_move.is_some() || meta.on_pointer_up.is_some();
+    if meta.on_pointer_down.is_some() || captures {
+        let on_pointer_down = meta.on_pointer_down.clone();
         let dispatch = Rc::clone(dispatch);
+        let target = el.clone();
         let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
             move |ev: web_sys::PointerEvent| {
-                let event = PointerEvent {
-                    x: f64::from(ev.client_x()),
-                    y: f64::from(ev.client_y()),
-                    button: ev.button(),
-                    ctrl: ev.ctrl_key(),
-                    shift: ev.shift_key(),
-                    alt: ev.alt_key(),
-                    meta: ev.meta_key(),
-                };
-                if let Some(msg) = on_pointer_down(event) {
-                    dispatch(msg);
+                if captures {
+                    // Refused captures (the element is gone) only lose the drag, so ignore them.
+                    let _ = target.set_pointer_capture(ev.pointer_id());
+                }
+                if let Some(on_pointer_down) = on_pointer_down.as_ref() {
+                    if let Some(msg) = on_pointer_down(pointer_event_from(&ev)) {
+                        dispatch(msg);
+                    }
                 }
             },
         );
         el.set_onpointerdown(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
+
+    if let Some(on_pointer_move) = meta.on_pointer_move.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |ev: web_sys::PointerEvent| {
+                if let Some(msg) = on_pointer_move(pointer_event_from(&ev)) {
+                    dispatch(msg);
+                }
+            },
+        );
+        el.set_onpointermove(Some(closure.as_ref().unchecked_ref()));
+        track_closure(node, closure);
+    }
+
+    if let Some(on_pointer_up) = meta.on_pointer_up.clone() {
+        let dispatch = Rc::clone(dispatch);
+        let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |ev: web_sys::PointerEvent| {
+                if let Some(msg) = on_pointer_up(pointer_event_from(&ev)) {
+                    dispatch(msg);
+                }
+            },
+        );
+        el.set_onpointerup(Some(closure.as_ref().unchecked_ref()));
         track_closure(node, closure);
     }
 
@@ -1394,6 +1424,19 @@ thread_local! {
 /// lifetime), used to map closures for cleanup.
 fn node_id(node: &Node) -> u64 {
     (node as *const Node as u64) ^ ((node.node_type() as u64) << 32).wrapping_mul(0x9e3779b1)
+}
+
+/// The appfront pointer event for a DOM pointer event.
+fn pointer_event_from(ev: &web_sys::PointerEvent) -> PointerEvent {
+    PointerEvent {
+        x: f64::from(ev.client_x()),
+        y: f64::from(ev.client_y()),
+        button: ev.button(),
+        ctrl: ev.ctrl_key(),
+        shift: ev.shift_key(),
+        alt: ev.alt_key(),
+        meta: ev.meta_key(),
+    }
 }
 
 fn track_closure<T: ?Sized + 'static>(node: &Node, closure: Closure<T>) {

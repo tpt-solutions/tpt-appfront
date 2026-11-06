@@ -262,6 +262,8 @@ fn has_input_handlers<Msg>(meta: &NodeMeta<Msg>) -> bool {
         || meta.on_blur.is_some()
         || meta.on_keydown.is_some()
         || meta.on_pointer_down.is_some()
+        || meta.on_pointer_move.is_some()
+        || meta.on_pointer_up.is_some()
 }
 
 /// The key name the DOM uses for KeyboardEvent.key, from an egui key. Letters follow Shift.
@@ -374,10 +376,17 @@ fn dispatch_after<Msg: Clone>(
             dispatch(msg);
         }
     }
-    let Some(on_pointer_down) = meta.on_pointer_down.as_ref() else {
+    if meta.on_pointer_down.is_none()
+        && meta.on_pointer_move.is_none()
+        && meta.on_pointer_up.is_none()
+    {
         return;
-    };
-    let presses: Vec<(egui::Pos2, egui::PointerButton, egui::Modifiers)> = ui.input(|i| {
+    }
+    // A node holds the pointer from a press that started inside it until the next release. Moves
+    // reach it while it holds the pointer, even outside rect, as in the DOM backend's capture.
+    let hold_id = node_id.with("appfront-pointer-hold");
+    let mut holding = ui.data(|d| d.get_temp::<bool>(hold_id)).unwrap_or(false);
+    let steps: Vec<PointerStep> = ui.input(|i| {
         i.events
             .iter()
             .filter_map(|e| match e {
@@ -386,24 +395,75 @@ fn dispatch_after<Msg: Clone>(
                     button,
                     pressed: true,
                     modifiers,
-                } if rect.contains(*pos) => Some((*pos, *button, *modifiers)),
+                } if rect.contains(*pos) => Some(PointerStep::Press(*pos, *button, *modifiers)),
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: false,
+                    modifiers,
+                } => Some(PointerStep::Release(*pos, *button, *modifiers)),
+                egui::Event::PointerMoved(pos) => Some(PointerStep::Move(*pos)),
                 _ => None,
             })
             .collect()
     });
-    for (pos, button, modifiers) in presses {
-        let event = UiPointerEvent {
-            x: f64::from(pos.x),
-            y: f64::from(pos.y),
-            button: pointer_button_index(button),
-            ctrl: modifiers.ctrl,
-            shift: modifiers.shift,
-            alt: modifiers.alt,
-            meta: modifiers.mac_cmd,
-        };
-        if let Some(msg) = on_pointer_down(event) {
-            dispatch(msg);
+    for step in steps {
+        match step {
+            PointerStep::Press(pos, button, modifiers) => {
+                holding = true;
+                if let Some(on_pointer_down) = meta.on_pointer_down.as_ref() {
+                    if let Some(msg) = on_pointer_down(ui_pointer_event(pos, button, modifiers)) {
+                        dispatch(msg);
+                    }
+                }
+            }
+            PointerStep::Move(pos) => {
+                if let (true, Some(on_move)) = (holding, meta.on_pointer_move.as_ref()) {
+                    let event = UiPointerEvent {
+                        x: f64::from(pos.x),
+                        y: f64::from(pos.y),
+                        ..UiPointerEvent::default()
+                    };
+                    if let Some(msg) = on_move(event) {
+                        dispatch(msg);
+                    }
+                }
+            }
+            PointerStep::Release(pos, button, modifiers) => {
+                if holding {
+                    holding = false;
+                    if let Some(on_up) = meta.on_pointer_up.as_ref() {
+                        if let Some(msg) = on_up(ui_pointer_event(pos, button, modifiers)) {
+                            dispatch(msg);
+                        }
+                    }
+                }
+            }
         }
+    }
+    ui.data_mut(|d| d.insert_temp(hold_id, holding));
+}
+
+/// A pointer step this frame, for [`dispatch_after`].
+enum PointerStep {
+    Press(egui::Pos2, egui::PointerButton, egui::Modifiers),
+    Move(egui::Pos2),
+    Release(egui::Pos2, egui::PointerButton, egui::Modifiers),
+}
+
+fn ui_pointer_event(
+    pos: egui::Pos2,
+    button: egui::PointerButton,
+    modifiers: egui::Modifiers,
+) -> UiPointerEvent {
+    UiPointerEvent {
+        x: f64::from(pos.x),
+        y: f64::from(pos.y),
+        button: pointer_button_index(button),
+        ctrl: modifiers.ctrl,
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+        meta: modifiers.mac_cmd,
     }
 }
 
@@ -500,6 +560,8 @@ mod tests {
         Focus,
         Key(String),
         Down(i16, i32),
+        Moved(i32, i32),
+        Up(i16),
     }
 
     /// Lays `ui` out with `taffy` and paints it into a fresh headless
@@ -747,6 +809,65 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(run_paint_frame(&ctx, &ui, enter), vec![Msg::Clicked]);
+    }
+
+    #[test]
+    fn a_node_that_holds_the_pointer_gets_moves_outside_it_until_release() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.text("drag handle")
+                .on_pointer_down(|p| Some(Msg::Down(p.button, p.x as i32)))
+                .on_pointer_move(|p| Some(Msg::Moved(p.x as i32, p.y as i32)))
+                .on_pointer_up(|p| Some(Msg::Up(p.button)));
+        });
+        let ctx = egui::Context::default();
+        let inside = EguiPos2::new(10.0, 10.0);
+        let outside = EguiPos2::new(500.0, 400.0);
+        run_paint_frame(&ctx, &ui, RawInput::default());
+
+        let press = RawInput {
+            events: vec![
+                Event::PointerMoved(inside),
+                Event::PointerButton {
+                    pos: inside,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(run_paint_frame(&ctx, &ui, press), vec![Msg::Down(0, 10)]);
+
+        let drag = RawInput {
+            events: vec![Event::PointerMoved(outside)],
+            ..Default::default()
+        };
+        assert_eq!(
+            run_paint_frame(&ctx, &ui, drag),
+            vec![Msg::Moved(500, 400)],
+            "the holder gets moves after the pointer leaves it"
+        );
+
+        let release = RawInput {
+            events: vec![Event::PointerButton {
+                pos: outside,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(run_paint_frame(&ctx, &ui, release), vec![Msg::Up(0)]);
+
+        let after = RawInput {
+            events: vec![Event::PointerMoved(inside)],
+            ..Default::default()
+        };
+        assert_eq!(
+            run_paint_frame(&ctx, &ui, after),
+            Vec::<Msg>::new(),
+            "after the release, moves are no longer delivered"
+        );
     }
 
     #[test]

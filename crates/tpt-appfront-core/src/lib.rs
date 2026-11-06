@@ -79,6 +79,6 @@ pub use styling::{
 pub use tpt_appfront_macros::{component, rsx, view};
 pub use ui_tree::{
     AiMeta, ContainerBuilder, HydrationPayload, KeyEvent, NodeKind, NodeMeta, NodeRef, OnKeyDown,
-    OnPaste, OnPointerDown, PointerEvent, UITree,
+    OnPaste, OnPointerDown, OnPointerMove, OnPointerUp, PointerEvent, UITree,
 };
 pub use virtual_scroll::{apply_auto_virtual_scroll, VirtualScroll, VisibleRange};
