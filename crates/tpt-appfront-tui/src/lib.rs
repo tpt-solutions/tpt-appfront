@@ -133,10 +133,12 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
                     walk(item, out);
                 }
             }
+            // Portal content is rendered inline (see `render_node`), so its
+            // interactive nodes must be focusable in the same order.
+            NodeKind::Portal { content, .. } => walk(content, out),
             NodeKind::Heading { .. }
             | NodeKind::Text { .. }
             | NodeKind::DataGrid { .. }
-            | NodeKind::Portal { .. }
             | NodeKind::Image { .. }
             | NodeKind::Link { .. }
             | NodeKind::Media { .. } => {}
