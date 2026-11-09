@@ -189,6 +189,11 @@ enum Command {
     /// Lint the workspace and every standalone example with
     /// `cargo clippy --all-targets -- -D warnings`.
     Lint,
+    /// Print a shell completion script for `tpt-appfront` to stdout.
+    Completions {
+        /// One of: bash, zsh, fish, powershell, elvish.
+        shell: String,
+    },
 }
 
 /// The sub-kind of `tpt-appfront add`.
@@ -295,6 +300,16 @@ fn main() -> anyhow::Result<()> {
         },
         Command::Fmt => fmt_cmd(),
         Command::Lint => lint_cmd(),
+        Command::Completions { shell } => {
+            let shell: clap_complete::Shell = shell.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "unknown shell `{shell}`; use bash, zsh, fish, powershell or elvish"
+                )
+            })?;
+            let mut cmd = <Cli as clap::CommandFactory>::command();
+            clap_complete::generate(shell, &mut cmd, "tpt-appfront", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }
 
@@ -385,11 +400,18 @@ fn published_version() -> String {
 /// dependency on a published install. This is what makes scaffolded
 /// `Cargo.toml`s build both locally (against the checkout) and once the
 /// crates are published to crates.io (`todo.md` Phase 15).
-fn dep_ref(crate_name: &str) -> String {
+/// The `tpt-appfront` umbrella dependency with the given backend features. Scaffolds depend on
+/// the umbrella rather than on each crate, so one line covers the core and the backend they use.
+fn umbrella_ref(features: &[&str]) -> String {
+    let feats = features
+        .iter()
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     if is_workspace_checkout() {
-        format!("{{ path = \"{}\" }}", dep_path(crate_name))
+        format!("{{ path = \"{}\", features = [{feats}] }}", dep_path("tpt-appfront"))
     } else {
-        format!("\"{}\"", published_version())
+        format!("{{ version = \"{}\", features = [{feats}] }}", published_version())
     }
 }
 
@@ -531,11 +553,7 @@ fn scaffold_canvas_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow:
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::canvas_cargo_toml(
-            pkg_name,
-            &dep_ref("tpt-appfront-core"),
-            &dep_ref("tpt-appfront-canvas"),
-        ),
+        templates::canvas_cargo_toml(pkg_name, &umbrella_ref(&["canvas"])),
     )?;
     fs::write(
         dir.join("src").join("main.rs"),
@@ -550,8 +568,7 @@ fn scaffold_dom_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
         dir.join("Cargo.toml"),
         templates::dom_cargo_toml(
             pkg_name,
-            &dep_ref("tpt-appfront-core"),
-            &dep_ref("tpt-appfront-dom"),
+            &umbrella_ref(&["dom"]),
         ),
     )?;
     fs::write(
@@ -568,8 +585,7 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
         dir.join("Cargo.toml"),
         templates::tui_cargo_toml(
             pkg_name,
-            &dep_ref("tpt-appfront-core"),
-            &dep_ref("tpt-appfront-tui"),
+            &umbrella_ref(&["tui"]),
         ),
     )?;
     fs::write(
@@ -585,8 +601,7 @@ fn scaffold_server_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow:
         dir.join("Cargo.toml"),
         templates::server_cargo_toml(
             pkg_name,
-            &dep_ref("tpt-appfront-core"),
-            &dep_ref("tpt-appfront-server"),
+            &umbrella_ref(&["server"]),
         ),
     )?;
     fs::write(
@@ -610,9 +625,7 @@ fn scaffold_with_crate(
         dir.join("Cargo.toml"),
         templates::preset_cargo_toml(
             pkg_name,
-            &dep_ref("tpt-appfront-core"),
-            &dep_ref("tpt-appfront-dom"),
-            &dep_ref("tpt-appfront-templates"),
+            &umbrella_ref(&["dom", "templates"]),
         ),
     )?;
     fs::write(
@@ -637,9 +650,7 @@ fn scaffold_preset_crate(
         dir.join("Cargo.toml"),
         templates::preset_cargo_toml(
             pkg_name,
-            &dep_ref("tpt-appfront-core"),
-            &dep_ref("tpt-appfront-dom"),
-            &dep_ref("tpt-appfront-templates"),
+            &umbrella_ref(&["dom", "templates"]),
         ),
     )?;
     fs::write(
@@ -1703,17 +1714,16 @@ mod tests {
     }
 
     #[test]
-    fn dep_ref_is_path_dep_inside_checkout_and_version_when_installed() {
-        // In this repo the sibling crates exist, so we get a `path` dep.
+    fn umbrella_ref_is_path_dep_inside_checkout_and_version_when_installed() {
+        // In this repo the sibling crates exist, so we get a `path` dep with the features.
         if is_workspace_checkout() {
-            let r = dep_ref("tpt-appfront-core");
+            let r = umbrella_ref(&["dom", "templates"]);
             assert!(r.starts_with("{ path ="), "expected path dep, got {r}");
+            assert!(r.contains("features = [\"dom\", \"templates\"]"), "got {r}");
         } else {
-            let r = dep_ref("tpt-appfront-core");
-            assert!(
-                r.starts_with('"') && r.ends_with('"'),
-                "expected version dep, got {r}"
-            );
+            let r = umbrella_ref(&["dom"]);
+            assert!(r.starts_with("{ version ="), "expected version dep, got {r}");
+            assert!(r.contains("features = [\"dom\"]"), "got {r}");
         }
     }
 
@@ -1825,7 +1835,7 @@ mod tests {
         assert!(scaffold_with_crate(&dir.join("myapp"), "myapp", "myapp", &pieces).is_ok());
         let root = dir.join("myapp");
         let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
-        assert!(cargo.contains("tpt-appfront-templates"));
+        assert!(cargo.contains("features = [\"dom\", \"templates\"]"));
         let lib = fs::read_to_string(root.join("src").join("lib.rs")).unwrap();
         assert!(lib.contains("dashboard_shell"));
         assert!(lib.contains("settings_list"));
@@ -1861,7 +1871,7 @@ mod tests {
         .is_ok());
         let root = dir.join("myapp");
         let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
-        assert!(cargo.contains("tpt-appfront-templates"));
+        assert!(cargo.contains("features = [\"dom\", \"templates\"]"));
         let lib = fs::read_to_string(root.join("src").join("lib.rs")).unwrap();
         assert!(lib.contains("dashboard_shell"));
         let _ = fs::remove_dir_all(&dir);
@@ -1962,6 +1972,19 @@ mod tests {
         let err = generate_ui("a dashboard", None, true, "anthropic", "claude-sonnet-4-5", None)
             .expect_err("expected a feature error without the `llm` feature");
         assert!(err.to_string().contains("`llm` feature"), "got: {err}");
+    }
+
+    #[test]
+    fn completions_generates_a_script_for_known_shells() {
+        assert!(Cli::try_parse_from(["tpt-appfront", "completions", "bash"]).is_ok());
+        let shell: clap_complete::Shell = "zsh".parse().expect("zsh is a known shell");
+        let mut cmd = <Cli as clap::CommandFactory>::command();
+        let mut out = Vec::new();
+        clap_complete::generate(shell, &mut cmd, "tpt-appfront", &mut out);
+        let script = String::from_utf8(out).expect("completion script is UTF-8");
+        assert!(script.contains("tpt-appfront"), "script names the binary");
+        assert!(script.contains("generate"), "script lists subcommands");
+        assert!("nope".parse::<clap_complete::Shell>().is_err());
     }
 
     #[test]

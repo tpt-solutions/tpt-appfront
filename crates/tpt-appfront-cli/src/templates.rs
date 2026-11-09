@@ -1,13 +1,14 @@
 //! String templates used by `tpt-appfront init` to scaffold a new project.
-//! The dependency spec (`core_dep`/`canvas_dep`/etc.) is computed by the
-//! caller: a `path = "..."` dependency when running against the
+//! Each project depends on the `tpt-appfront` umbrella crate. Its dependency spec (`umbrella_dep`,
+//! with the backend features the project uses) is computed by the caller: a `path = "..."`
+//! dependency when running against the
 //! `tpt-appfront` checkout that built this CLI, or a version dependency
 //! (`"0.1.0"`) once the crates are published and `tpt-appfront init` is invoked
 //! from an installed `cargo install tpt-appfront-cli` (see `dep_ref` in
 //! `main.rs`). This avoids scaffolding projects with broken path deps on a
 //! published install.
 
-pub fn canvas_cargo_toml(pkg_name: &str, core_dep: &str, canvas_dep: &str) -> String {
+pub fn canvas_cargo_toml(pkg_name: &str, umbrella_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -16,15 +17,14 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tpt-appfront-core = {core_dep}
-tpt-appfront-canvas = {canvas_dep}
+tpt-appfront = {umbrella_dep}
 "#
     )
 }
 
 pub fn canvas_main_rs(app_title: &str) -> String {
     format!(
-        r#"use tpt_appfront_core::{{Signal, UITree}};
+        r#"use tpt_appfront::core::{{Signal, UITree}};
 
 #[derive(Debug, Clone)]
 enum Msg {{
@@ -51,17 +51,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // `tpt-appfront dev --devtools`), print the `UITree` structure on startup.
     if std::env::var("TPT_APPFRONT_DEVTOOLS").is_ok() {{
         let preview = build_ui();
-        eprintln!("{{}}", tpt_appfront_core::devtools::inspect_tree(&preview));
+        eprintln!("{{}}", tpt_appfront::core::devtools::inspect_tree(&preview));
     }}
 
-    tpt_appfront_canvas::run_native("{app_title}", build_ui, dispatch)?;
+    tpt_appfront::canvas::run_native("{app_title}", build_ui, dispatch)?;
     Ok(())
 }}
 "#
     )
 }
 
-pub fn dom_cargo_toml(pkg_name: &str, core_dep: &str, dom_dep: &str) -> String {
+pub fn dom_cargo_toml(pkg_name: &str, umbrella_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -73,8 +73,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-tpt-appfront-core = {core_dep}
-tpt-appfront-dom = {dom_dep}
+tpt-appfront = {umbrella_dep}
 wasm-bindgen = "0.2"
 web-sys = {{ version = "0.3", features = ["Document", "Window", "Element"] }}
 console_error_panic_hook = "0.1"
@@ -91,7 +90,7 @@ strip = true
 
 pub fn dom_lib_rs(app_title: &str) -> String {
     format!(
-        r#"use tpt_appfront_core::{{create_effect, Signal, UITree}};
+        r#"use tpt_appfront::core::{{create_effect, Signal, UITree}};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
@@ -134,12 +133,12 @@ pub fn start() -> Result<(), JsValue> {{
     // Devtools inspection: when `TPT_APPFRONT_DEVTOOLS=1` (set by
     // `tpt-appfront dev --devtools`), print the `UITree` structure on startup.
     if std::env::var("TPT_APPFRONT_DEVTOOLS").is_ok() {{
-        eprintln!("{{}}", tpt_appfront_core::devtools::inspect_tree(&ui));
+        eprintln!("{{}}", tpt_appfront::core::devtools::inspect_tree(&ui));
     }}
 
-    tpt_appfront_dom::mount(&container, &ui, dispatch)?;
+    tpt_appfront::dom::mount(&container, &ui, dispatch)?;
 
-    let (text_node, text_handle) = tpt_appfront_dom::reactive_text(&document, display)?;
+    let (text_node, text_handle) = tpt_appfront::dom::reactive_text(&document, display)?;
     container.append_child(&text_node)?;
     // Whole-process root mount: forgetting is an explicit choice here, not
     // reactive_text's default behavior.
@@ -167,7 +166,7 @@ pub fn index_html(app_title: &str) -> String {
     )
 }
 
-pub fn tui_cargo_toml(pkg_name: &str, core_dep: &str, tui_dep: &str) -> String {
+pub fn tui_cargo_toml(pkg_name: &str, umbrella_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -176,15 +175,14 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tpt-appfront-core = {core_dep}
-tpt-appfront-tui = {tui_dep}
+tpt-appfront = {umbrella_dep}
 "#
     )
 }
 
 pub fn tui_main_rs(app_title: &str) -> String {
     format!(
-        r#"use tpt_appfront_core::{{Signal, UITree}};
+        r#"use tpt_appfront::core::{{Signal, UITree}};
 
 #[derive(Debug, Clone)]
 enum Msg {{
@@ -211,18 +209,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // `tpt-appfront dev --devtools`), print the `UITree` structure on startup.
     if std::env::var("TPT_APPFRONT_DEVTOOLS").is_ok() {{
         let preview = build_ui();
-        eprintln!("{{}}", tpt_appfront_core::devtools::inspect_tree(&preview));
+        eprintln!("{{}}", tpt_appfront::core::devtools::inspect_tree(&preview));
     }}
 
     // Tab/Arrows move focus, Enter/Space activate, Esc quits.
-    tpt_appfront_tui::run(build_ui, dispatch)?;
+    tpt_appfront::tui::run(build_ui, dispatch)?;
     Ok(())
 }}
 "#
     )
 }
 
-pub fn server_cargo_toml(pkg_name: &str, core_dep: &str, server_dep: &str) -> String {
+pub fn server_cargo_toml(pkg_name: &str, umbrella_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -231,8 +229,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tpt-appfront-core = {core_dep}
-tpt-appfront-server = {server_dep}
+tpt-appfront = {umbrella_dep}
 tokio = {{ version = "1", features = ["full"] }}
 "#
     )
@@ -245,8 +242,8 @@ tokio = {{ version = "1", features = ["full"] }}
 /// Phase 20 missing-feature follow-up).
 pub fn server_main_rs(app_title: &str) -> String {
     format!(
-        r#"use tpt_appfront_core::UITree;
-use tpt_appfront_server::{{SmartRouterBuilder, serve}};
+        r#"use tpt_appfront::core::UITree;
+use tpt_appfront::server::{{SmartRouterBuilder, serve}};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {{
@@ -338,7 +335,7 @@ pub fn component_rs(name: &str, kebab: &str) -> String {
     format!(
         r#"//! Component `{name}` — scaffolded by `tpt-appfront add component`.
 
-use tpt_appfront_core::{{UITree, view}};
+use tpt_appfront::core::{{UITree, view}};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
@@ -370,7 +367,7 @@ pub fn page_rs(name: &str, kebab: &str) -> String {
     format!(
         r#"//! Page `{name}` — scaffolded by `tpt-appfront add page`.
 
-use tpt_appfront_core::{{UITree, view}};
+use tpt_appfront::core::{{UITree, view}};
 
 #[derive(Debug, Clone)]
 pub enum Msg {{
@@ -394,15 +391,10 @@ pub fn {name}() -> UITree<Msg> {{
 // presets (init --preset <name>)
 // ---------------------------------------------------------------------------
 
-/// `Cargo.toml` for a preset-scaffolded DOM app. Adds `tpt-appfront-templates`
-/// on top of the usual `tpt-appfront-core`/`tpt-appfront-dom` deps, and the
-/// `web-sys` features the starter templates read (inputs, elements, nodes).
-pub fn preset_cargo_toml(
-    pkg_name: &str,
-    core_dep: &str,
-    dom_dep: &str,
-    templates_dep: &str,
-) -> String {
+/// `Cargo.toml` for a preset-scaffolded DOM app. `umbrella_dep` should enable the `dom` and
+/// `templates` features. Adds the `web-sys` features the starter templates read (inputs,
+/// elements, nodes).
+pub fn preset_cargo_toml(pkg_name: &str, umbrella_dep: &str) -> String {
     format!(
         r#"[package]
 name = "{pkg_name}"
@@ -414,9 +406,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-tpt-appfront-core = {core_dep}
-tpt-appfront-dom = {dom_dep}
-tpt-appfront-templates = {templates_dep}
+tpt-appfront = {umbrella_dep}
 wasm-bindgen = "0.2"
 web-sys = {{ version = "0.3", features = ["Document", "Window", "Element", "HtmlInputElement", "HtmlElement", "Node"] }}
 console_error_panic_hook = "0.1"
@@ -432,7 +422,7 @@ strip = true
 }
 
 /// `lib.rs` for a preset-scaffolded DOM app. Each preset wires the matching
-/// `tpt_appfront_templates` builder (or, for `login`, a `view!` form) to real
+/// `tpt_appfront::templates` builder (or, for `login`, a `view!` form) to real
 /// `Signal`-backed state, so the scaffolded app is interactive out of the box.
 pub fn preset_lib_rs(preset: &crate::presets::Preset, app_title: &str) -> String {
     match preset {
@@ -444,7 +434,7 @@ pub fn preset_lib_rs(preset: &crate::presets::Preset, app_title: &str) -> String
 }
 
 /// `lib.rs` for an `init --with <a,b,c>` scaffold. Like the presets it's a DOM
-/// app that composes selected `tpt_appfront_templates` pieces into one project:
+/// app that composes selected `tpt_appfront::templates` pieces into one project:
 /// a `dashboard` piece hosts the other selected pieces in its content area;
 /// without `dashboard`, the selected pieces stack vertically. All pieces share
 /// one `Signal`-backed state and a single `Msg` union (`todo.md` Phase cross-cutting).
@@ -454,7 +444,7 @@ pub fn with_lib_rs(pieces: &[crate::presets::WithPiece], app_title: &str) -> Str
     let has_login = pieces.contains(&WithPiece::Login);
     let has_settings = pieces.contains(&WithPiece::Settings);
 
-    // Only pull in the `tpt_appfront_templates` pieces actually selected, so a
+    // Only pull in the `tpt_appfront::templates` pieces actually selected, so a
     // generated project has no unused-import warnings.
     let mut imports = String::new();
     if has_dashboard {
@@ -525,11 +515,11 @@ pub fn with_lib_rs(pieces: &[crate::presets::WithPiece], app_title: &str) -> Str
 
     format!(
         r#"//! Composed starter — scaffolded by `tpt-appfront init --with {pieces_csv}`.
-//! Combines the requested `tpt_appfront_templates` pieces ({pieces_list}) into a
+//! Combines the requested `tpt_appfront::templates` pieces ({pieces_list}) into a
 //! single DOM app wired to shared `Signal`-backed state.
 
-use tpt_appfront_core::{{Signal, UITree}};
-use tpt_appfront_templates::{{
+use tpt_appfront::core::{{Signal, UITree}};
+use tpt_appfront::templates::{{
 {imports}}};
 use wasm_bindgen::prelude::*;
 
@@ -582,7 +572,7 @@ pub fn start() -> Result<(), JsValue> {{
     let username_for_ui = username.clone();
     let ui: UITree<Msg> = {ui_build};
 
-    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    let handle = tpt_appfront::dom::mount(&root, &ui, dispatch)?;
     std::mem::forget(handle);
     Ok(())
 }}
@@ -607,7 +597,7 @@ fn login_preset_lib_rs(app_title: &str) -> String {
 //! values flow into `Msg`s that mutate shared `Signal` state; the template
 //! demonstrates the `view!` two-way-binding path (`on_input={{Msg::Set..}}`).
 
-use tpt_appfront_core::{{Signal, UITree, view}};
+use tpt_appfront::core::{{Signal, UITree, view}};
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -663,7 +653,7 @@ pub fn start() -> Result<(), JsValue> {{
 
     let root = document.create_element("div")?;
     body.append_child(&root)?;
-    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    let handle = tpt_appfront::dom::mount(&root, &ui, dispatch)?;
     std::mem::forget(handle);
     Ok(())
 }}
@@ -675,11 +665,11 @@ fn dashboard_preset_lib_rs(app_title: &str) -> String {
     format!(
         r#"//! Dashboard preset — scaffolded by `tpt-appfront init --preset dashboard`.
 //! A nav sidebar (`dashboard_shell`) whose content area composes a CRUD list
-//! (`settings_list`), both from `tpt_appfront_templates`, wired to `Signal`
+//! (`settings_list`), both from `tpt_appfront::templates`, wired to `Signal`
 //! state. Navigating the sidebar and editing/deleting rows dispatch `Msg`s.
 
-use tpt_appfront_core::{{Signal, UITree}};
-use tpt_appfront_templates::{{
+use tpt_appfront::core::{{Signal, UITree}};
+use tpt_appfront::templates::{{
     dashboard_shell, settings_list, DashboardShellConfig, SettingsListConfig,
 }};
 use wasm_bindgen::prelude::*;
@@ -742,7 +732,7 @@ pub fn start() -> Result<(), JsValue> {{
         on_nav: Box::new(Msg::Nav),
     }});
 
-    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    let handle = tpt_appfront::dom::mount(&root, &ui, dispatch)?;
     std::mem::forget(handle);
     Ok(())
 }}
@@ -753,12 +743,12 @@ pub fn start() -> Result<(), JsValue> {{
 fn crud_app_preset_lib_rs(app_title: &str) -> String {
     format!(
         r#"//! CRUD app preset — scaffolded by `tpt-appfront init --preset crud-app`.
-//! A focused `settings_list` (from `tpt_appfront_templates`) plus an "Add row"
+//! A focused `settings_list` (from `tpt_appfront::templates`) plus an "Add row"
 //! button, all wired to a `Signal`-backed list. Edit/Delete/Add dispatch `Msg`s
 //! that mutate the shared list.
 
-use tpt_appfront_core::{{Signal, UITree}};
-use tpt_appfront_templates::{{settings_list, SettingsListConfig}};
+use tpt_appfront::core::{{Signal, UITree}};
+use tpt_appfront::templates::{{settings_list, SettingsListConfig}};
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -820,7 +810,7 @@ pub fn start() -> Result<(), JsValue> {{
         c.with(inner);
     }});
 
-    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    let handle = tpt_appfront::dom::mount(&root, &ui, dispatch)?;
     std::mem::forget(handle);
     Ok(())
 }}
@@ -833,10 +823,10 @@ fn saas_preset_lib_rs(app_title: &str) -> String {
         r#"//! SaaS starter preset — scaffolded by `tpt-appfront init --preset saas-starter`.
 //! A full app shell (`dashboard_shell`) whose content switches per route, with
 //! a `settings_list` mounted under the Settings route. Mirrors a typical SaaS
-//! dashboard layout, all from `tpt_appfront_templates` + `Signal` state.
+//! dashboard layout, all from `tpt_appfront::templates` + `Signal` state.
 
-use tpt_appfront_core::{{Signal, UITree}};
-use tpt_appfront_templates::{{
+use tpt_appfront::core::{{Signal, UITree}};
+use tpt_appfront::templates::{{
     dashboard_shell, settings_list, DashboardShellConfig, SettingsListConfig,
 }};
 use wasm_bindgen::prelude::*;
@@ -912,7 +902,7 @@ pub fn start() -> Result<(), JsValue> {{
         on_nav: Box::new(Msg::Nav),
     }});
 
-    let handle = tpt_appfront_dom::mount(&root, &ui, dispatch)?;
+    let handle = tpt_appfront::dom::mount(&root, &ui, dispatch)?;
     std::mem::forget(handle);
     Ok(())
 }}
@@ -930,39 +920,25 @@ mod tests {
 
     #[test]
     fn canvas_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = canvas_cargo_toml(
-            "my-app",
-            "path = \"/repo/tpt-appfront-core\"",
-            "path = \"/repo/tpt-appfront-canvas\"",
-        );
-        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
-        assert!(out.contains("tpt-appfront-canvas = path = \"/repo/tpt-appfront-canvas\""));
+        let out = canvas_cargo_toml("my-app", "{ path = \"/repo/tpt-appfront\", features = [\"canvas\"] }");
+        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"canvas\"] }"));
+        assert!(!out.contains("tpt-appfront-core"));
         assert!(out.contains("name = \"my-app\""));
         assert!(looks_like_toml(&out));
     }
 
     #[test]
     fn dom_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = dom_cargo_toml(
-            "my-app",
-            "path = \"/repo/tpt-appfront-core\"",
-            "path = \"/repo/tpt-appfront-dom\"",
-        );
-        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
-        assert!(out.contains("tpt-appfront-dom = path = \"/repo/tpt-appfront-dom\""));
+        let out = dom_cargo_toml("my-app", "{ path = \"/repo/tpt-appfront\", features = [\"dom\"] }");
+        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"dom\"] }"));
         assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
         assert!(looks_like_toml(&out));
     }
 
     #[test]
     fn tui_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = tui_cargo_toml(
-            "my-app",
-            "path = \"/repo/tpt-appfront-core\"",
-            "path = \"/repo/tpt-appfront-tui\"",
-        );
-        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
-        assert!(out.contains("tpt-appfront-tui = path = \"/repo/tpt-appfront-tui\""));
+        let out = tui_cargo_toml("my-app", "{ path = \"/repo/tpt-appfront\", features = [\"tui\"] }");
+        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"tui\"] }"));
         assert!(looks_like_toml(&out));
     }
 
@@ -994,13 +970,9 @@ mod tests {
     fn server_cargo_toml_embeds_paths_and_tokio() {
         let out = server_cargo_toml(
             "my-server",
-            "path = \"/repo/tpt-appfront-core\"",
-            "path = \"/repo/tpt-appfront-server\"",
+            "{ path = \"/repo/tpt-appfront\", features = [\"server\"] }",
         );
-        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
-        assert!(out.contains(
-            "tpt-appfront-server = path = \"/repo/tpt-appfront-server\""
-        ));
+        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"server\"] }"));
         assert!(out.contains("tokio = { version = \"1\", features = [\"full\"] }"));
         assert!(looks_like_toml(&out));
     }
@@ -1009,7 +981,7 @@ mod tests {
     fn server_main_rs_wires_smart_router_and_has_no_leftover_braces() {
         let out = server_main_rs("My App");
         assert!(out.contains("SmartRouterBuilder::new"));
-        assert!(out.contains("tpt_appfront_server::{SmartRouterBuilder, serve}"));
+        assert!(out.contains("tpt_appfront::server::{SmartRouterBuilder, serve}"));
         assert!(out.contains("serve(router, addr).await?;"));
         assert!(!out.contains("{{"));
     }
@@ -1071,13 +1043,11 @@ mod tests {
     fn preset_cargo_toml_includes_templates_dep_and_is_toml_shaped() {
         let out = preset_cargo_toml(
             "my-app",
-            "path = \"/repo/tpt-appfront-core\"",
-            "path = \"/repo/tpt-appfront-dom\"",
-            "path = \"/repo/tpt-appfront-templates\"",
+            "{ path = \"/repo/tpt-appfront\", features = [\"dom\", \"templates\"] }",
         );
-        assert!(out.contains("tpt-appfront-core = path = \"/repo/tpt-appfront-core\""));
-        assert!(out.contains("tpt-appfront-dom = path = \"/repo/tpt-appfront-dom\""));
-        assert!(out.contains("tpt-appfront-templates = path = \"/repo/tpt-appfront-templates\""));
+        assert!(out.contains(
+            "tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"dom\", \"templates\"] }"
+        ));
         assert!(looks_like_toml(&out));
         assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
     }
@@ -1093,7 +1063,7 @@ mod tests {
     fn login_preset_lib_uses_view_macro_and_signals() {
         let out = preset_lib_rs(&crate::presets::Preset::Login, "My App");
         assert!(out.contains("My App"));
-        assert!(out.contains("use tpt_appfront_core::{Signal, UITree, view}"));
+        assert!(out.contains("use tpt_appfront::core::{Signal, UITree, view}"));
         assert!(out.contains("on_input={Msg::SetUsername}"));
         preset_lib_has_no_escaped_braces(&out);
     }
