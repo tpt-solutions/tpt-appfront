@@ -9,5 +9,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Cross-backend text parity (`parity` module). Pulls in the HTML, TUI and AI-schema backends.
+parity = ["dep:tpt-appfront-html", "dep:tpt-appfront-tui", "dep:tpt-appfront-ai-schema", "dep:serde_json"]
+
 [dependencies]
 tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
+tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1", optional = true }
+tpt-appfront-tui = { path = "../tpt-appfront-tui", version = "0.1", optional = true }
+tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema", version = "0.1", optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Runs the parity tests in the normal test build, so `cargo test --workspace` covers them.
+tpt-appfront-test = { path = ".", features = ["parity"] }

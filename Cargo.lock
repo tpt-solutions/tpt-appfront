@@ -6344,7 +6344,12 @@ dependencies = [
 name = "tpt-appfront-test"
 version = "0.1.1"
 dependencies = [
+ "serde_json",
+ "tpt-appfront-ai-schema",
  "tpt-appfront-core",
+ "tpt-appfront-html",
+ "tpt-appfront-test",
+ "tpt-appfront-tui",
 ]
 
 [[package]]

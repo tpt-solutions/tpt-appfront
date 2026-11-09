@@ -12,6 +12,9 @@ use tpt_appfront_core::devtools::inspect_tree;
 use tpt_appfront_core::ui_tree::KeyEvent;
 use tpt_appfront_core::{NodeKind, UITree};
 
+#[cfg(feature = "parity")]
+pub mod parity;
+
 /// The ARIA-like role of a node, as the harness reports it.
 pub fn role<Msg>(ui: &UITree<Msg>) -> &'static str {
     match &ui.kind {
