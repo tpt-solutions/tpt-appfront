@@ -695,12 +695,11 @@ where
                     )?;
                 }
                 NodeKind::List { items: new_items } => {
-                    if new_items.len() != mounted.children.len() {
-                        // The keyed diff below can insert and remove items, but adding or
-                        // removing entries has no test coverage yet. Until it does, a count
-                        // change goes to render_with's full unmount/re-mount path.
+                    if new_ui.meta.virtual_scroll.is_some() {
+                        // Windowed lists have no mounted record per item, so the keyed diff cannot
+                        // match them. They go to render_with's full unmount/re-mount path.
                         return Err(wasm_bindgen::JsValue::from_str(
-                            "list item count changed; full replace required",
+                            "windowed list re-render requires a full replace",
                         ));
                     }
                     reconcile_children(
