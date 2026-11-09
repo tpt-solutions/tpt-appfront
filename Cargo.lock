@@ -6286,6 +6286,7 @@ dependencies = [
  "serde_json",
  "tpt-appfront-core",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
 ]

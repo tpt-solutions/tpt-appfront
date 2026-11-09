@@ -33,9 +33,11 @@ use std::rc::Rc;
 use tpt_appfront_core::ui_tree::{
     MediaType, OnInput, OnKeyDown, OnPaste, OnPointerDown, OnPointerMove, OnPointerUp, OnToggle,
 };
+#[cfg(debug_assertions)]
+use tpt_appfront_core::KeyedDiff;
 use tpt_appfront_core::{
-    apply_auto_virtual_scroll, create_effect, reconcile_keys, HydrationPayload, KeyEvent,
-    KeyedDiff, NodeKind, NodeMeta, PointerEvent, Router, UITree,
+    apply_auto_virtual_scroll, create_effect, reconcile_keys, HydrationPayload, KeyEvent, NodeKind,
+    NodeMeta, PointerEvent, Router, UITree,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;

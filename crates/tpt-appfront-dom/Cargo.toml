@@ -48,3 +48,4 @@ web-sys = { version = "0.3", features = [
 wasm-bindgen-test = "0.3"
 # Used by tests/bench.rs only (performance.now()).
 web-sys = { version = "0.3", features = ["Performance", "Window"] }
+wasm-bindgen-futures = "0.4"
