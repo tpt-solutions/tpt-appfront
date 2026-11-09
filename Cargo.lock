@@ -2324,16 +2324,19 @@ dependencies = [
 
 [[package]]
 name = "global-hotkey"
-version = "0.2.4"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08c12993a445d59000c3994fcd3d179e7da026a4234cc46db652987aa2785e4a"
+checksum = "adda8c76a5139df3bae0eb0413c2cd746f66594e0bb66231a4daa0be3172da70"
 dependencies = [
  "crossbeam-channel",
  "keyboard-types",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
  "once_cell",
- "thiserror 1.0.69",
- "windows-sys 0.48.0",
- "x11-dl",
+ "thiserror 2.0.18",
+ "windows-sys 0.59.0",
+ "x11rb",
+ "xkeysym",
 ]
 
 [[package]]
@@ -3090,13 +3093,12 @@ dependencies = [
 
 [[package]]
 name = "keyboard-types"
-version = "0.6.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b7668b7cff6a51fe61cdde64cd27c8a220786f399501b57ebe36f7d8112fd68"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.13.0",
  "serde",
- "unicode-segmentation",
 ]
 
 [[package]]
