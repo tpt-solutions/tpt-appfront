@@ -316,7 +316,7 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 - [x] Skip unchanged subtrees on re-render. Each subtree gets a fingerprint (`subtree_hash`) of everything it renders, not including handler messages. A match skips the DOM work and only refreshes handler messages. One changed label in 1,000 rows: 2.3 → 0.7 ms. Inputs, selects, checkboxes, radios, portals, data grids and windowed lists are never skipped. Trade-off: a skipped subtree is not compared with the live DOM (documented in `docs/benchmarks.md`)
 - [ ] Re-render with every label changed: about 3 ms, of which about 0.3 ms is fingerprinting. Remaining per-row costs: a `String` key per item per render, and several DOM reads per element in `apply_meta_to_element`. The fingerprint could also be cached on the `UITree` builder to avoid recomputing it
 - [ ] Windowed (virtual-scroll) lists still use `<li>` wrappers and spacers, and the count guard still sends them to full replace. Give them their own reconcile path
-- [ ] List add and remove still go to full replace. The keyed diff can insert and remove, but nothing tests it yet
+- [x] List add and remove reconcile in place. The count guard now applies only to windowed lists, which have no per-item records. Items that stay keep their DOM nodes. Tests: `tests/list_add_remove.rs` (append, remove, insert in the middle, empty and refill). The old guard made each of these a full remount
 - [ ] Benchmark `reactive_text` (signal to DOM text). It flushes on `requestAnimationFrame`, so it needs an async harness
 
 ### Deferred ideas
