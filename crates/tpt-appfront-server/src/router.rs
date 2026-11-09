@@ -365,26 +365,26 @@ init().catch(e => console.error('appfront init failed', e));
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// Start the Axum server. Blocks forever.
+/// Start the Axum server. Runs until the server errors out.
+///
+/// Returns the bind error (e.g. address in use) or the first fatal serve
+/// error instead of panicking, so callers can report it and exit cleanly.
 ///
 /// Uses [`Router::into_make_service_with_connect_info`] so the per-client
 /// (peer IP) rate limiter on `POST /command` has a real address to key on;
 /// see [`build_router`]'s docs if you're wiring your own `axum::serve` call
 /// instead of using this function.
-pub async fn serve<Msg>(router: SmartRouter<Msg>, addr: SocketAddr)
+pub async fn serve<Msg>(router: SmartRouter<Msg>, addr: SocketAddr) -> std::io::Result<()>
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
     let app = build_router(router);
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("bind address");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
-    .expect("server error");
 }
 
 /// Build the Axum [`Router`] without starting it (useful for testing or

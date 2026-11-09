@@ -28,5 +28,7 @@ async fn main() {
 
     let addr = "127.0.0.1:3000".parse().unwrap();
     println!("Serving on http://{addr}");
-    tpt_appfront_server::serve(router, addr).await;
+    tpt_appfront_server::serve(router, addr)
+        .await
+        .expect("server failed");
 }
