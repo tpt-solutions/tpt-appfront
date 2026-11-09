@@ -65,6 +65,10 @@ impl LlmProvider for AnthropicProvider {
         "anthropic"
     }
 
+    fn model(&self) -> &str {
+        &self.model
+    }
+
     fn complete(&self, system: &str, user: &str) -> anyhow::Result<String> {
         let req = MessagesRequest {
             model: &self.model,

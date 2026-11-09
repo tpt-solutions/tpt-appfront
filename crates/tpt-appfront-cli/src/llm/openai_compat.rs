@@ -70,6 +70,10 @@ impl LlmProvider for OpenAiCompatProvider {
         &self.provider
     }
 
+    fn model(&self) -> &str {
+        &self.model
+    }
+
     fn complete(&self, system: &str, user: &str) -> anyhow::Result<String> {
         let req = ChatRequest {
             model: &self.model,

@@ -143,9 +143,12 @@ enum Command {
     /// live LLM call. Pass `--llm` for a live, model-backed scaffold (needs the
     /// `llm` CLI feature and an API key; see `docs/quickstart.md`).
     Generate {
-        /// Description of the UI to scaffold, e.g. "a login form".
+        /// Description of the UI to scaffold, e.g. "a login form". Not needed with `--list-models`.
+        #[arg(long, required_unless_present = "list_models")]
+        prompt: Option<String>,
+        /// Print the live model list of `--provider` and exit. Needs the provider's key.
         #[arg(long)]
-        prompt: String,
+        list_models: bool,
         /// Write the generated snippet to this file instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -153,13 +156,13 @@ enum Command {
         /// Requires this CLI to be built with the `llm` feature.
         #[arg(long)]
         llm: bool,
-        /// Which LLM provider to use with `--llm`: anthropic, openai, openrouter, grok, ollama,
-        /// gemini, groq, mistral, deepseek, together, lmstudio or azure-openai.
+        /// Which LLM provider to use with `--llm`: anthropic, openai, openrouter, grok, glm,
+        /// deepseek, qwen, gemini, groq, mistral, together, ollama, lmstudio or azure-openai.
         #[arg(long, default_value = "anthropic")]
         provider: String,
-        /// Model id passed to the provider (e.g. `claude-sonnet-5-5`). Omit to use the
-        /// provider's default; ollama, lmstudio, gemini, groq, mistral, deepseek, together and
-        /// azure-openai (where it names the deployment) require it.
+        /// Model id passed to the provider. Omit it to use the newest chat model in the
+        /// provider's live model list (`--list-models` shows that list). Azure takes the
+        /// deployment name here, since it has no model list.
         #[arg(long)]
         model: Option<String>,
         /// Override the provider's default API endpoint (self-hosted/proxy). Required for
@@ -279,20 +282,29 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Generate {
             prompt,
+            list_models,
             out,
             llm,
             provider,
             model,
             base_url,
-        } => generate_ui(
-            &prompt,
-            out.as_deref(),
-            llm,
-            &provider,
-            // An empty model means "use the provider's default" (resolved in `llm::build_provider`).
-            model.as_deref().unwrap_or(""),
-            base_url.as_deref(),
-        ),
+        } => {
+            if list_models {
+                return list_models_cmd(&provider, base_url.as_deref());
+            }
+            // The clap definition requires `--prompt` unless `--list-models` is given.
+            let prompt = prompt.unwrap_or_default();
+            generate_ui(
+                &prompt,
+                out.as_deref(),
+                llm,
+                &provider,
+                // An empty model means "choose it from the provider's live model list"
+                // (resolved in `llm::build_provider`).
+                model.as_deref().unwrap_or(""),
+                base_url.as_deref(),
+            )
+        }
         Command::Ingest { input, out } => ingest::ingest_file(&input, out.as_deref()),
         Command::Add { kind } => match kind {
             AddKind::Component { name, project } => add_component(&name, &project),
@@ -352,6 +364,21 @@ fn generate_ui(
         None => print!("{snippet}"),
     }
     Ok(())
+}
+
+/// `generate --list-models`: prints the provider's live model list.
+#[cfg(feature = "llm")]
+fn list_models_cmd(provider: &str, base_url: Option<&str>) -> anyhow::Result<()> {
+    llm::print_models(provider, base_url)
+}
+
+#[cfg(not(feature = "llm"))]
+fn list_models_cmd(provider: &str, _base_url: Option<&str>) -> anyhow::Result<()> {
+    let _ = provider;
+    anyhow::bail!(
+        "`generate --list-models` requires this CLI to be built with the `llm` feature \
+         (`cargo install tpt-appfront-cli --features llm`)."
+    )
 }
 
 // ---------------------------------------------------------------------------

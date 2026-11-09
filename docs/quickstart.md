@@ -78,30 +78,38 @@ export ANTHROPIC_API_KEY=sk-...
 tpt-appfront generate --prompt "a kanban board with drag handles" --llm
 ```
 
-Twelve providers ship, all behind the `llm` Cargo feature:
+Fourteen providers ship, all behind the `llm` Cargo feature:
 
-| `--provider`   | Key env var              | Default model                 |
-|----------------|--------------------------|-------------------------------|
-| `anthropic`    | `ANTHROPIC_API_KEY`      | `claude-sonnet-5-5`           |
-| `openai`       | `OPENAI_API_KEY`         | `gpt-4o`                      |
-| `openrouter`   | `OPENROUTER_API_KEY`     | `openai/gpt-4o`               |
-| `grok`         | `XAI_API_KEY`            | `grok-3`                      |
-| `gemini`       | `GEMINI_API_KEY`         | *(requires `--model`)*        |
-| `groq`         | `GROQ_API_KEY`           | *(requires `--model`)*        |
-| `mistral`      | `MISTRAL_API_KEY`        | *(requires `--model`)*        |
-| `deepseek`     | `DEEPSEEK_API_KEY`       | *(requires `--model`)*        |
-| `together`     | `TOGETHER_API_KEY`       | *(requires `--model`)*        |
-| `azure-openai` | `AZURE_OPENAI_API_KEY`   | *(requires `--model`, the deployment name; and `--base-url`)* |
-| `ollama`       | *(none — local)*         | *(requires `--model`)*        |
-| `lmstudio`     | *(none — local)*         | *(requires `--model`)*        |
+| `--provider`   | Key env var              | Model list                         |
+|----------------|--------------------------|------------------------------------|
+| `anthropic`    | `ANTHROPIC_API_KEY`      | live (`/v1/models`)                |
+| `openai`       | `OPENAI_API_KEY`         | live (`/v1/models`)                |
+| `openrouter`   | `OPENROUTER_API_KEY`     | live (`/api/v1/models`)            |
+| `grok`         | `XAI_API_KEY`            | live (`/v1/models`)                |
+| `glm`          | `ZHIPU_API_KEY`          | live (`/api/paas/v4/models`)       |
+| `deepseek`     | `DEEPSEEK_API_KEY`       | live (`/v1/models`)                |
+| `qwen`         | `DASHSCOPE_API_KEY`      | live (DashScope `/compatible-mode/v1/models`) |
+| `gemini`       | `GEMINI_API_KEY`         | live (native `/v1beta/models`)     |
+| `groq`         | `GROQ_API_KEY`           | live (`/openai/v1/models`)         |
+| `mistral`      | `MISTRAL_API_KEY`        | live (`/v1/models`)                |
+| `together`     | `TOGETHER_API_KEY`       | live (`/v1/models`)                |
+| `azure-openai` | `AZURE_OPENAI_API_KEY`   | none: `--model` names the deployment, and `--base-url` is required |
+| `ollama`       | *(none — local)*         | live (`/v1/models`)                |
+| `lmstudio`     | *(none — local)*         | live (`/v1/models`)                |
 
-Defaults are only listed where they are pinned in the table. Model ids change
-often, so the providers without one ask for `--model` rather than guess.
+No model ids are pinned. Models change too often for a default to stay correct, so when
+`--model` is omitted the CLI lists the provider's live models and uses the newest plain chat
+model. Embedding, audio and image models are skipped, and routing variants such as `:free` are
+passed over when a plain id exists. If the newest model cannot be determined, the command stops
+and lists candidates, so you choose.
 
 ```sh
-tpt-appfront generate --prompt "a dashboard with live metrics" --llm --provider openai --model gpt-4o
+# See what the key can use, newest first:
+tpt-appfront generate --list-models --provider openai
+# Let the CLI choose the newest chat model, or pass one explicitly:
+tpt-appfront generate --prompt "a dashboard with live metrics" --llm --provider openai
 tpt-appfront generate --prompt "a local RAG chat" --llm --provider ollama --model llama3.1
-tpt-appfront generate --prompt "a settings page" --llm --provider groq --model llama-3.3-70b-versatile
+tpt-appfront generate --prompt "a settings page" --llm --provider qwen --model qwen-plus
 # self-hosted / proxy endpoints:
 tpt-appfront generate --prompt "..." --llm --provider openai --base-url https://my-proxy.example/v1/chat/completions
 # Azure OpenAI: the endpoint is per resource and deployment, and the key goes in an `api-key` header.
