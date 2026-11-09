@@ -238,7 +238,7 @@ convenience wrappers and `doctor` hygiene checks. Plan: `.kilo/plans/17864767305
 - [x] `justfile` task runner: `fmt`, `fmt-check`, `lint`, `test`, `doc`, `msrv`, `ci`, `examples` targets (fmt uses nightly); documented in `docs/quickstart.md` + `docs/editor-setup.md`
 - [x] `tpt-appfront fmt` / `tpt-appfront lint` subcommands (`fmt` runs `cargo +nightly fmt` across the workspace + each `examples/*/Cargo.toml`); `doctor` now also reports `cargo fmt` availability, nightly-rustfmt presence, `core.hooksPath`, and whether the workspace is formatted
 
-## Phase 22 — `tpt-appfront generate --llm` (scoped, not yet implemented)
+## Phase 22 — `tpt-appfront generate --llm` (done)
 Live LLM-backed `generate --llm` mode, scoped out from the Phase 11/15 stretch item. Full design: `C:\Users\phill\.claude\plans\what-tasks-remain-and-replicated-dusk.md`. Decisions: pluggable `LlmProvider` trait shipping 5 built-in providers — Anthropic, OpenAI, OpenRouter, Grok (xAI), and Ollama (local) — gated behind an optional `llm` Cargo feature so the default install stays network-free, and `syn`-based syntax-check-only validation of the returned snippet (no full compile-check).
 - [x] Add `llm` optional feature + deps (`ureq`, `serde`, `serde_json`, `syn`) to `crates/tpt-appfront-cli/Cargo.toml`
 - [x] `LlmProvider` trait + 2 implementations covering all 5 providers (new `crates/tpt-appfront-cli/src/llm/mod.rs`, `#[cfg(feature = "llm")]`): `anthropic.rs` (native Messages API) and `openai_compat.rs` (generic `chat/completions` shape, config-table-driven for OpenAI/OpenRouter/Grok/Ollama — base URL, API-key env var, default model per provider via `PROVIDER_CONFIGS`; Ollama needs no key but requires an explicit `--model`)
@@ -248,3 +248,53 @@ Live LLM-backed `generate --llm` mode, scoped out from the Phase 11/15 stretch i
 - [x] Tests: network-free unit tests for prompt construction, the 5-provider config table (base URL/key-env/default-model resolution), and response/`syn`-validation (canned strings covering valid/malformed/prose-wrapped snippets); one `#[ignore]`d real-API integration test per provider (anthropic/openai/openrouter/grok/ollama), never wired into CI
 - [x] CI: `cargo clippy -p tpt-appfront-cli --features llm --all-targets -- -D warnings` step so the feature path doesn't bit-rot without requiring network access in CI
 - [x] Docs: `docs/quickstart.md` gains a `generate --llm` subsection (optional/feature-gated, listing all 5 `--provider` choices with their key env vars, network egress called out explicitly); flip this phase to done once landed
+
+## Phase 23 — 2026-11-09 Stub Fixes, Adoption Tooling & Innovation
+No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reachable panics and missing adoption tooling.
+
+### 23a — Stub / gap fixes
+- [x] TUI: `collect_interactive` descends into `Portal` so buttons/inputs in portal content are focusable (rendered inline) — add a regression test with a button inside a portal
+- [x] Canvas: wire egui paste events to the focused input's `on_paste` — paste is dispatched alongside keydown in `dispatch_keydown` (`crates/tpt-appfront-canvas/src/paint.rs`); the egui event path is compile-checked, not exercised by a unit test
+- [x] Canvas: `run_web` returns an error instead of `.expect` on a missing canvas id / non-canvas element (`crates/tpt-appfront-canvas/src/lib.rs`)
+- [x] Server: bind/serve entry returns `Result` instead of `.expect("bind address")`/`.expect("server error")` (`crates/tpt-appfront-server/src/router.rs`); updated the CLI scaffold and `examples/ssr-page`
+- [x] Canvas: log/collect unknown utility classes instead of silently ignoring — reports each core utility the canvas does not render, once per name (`layout.rs`). Custom component classes are not reported, since they are expected to be unstyled
+- [x] CLI scaffold: replaced `/* TODO: handle activation */` — the scaffolded component takes an `on_activate: Rc<dyn Fn()>` callback instead of holding a dead handler (`templates.rs`)
+- [x] Audit `#[allow(dead_code)]` in `tpt-appfront-webview` and `tpt-appfront-templates`: deleted unused helpers (`report_sidecar_crash`, `log_shell*`, `secret_capabilities`, `_assert_anyhow`, `EphemeralLogSink`, `window_state::clear`, `_assert_node_kinds`, tray `hwnd` field); kept the shortcut manager alive as `_manager`; `MAX_IPC_MESSAGE_BYTES` is used now. Two findings are left open, see the notes below
+- [x] DOM: remove stale attributes on patch (class, `data-ai-*`, and author attrs tracked via a `data-af-attrs` marker); hydrate `Portal` content (Image/Link/Media have no child nodes); `expect("no window")`/`"no document"` in mount paths replaced with `Result` errors (`crates/tpt-appfront-dom/src/lib.rs`). wasm-only, compile- and clippy-checked, not run in a browser
+  - Finding: the webview's production IPC path (`manager.rs::dispatch_ipc`) had no 16 KiB pre-parse size cap; the check only lived in `lib.rs::handle_ipc`, which production never called. Added the check to `dispatch_ipc`; `handle_ipc` is now `#[cfg(test)]` as a model of the same rules
+  - Fixed: sidecar supervisor treated every exit as clean, so a crashed backend was never restarted, contrary to its docs. A non-zero exit, a signal or a failed launch now goes to `SidecarConfig::crash_reporter` (`("sidecar-crash", detail)`) and restarts when `restart_on_crash` is set. Shutdown also stops a running child now; before, `join` waited for the child to exit on its own. Covered by two new tests
+  - Fixed (interim): `TrayController::new` returns an explicit "not implemented" error instead of a backend that never shows an icon. The Win32 backend is still a scaffold; a real tray (message window + `Shell_NotifyIconW`) is open work
+- [x] Triage spec "Layer 5 AI-Powered Optimization" — dropped from the active plan and moved to Deferred ideas. Reason: it would need an LLM call inside the render or optimizer loop, and `generate --llm` already covers LLM-driven UI generation. Revisit only if an LLM-in-the-loop optimizer becomes a product goal
+- Known limit (not planned): canvas paints `Image`/`Link`/`Media` as a text caption only
+
+### 23b — More LLM providers (`generate --llm`)
+- [x] Add OpenAI-compatible table entries in `llm/mod.rs`: `gemini`, `groq`, `mistral`, `deepseek`, `together`, `lmstudio` (key-less, explicit `--model`). Their default model ids are left empty, so `--model` is required (see next item)
+- [x] `azure-openai` variant (`api-key` header, requires `--base-url`; `--model` names the deployment)
+- [ ] Refresh stale default model ids (verify against each provider's docs). Partly done: `anthropic` is now `claude-sonnet-5-5` (from the model list in the environment). For `openai`, `openrouter` and `grok` the search results I got were conflicting and could not be checked against official model lists, so they are unchanged
+- [x] Tests: table validity (URL/env/classification, every entry must be listed as keyless or explicit-model), clear missing-key and missing-base-url errors; `--provider` help and `docs/quickstart.md` updated
+- Fixed while here: `generate --model` had a default of `claude-sonnet-4-5`, which meant the per-provider defaults and the Ollama "requires `--model`" check could never apply from the CLI. `--model` is now optional
+
+### 23c — Umbrella crate `tpt-appfront`
+- [ ] New `crates/tpt-appfront` with feature flags (`dom`, `canvas`, `html`, `tui`, `server`, `mcp`, `ai-schema`, `webview`, `test`) and a `prelude` (`UITree`, `Signal`, `view!`, `component`, `class!`, `Router`, `Store`, `use_form`)
+- [x] New umbrella crate `crates/tpt-appfront` (lib name `tpt_appfront`): feature flags `dom`/`canvas`/`tui`/`html`/`ai-schema`/`server`/`mcp`/`test`, a `prelude` (`UITree`, `Signal`, `view`, `component`, `class`, `Router`, `Store`, `FormState`), and `pub use tpt_appfront_core as core`. The prelude has `FormState` instead of `use_form`, since no `use_form` exists in core. Added to the workspace
+- [x] Verify `#[component]` / `view!` resolve via the umbrella. Fixed: the macros now resolve the core path with `proc-macro-crate` (`core_path()` in `tpt-appfront-macros`), trying `tpt-appfront-core` first, then the umbrella's `core` re-export. A scratch crate depending only on `tpt-appfront` now compiles. CLI scaffolds now depend on the umbrella (`umbrella_ref` in `main.rs`) and generated code uses `tpt_appfront::…` paths. `examples/*` stay on the per-backend crates on purpose, so they keep testing the real crates
+- [ ] crates.io metadata, README, changelog. Done: umbrella README and the crate-level note that `webview` is excluded because it is `publish = false` (a published crate can't depend on an unpublished one). Not done: changelog entries, and `Cargo.toml` metadata review for the umbrella
+
+### 23d — `tpt-appfront-test` crate
+- [x] Headless harness in new crate `crates/tpt-appfront-test` (core-only deps): `Harness` with `find_by_text/role/key`, `click`, `type_into`, `press_key`, `assert_msg_emitted`, `drain_msgs`; `snapshot()` returns the devtools text tree (10 unit tests)
+- [ ] Snapshot serialization with an optional `insta` feature. `Harness::snapshot()` exists; the `insta` integration is not done
+- [ ] `lint_tree` a11y + AI-affordance linter — done in `tpt-appfront-test` (rules: `unlabeled-input`, `nameless-button`, `heading-skip`, `duplicate-key`, `missing-alt`, `action-without-description`). Still open: the action *params* check, and exposing it through `tpt-appfront lint`. The CLI cannot load an app's `UITree` generically, so that needs a design decision (for example a project-level hook or a test-only entry point)
+
+### 23e — Cross-backend parity checker
+- [ ] Semantic projection (text, roles, actions, focus order) through html / tui / ai-schema; report what each backend drops (incl. canvas unknown classes)
+- [ ] `tpt-appfront check --parity` + `assert_parity!(tree)` helper; DOM comparison in wasm test job only
+
+### 23f — Repo hygiene & CLI polish
+- [x] Issues-only `CONTRIBUTING.md` + `.github/ISSUE_TEMPLATE/*` (bug, feature, with blank issues disabled) + `.github/dependabot.yml` (cargo and github-actions, weekly). No SECURITY.md, CODE_OF_CONDUCT.md or PR template, by request
+- [x] `.github/workflows/release.yml`: tag-triggered (and manual), dependency-ordered `cargo publish` (macros → core → templates → html → ai-schema → server → tui → canvas → dom → mcp → cli; webview skipped as `publish = false`), GitHub Release. **Dry-run by default**: a tag push only packages, unless the repo variable `RELEASE_PUBLISH` is `true`. Not yet exercised on GitHub
+- [x] CLI: `completions <shell>` (bash, zsh, fish, powershell, elvish) via `clap_complete` 4. Accepted the `clap_derive` bump and `syn` 3.x. Both are in the CLI's build tree only
+- [ ] CLI: `doctor` checks (rustc vs MSRV 1.85, wasm-bindgen-cli drift, webview libs); `add template|store|form|route|test`; `templates list` — still open
+- [ ] README hero example, backend capability matrix, status/maturity; migration guides (React/Leptos/Dioxus); cookbook (forms, routing, Resource/Suspense, SSR hydration)
+
+### Deferred ideas
+Design tokens/theming, i18n `t!`, `.tptrec` session record/replay, `view!` formatter/LSP, state-preserving hot reload, static OpenAPI/`llms.txt` export, AI-powered layout optimization ("Layer 5" of the spec: an LLM proposes structural UI changes; dropped from the active plan, see Phase 23a).

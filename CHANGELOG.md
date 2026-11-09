@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tpt-appfront` (new umbrella crate): feature flags for each backend and a `prelude`. `view!`, `rsx!` and `#[component]` resolve their core paths through `proc-macro-crate`, so depending on the umbrella alone works.
+- `tpt-appfront-test` (new crate): a headless `Harness` (find, click, type, press key, assert emitted messages) and `lint_tree`, an accessibility and AI-affordance linter.
+- `tpt-appfront-cli`: `generate --llm` providers `gemini`, `groq`, `mistral`, `deepseek`, `together`, `lmstudio` and `azure-openai` (`--base-url` required).
+- `tpt-appfront-canvas`: paste events are dispatched to the focused node's `on_paste`. Core utility classes the canvas does not render are logged once per name.
+- Repository: `CONTRIBUTING.md` (issues only), issue templates, `dependabot.yml`, and a `release.yml` that dry-runs unless `RELEASE_PUBLISH` is set.
+
+### Changed
+- **Breaking:** `tpt-appfront-server::serve` returns `std::io::Result<()>` instead of panicking on a bind or serve error. Callers now need `.await?` or similar.
+- **Breaking:** `tpt-appfront-canvas::run_web` reports a missing window, document or canvas as an error rather than panicking (it already returned `Result`).
+- `tpt-appfront-cli`: `generate --model` is optional. Previously it defaulted to `claude-sonnet-4-5`, which overrode every provider's own default. The Anthropic default is now `claude-sonnet-5-5`.
+- The scaffolded component takes an `on_activate` callback, so `component_rs` output changed signature.
+- `tpt-appfront-dom`: patches remove stale class, `data-ai-*` and author attributes; `Portal` content is hydrated; mount paths return errors instead of panicking when there is no window or document.
+
+### Fixed
+- `tpt-appfront-webview`: the production IPC path now enforces the 16 KiB message cap before parsing. The check previously lived only in a function that production did not call.
+- `tpt-appfront-webview`: the sidecar supervisor restarts a backend that exits with a non-zero status or a signal (it previously treated every exit as clean). Such exits go to the new `SidecarConfig::crash_reporter`. Shutdown stops a running child promptly.
+- `tpt-appfront-webview`: `TrayController::new` returns an explicit error, because the Windows backend does not yet show an icon.
+- `tpt-appfront-cli`: `completions <shell>` prints a completion script for bash, zsh, fish, powershell or elvish.
+- `tpt-appfront-cli`: `init` scaffolds depend on the `tpt-appfront` umbrella with feature flags. Generated code imports from `tpt_appfront::…`.
+- `tpt-appfront-macros`: `view!`, `rsx!` and `#[component]` resolve core paths through the calling crate, so the umbrella alone is enough.
+
+### Added
 - `tpt-appfront-tui`: focus, blur and keydown handlers now run. Tab, Shift-Tab and the arrow keys move focus
   and dispatch `on_blur`/`on_focus`; the focused node's `on_keydown` sees each key first.
   **Breaking:** `TuiDriver::on_key` now returns `Vec<Msg>` (all messages from one key, in order) instead of
