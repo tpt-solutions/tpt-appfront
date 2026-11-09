@@ -217,11 +217,11 @@ pub struct LintIssue {
 ///   it does.
 pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
     let mut issues = Vec::new();
-    let mut seen_keys = HashSet::new();
+    let mut seen_keys: HashSet<&str> = HashSet::new();
     let mut last_heading: Option<u8> = None;
 
     for node in walk(root) {
-        let key = node.meta.key.clone();
+        let key = node.meta.key.as_deref();
         let attr = |name: &str| {
             node.meta
                 .attrs
@@ -231,13 +231,13 @@ pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
         let mut push = |rule: &'static str, message: String| {
             issues.push(LintIssue {
                 rule,
-                key: key.clone(),
+                key: key.map(str::to_owned),
                 message,
             });
         };
 
-        if let Some(k) = &key {
-            if !seen_keys.insert(k.clone()) {
+        if let Some(k) = key {
+            if !seen_keys.insert(k) {
                 push("duplicate-key", format!("key {k:?} is used more than once"));
             }
         }
