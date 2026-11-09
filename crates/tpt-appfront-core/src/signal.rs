@@ -415,7 +415,8 @@ impl Drop for EffectHandle {
         // Run any cleanups registered during the effect's last run (e.g. close
         // a subscription opened by `on_cleanup`), then clear them so they don't
         // run again if the node is somehow reused.
-        let cleanups: Vec<Box<dyn FnOnce()>> = std::mem::take(&mut self._inner.cleanups.borrow_mut());
+        let cleanups: Vec<Box<dyn FnOnce()>> =
+            std::mem::take(&mut self._inner.cleanups.borrow_mut());
         for cleanup in cleanups {
             cleanup();
         }

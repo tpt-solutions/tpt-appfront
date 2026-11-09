@@ -4,7 +4,8 @@
 //! `<script type="application/ld+json">`. See `docs/ai-schema.md`.
 
 use serde_json::{Map, Value};
-use tpt_appfront_core::{ui_tree::MediaType, AiMeta, NodeKind, UITree};
+use tpt_appfront_core::ui_tree::MediaType;
+use tpt_appfront_core::{AiMeta, NodeKind, UITree};
 
 /// Serialises `ui` as a JSON-LD `@graph` array.
 pub fn to_json_ld<Msg>(ui: &UITree<Msg>) -> Value {
@@ -148,7 +149,10 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
         }
         NodeKind::Image { src, alt } => {
             let mut item = Map::new();
-            item.insert("@type".to_string(), Value::String("ImageObject".to_string()));
+            item.insert(
+                "@type".to_string(),
+                Value::String("ImageObject".to_string()),
+            );
             item.insert("contentUrl".to_string(), Value::String(src.clone()));
             item.insert("description".to_string(), Value::String(alt.clone()));
             if let Some(desc) = &ui.meta.ai.description {
@@ -158,12 +162,19 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
         }
         NodeKind::Link { href, text } => {
             let mut item = web_page_element(&ui.meta.ai);
-            item.insert("@type".to_string(), Value::String("WebPageElement".to_string()));
+            item.insert(
+                "@type".to_string(),
+                Value::String("WebPageElement".to_string()),
+            );
             item.insert("url".to_string(), Value::String(href.clone()));
             item.insert("name".to_string(), Value::String(text.clone()));
             graph.push(Value::Object(item));
         }
-        NodeKind::Media { src, alt, media_type } => {
+        NodeKind::Media {
+            src,
+            alt,
+            media_type,
+        } => {
             let mut item = Map::new();
             let schema_type = match media_type {
                 MediaType::Audio => "AudioObject",

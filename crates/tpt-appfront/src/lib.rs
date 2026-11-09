@@ -27,37 +27,27 @@ pub use tpt_appfront_core as core;
 
 /// Re-exports of the core types and macros most apps use.
 pub mod prelude {
-    pub use tpt_appfront_core::{
-        class, component, view, FormState, Router, Signal, Store, UITree,
-    };
+    pub use tpt_appfront_core::{class, component, view, FormState, Router, Signal, Store, UITree};
 }
-
-#[cfg(feature = "dom")]
-pub use tpt_appfront_dom as dom;
-
-#[cfg(feature = "canvas")]
-pub use tpt_appfront_canvas as canvas;
-
-#[cfg(feature = "tui")]
-pub use tpt_appfront_tui as tui;
-
-#[cfg(feature = "html")]
-pub use tpt_appfront_html as html;
 
 #[cfg(feature = "ai-schema")]
 pub use tpt_appfront_ai_schema as ai_schema;
-
-#[cfg(feature = "server")]
-pub use tpt_appfront_server as server;
-
+#[cfg(feature = "canvas")]
+pub use tpt_appfront_canvas as canvas;
+#[cfg(feature = "dom")]
+pub use tpt_appfront_dom as dom;
+#[cfg(feature = "html")]
+pub use tpt_appfront_html as html;
 #[cfg(feature = "mcp")]
 pub use tpt_appfront_mcp as mcp;
-
-#[cfg(feature = "test")]
-pub use tpt_appfront_test as test;
-
+#[cfg(feature = "server")]
+pub use tpt_appfront_server as server;
 #[cfg(feature = "templates")]
 pub use tpt_appfront_templates as templates;
+#[cfg(feature = "test")]
+pub use tpt_appfront_test as test;
+#[cfg(feature = "tui")]
+pub use tpt_appfront_tui as tui;
 
 #[cfg(test)]
 mod tests {

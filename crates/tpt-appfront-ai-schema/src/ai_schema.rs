@@ -189,7 +189,9 @@ fn collect<Msg>(
                 text: Some(text.clone()),
             });
         }
-        NodeKind::Media { alt, media_type, .. } => {
+        NodeKind::Media {
+            alt, media_type, ..
+        } => {
             data.push(DataElement {
                 kind: match media_type {
                     MediaType::Audio => "audio",

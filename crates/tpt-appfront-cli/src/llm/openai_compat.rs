@@ -55,12 +55,7 @@ pub struct OpenAiCompatProvider {
 impl OpenAiCompatProvider {
     /// Builds the provider. `endpoint` is the config-table default or a
     /// `--base-url` override; `api_key` is `None` for key-less providers.
-    pub fn new(
-        provider: &str,
-        api_key: Option<String>,
-        model: String,
-        endpoint: &str,
-    ) -> Self {
+    pub fn new(provider: &str, api_key: Option<String>, model: String, endpoint: &str) -> Self {
         Self {
             provider: provider.to_string(),
             api_key,
@@ -120,9 +115,9 @@ impl LlmProvider for OpenAiCompatProvider {
             bail!("`{}` API returned {status}: {body}", self.provider);
         }
 
-        let parsed: ChatResponse = resp
-            .into_json()
-            .with_context(|| format!("failed to parse the `{}` API JSON response", self.provider))?;
+        let parsed: ChatResponse = resp.into_json().with_context(|| {
+            format!("failed to parse the `{}` API JSON response", self.provider)
+        })?;
 
         let text = parsed
             .choices

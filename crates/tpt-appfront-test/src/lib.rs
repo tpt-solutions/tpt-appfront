@@ -259,7 +259,10 @@ pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
                 if !named {
                     push(
                         "unlabeled-input",
-                        format!("{} has no accessible name; add aria-label or a title", role(node)),
+                        format!(
+                            "{} has no accessible name; add aria-label or a title",
+                            role(node)
+                        ),
                     );
                 }
             }
@@ -308,8 +311,9 @@ pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {

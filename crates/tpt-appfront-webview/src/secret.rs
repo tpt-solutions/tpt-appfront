@@ -103,4 +103,3 @@ pub fn handle_secret_action(
         _ => None,
     }
 }
-

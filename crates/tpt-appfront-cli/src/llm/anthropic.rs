@@ -81,9 +81,7 @@ impl LlmProvider for AnthropicProvider {
             .set("anthropic-version", ANTHROPIC_VERSION)
             .set("content-type", "application/json")
             .send_json(&req)
-            .with_context(|| {
-                "request to the Anthropic Messages API failed (network or 4xx/5xx)"
-            })?;
+            .with_context(|| "request to the Anthropic Messages API failed (network or 4xx/5xx)")?;
 
         if resp.status() != 200 {
             let status = resp.status();

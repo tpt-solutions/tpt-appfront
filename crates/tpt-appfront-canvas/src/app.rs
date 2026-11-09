@@ -6,7 +6,6 @@ use std::rc::Rc;
 
 use taffy::TaffyTree;
 use tpt_appfront_core::{apply_auto_virtual_scroll, UITree};
-
 #[cfg(test)]
 use tpt_appfront_core::{NodeKind, VirtualScroll};
 

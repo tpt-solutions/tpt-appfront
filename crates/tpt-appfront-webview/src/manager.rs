@@ -74,7 +74,8 @@ pub enum CommandOutcome {
 }
 
 /// Type-erased app command handler as dispatch sees it.
-pub type CommandHandler = dyn Fn(&str, serde_json::Value) -> std::result::Result<CommandOutcome, String>;
+pub type CommandHandler =
+    dyn Fn(&str, serde_json::Value) -> std::result::Result<CommandOutcome, String>;
 
 /// The application builder. Accumulates windows, sidecar, shortcuts, deep-link
 /// scheme, and lifecycle options, then [`AppBuilder::run`]s the event loop.
@@ -243,11 +244,7 @@ impl AppBuilder {
         ))
     }
 
-    fn run_inner(
-        self,
-        on_command: std::rc::Rc<CommandHandler>,
-    ) -> Result<()>
-    {
+    fn run_inner(self, on_command: std::rc::Rc<CommandHandler>) -> Result<()> {
         // Single-instance enforcement.
         if self.single_instance {
             match single_instance::ensure_single_instance(&self.app_id)? {
@@ -635,10 +632,7 @@ fn dispatch_ipc(
                 &format!("[appfront-webview] command `{action}` failed: {e}"),
             );
             if let Some(h) = on_reject {
-                h(crate::IpcRejection::DispatchError {
-                    action,
-                    error: e,
-                });
+                h(crate::IpcRejection::DispatchError { action, error: e });
             }
         }
     }

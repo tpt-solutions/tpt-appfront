@@ -5,7 +5,8 @@
 
 use taffy::prelude::*;
 use taffy::TaffyTree;
-use tpt_appfront_core::{ui_tree::MediaType, NodeKind, UITree};
+use tpt_appfront_core::ui_tree::MediaType;
+use tpt_appfront_core::{NodeKind, UITree};
 
 use crate::text::TextMeasurer;
 
@@ -226,7 +227,9 @@ pub fn build<'a, Msg>(
             let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
             build_text_leaf(tree, measurer, ui, text, fs, 0.0, 0.0)
         }
-        NodeKind::Media { alt, media_type, .. } => {
+        NodeKind::Media {
+            alt, media_type, ..
+        } => {
             let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
             let label = format!(
                 "{}: {}",
@@ -1011,7 +1014,8 @@ mod tests {
     #[test]
     fn unsupported_utilities_reports_core_utilities_canvas_ignores() {
         // `rounded` is a core utility the canvas does not paint; `user-badge` is a custom class.
-        let found: Vec<&str> = unsupported_utilities("p-4 rounded user-badge af-u-shadow").collect();
+        let found: Vec<&str> =
+            unsupported_utilities("p-4 rounded user-badge af-u-shadow").collect();
         assert_eq!(found, vec!["rounded", "shadow"]);
         assert_eq!(unsupported_utilities("p-4 bg-white").count(), 0);
     }

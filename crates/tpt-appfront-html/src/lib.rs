@@ -256,7 +256,11 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             buf.push_str(&esc_text(text));
             close_tag(buf, "a");
         }
-        NodeKind::Media { src, alt, media_type } => {
+        NodeKind::Media {
+            src,
+            alt,
+            media_type,
+        } => {
             let tag = match media_type {
                 MediaType::Audio => "audio",
                 MediaType::Video => "video",
@@ -531,12 +535,18 @@ mod tests {
             c.data_grid(["A", "B"], [vec!["1", "2"]]);
         });
         let html = render(&ui);
-        assert!(html.contains("type=\"checkbox\" checked aria-checked=\"true\""), "{html}");
+        assert!(
+            html.contains("type=\"checkbox\" checked aria-checked=\"true\""),
+            "{html}"
+        );
         assert!(html.contains("aria-label=\"Agree\""), "{html}");
         assert!(html.contains("role=\"radiogroup\""), "{html}");
         assert!(html.contains("aria-checked=\"true\""), "{html}");
         assert!(html.contains("aria-label=\"Green\""), "{html}");
-        assert!(html.contains("<th scope=\"col\" role=\"columnheader\">A</th>"), "{html}");
+        assert!(
+            html.contains("<th scope=\"col\" role=\"columnheader\">A</th>"),
+            "{html}"
+        );
     }
 
     #[test]

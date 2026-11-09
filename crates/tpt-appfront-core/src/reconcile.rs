@@ -69,15 +69,9 @@ where
     // so a "move" can mark a survivor consumed in O(1) without shifting the
     // backing `Vec`. The map entry is set to `usize::MAX` when a survivor has
     // been consumed, so the front-advance loop skips over it.
-    let survivors: Vec<&K> = old
-        .iter()
-        .filter(|k| old_in_new.contains(k))
-        .collect();
-    let mut survivor_idx: HashMap<&K, usize> = survivors
-        .iter()
-        .enumerate()
-        .map(|(i, &k)| (k, i))
-        .collect();
+    let survivors: Vec<&K> = old.iter().filter(|k| old_in_new.contains(k)).collect();
+    let mut survivor_idx: HashMap<&K, usize> =
+        survivors.iter().enumerate().map(|(i, &k)| (k, i)).collect();
 
     let mut edits = Vec::with_capacity(new.len());
     let mut front_idx = 0usize;

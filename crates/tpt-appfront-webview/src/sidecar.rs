@@ -11,13 +11,13 @@
 
 use std::io;
 use std::path::PathBuf;
-
-use crate::crash::CrashReporter;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+use crate::crash::CrashReporter;
 
 /// Default minimum delay between restart attempts (doubled each retry, up to
 /// [`MAX_BACKOFF`]).
@@ -407,7 +407,10 @@ mod tests {
     #[test]
     fn shutdown_stops_a_running_child_promptly() {
         let (program, args): (&str, Vec<String>) = if cfg!(windows) {
-            ("cmd.exe", vec!["/C".into(), "ping -n 60 127.0.0.1 >nul".into()])
+            (
+                "cmd.exe",
+                vec!["/C".into(), "ping -n 60 127.0.0.1 >nul".into()],
+            )
         } else {
             ("sh", vec!["-c".into(), "sleep 60".into()])
         };
@@ -433,7 +436,11 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "shutdown waited for the child to exit on its own"
         );
-        assert_eq!(*reports.lock().unwrap(), 0, "a requested shutdown is not a crash");
+        assert_eq!(
+            *reports.lock().unwrap(),
+            0,
+            "a requested shutdown is not a crash"
+        );
     }
 
     #[test]

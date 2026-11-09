@@ -58,7 +58,10 @@ struct ProxyAwareKeyExtractor {
 impl tower_governor::key_extractor::KeyExtractor for ProxyAwareKeyExtractor {
     type Key = std::net::IpAddr;
 
-    fn extract<T>(&self, req: &axum::http::Request<T>) -> Result<Self::Key, tower_governor::errors::GovernorError> {
+    fn extract<T>(
+        &self,
+        req: &axum::http::Request<T>,
+    ) -> Result<Self::Key, tower_governor::errors::GovernorError> {
         if self.trust_forwarded_for {
             SmartIpKeyExtractor.extract(req)
         } else {
@@ -295,10 +298,7 @@ impl<Msg> SmartRouterBuilder<Msg> {
     /// Extends the AI-agent User-Agent detection with custom substrings, on
     /// top of the hardcoded [`client_kind::AI_AGENTS`] list. Useful for
     /// internal/branded agents whose UA isn't a known public crawler.
-    pub fn extra_ai_agents(
-        mut self,
-        agents: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn extra_ai_agents(mut self, agents: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.extra_ai_agents = agents.into_iter().map(Into::into).collect();
         self
     }

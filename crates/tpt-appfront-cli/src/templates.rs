@@ -920,8 +920,12 @@ mod tests {
 
     #[test]
     fn canvas_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = canvas_cargo_toml("my-app", "{ path = \"/repo/tpt-appfront\", features = [\"canvas\"] }");
-        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"canvas\"] }"));
+        let out = canvas_cargo_toml(
+            "my-app",
+            "{ path = \"/repo/tpt-appfront\", features = [\"canvas\"] }",
+        );
+        assert!(out
+            .contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"canvas\"] }"));
         assert!(!out.contains("tpt-appfront-core"));
         assert!(out.contains("name = \"my-app\""));
         assert!(looks_like_toml(&out));
@@ -929,16 +933,26 @@ mod tests {
 
     #[test]
     fn dom_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = dom_cargo_toml("my-app", "{ path = \"/repo/tpt-appfront\", features = [\"dom\"] }");
-        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"dom\"] }"));
+        let out = dom_cargo_toml(
+            "my-app",
+            "{ path = \"/repo/tpt-appfront\", features = [\"dom\"] }",
+        );
+        assert!(
+            out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"dom\"] }")
+        );
         assert!(out.contains("crate-type = [\"cdylib\", \"rlib\"]"));
         assert!(looks_like_toml(&out));
     }
 
     #[test]
     fn tui_cargo_toml_embeds_paths_and_is_toml_shaped() {
-        let out = tui_cargo_toml("my-app", "{ path = \"/repo/tpt-appfront\", features = [\"tui\"] }");
-        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"tui\"] }"));
+        let out = tui_cargo_toml(
+            "my-app",
+            "{ path = \"/repo/tpt-appfront\", features = [\"tui\"] }",
+        );
+        assert!(
+            out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"tui\"] }")
+        );
         assert!(looks_like_toml(&out));
     }
 
@@ -972,7 +986,8 @@ mod tests {
             "my-server",
             "{ path = \"/repo/tpt-appfront\", features = [\"server\"] }",
         );
-        assert!(out.contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"server\"] }"));
+        assert!(out
+            .contains("tpt-appfront = { path = \"/repo/tpt-appfront\", features = [\"server\"] }"));
         assert!(out.contains("tokio = { version = \"1\", features = [\"full\"] }"));
         assert!(looks_like_toml(&out));
     }

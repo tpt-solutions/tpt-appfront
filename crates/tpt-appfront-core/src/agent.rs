@@ -13,6 +13,7 @@
 use std::cell::RefCell;
 
 use serde::Serialize;
+
 use crate::signal::Signal;
 use crate::ui_tree::{MediaType, NodeKind, UITree};
 
@@ -251,7 +252,9 @@ fn walk<Msg>(
                 description: None,
             });
         }
-        NodeKind::Media { alt, media_type, .. } => {
+        NodeKind::Media {
+            alt, media_type, ..
+        } => {
             data.push(ElementSummary {
                 id,
                 kind: match media_type {

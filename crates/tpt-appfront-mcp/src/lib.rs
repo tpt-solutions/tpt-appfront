@@ -484,7 +484,8 @@ mod tests {
 
         let server = test_server();
         let mut oversized = String::with_capacity(MAX_LINE_BYTES + 64);
-        oversized.push_str("{\"jsonrpc\":\"2.0\",\"id\":123,\"method\":\"tools/list\",\"params\":{}");
+        oversized
+            .push_str("{\"jsonrpc\":\"2.0\",\"id\":123,\"method\":\"tools/list\",\"params\":{}");
         oversized.push_str(&"x".repeat(MAX_LINE_BYTES));
         oversized.push('\n');
 

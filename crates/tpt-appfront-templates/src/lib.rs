@@ -144,8 +144,9 @@ pub fn settings_list<Msg: Clone + 'static>(cfg: &SettingsListConfig<Msg>) -> UIT
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tpt_appfront_core::NodeKind;
+
+    use super::*;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {

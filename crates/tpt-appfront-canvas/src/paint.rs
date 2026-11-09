@@ -7,11 +7,12 @@ use std::rc::Rc;
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Vec2};
 use taffy::TaffyTree;
+use tpt_appfront_core::ui_tree::MediaType;
 use tpt_appfront_core::{
-    KeyEvent as UiKeyEvent, NodeKind, NodeMeta, PointerEvent as UiPointerEvent, ui_tree::MediaType,
+    KeyEvent as UiKeyEvent, NodeKind, NodeMeta, PointerEvent as UiPointerEvent,
 };
 
-use crate::layout::{self, CELL_PADDING, GridRowKind, RenderNode, TEXT_FONT_SIZE};
+use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
 
 /// Paints `node` (and its subtree) into `ui`, with `origin` being the
 /// absolute screen position of `node`'s parent's content box. `id_seed` is

@@ -177,12 +177,24 @@ fn render_with_kind_mismatch_remounts_without_duplicating() {
     let handle = tpt_appfront_dom::render(&container, view, dispatch()).unwrap();
 
     assert_eq!(container.text_content().as_deref(), Some("idle"));
-    assert_eq!(container.query_selector_all("div").unwrap().length(), 1, "exactly one root div before the flip");
+    assert_eq!(
+        container.query_selector_all("div").unwrap().length(),
+        1,
+        "exactly one root div before the flip"
+    );
 
     show_list.set(true);
 
-    assert_eq!(container.text_content().as_deref(), Some("item one"), "stale content must not remain after the flip");
-    assert_eq!(container.query_selector_all("div").unwrap().length(), 1, "the remount must replace the old root, not duplicate it");
+    assert_eq!(
+        container.text_content().as_deref(),
+        Some("item one"),
+        "stale content must not remain after the flip"
+    );
+    assert_eq!(
+        container.query_selector_all("div").unwrap().length(),
+        1,
+        "the remount must replace the old root, not duplicate it"
+    );
     assert_eq!(container.query_selector_all("ul").unwrap().length(), 1);
 
     std::mem::forget(handle);

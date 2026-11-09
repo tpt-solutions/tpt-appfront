@@ -243,10 +243,7 @@ pub fn build_provider(
         )))
     } else {
         Ok(Box::new(openai_compat::OpenAiCompatProvider::new(
-            provider,
-            api_key,
-            model,
-            endpoint,
+            provider, api_key, model, endpoint,
         )))
     }
 }
@@ -369,7 +366,10 @@ mod tests {
     fn system_prompt_includes_every_live_tag() {
         let prompt = build_system_prompt();
         for tag in VIEW_TAGS {
-            assert!(prompt.contains(tag), "system prompt must mention tag `{tag}`");
+            assert!(
+                prompt.contains(tag),
+                "system prompt must mention tag `{tag}`"
+            );
         }
     }
 
@@ -530,7 +530,9 @@ mod tests {
         let code = "fn not valid (((";
         let banner = match validate_rs_syntax(code) {
             Ok(()) => String::new(),
-            Err(err) => format!("// WARNING: the generated snippet failed Rust syntax validation ({err}).\n"),
+            Err(err) => format!(
+                "// WARNING: the generated snippet failed Rust syntax validation ({err}).\n"
+            ),
         };
         assert!(banner.contains("WARNING"));
     }
@@ -548,7 +550,10 @@ mod tests {
             None,
         )
         .expect("live API call failed");
-        assert!(out.contains("view!"), "expected a view! snippet, got:\n{out}");
+        assert!(
+            out.contains("view!"),
+            "expected a view! snippet, got:\n{out}"
+        );
         assert!(out.contains("Button"), "expected buttons in the snippet");
     }
 
@@ -558,7 +563,8 @@ mod tests {
     #[test]
     #[ignore]
     fn generate_against_openai() {
-        let out = generate("a minimal counter", "openai", "gpt-4o", None).expect("openai call failed");
+        let out =
+            generate("a minimal counter", "openai", "gpt-4o", None).expect("openai call failed");
         assert!(out.contains("view!"));
     }
 

@@ -409,9 +409,15 @@ fn umbrella_ref(features: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     if is_workspace_checkout() {
-        format!("{{ path = \"{}\", features = [{feats}] }}", dep_path("tpt-appfront"))
+        format!(
+            "{{ path = \"{}\", features = [{feats}] }}",
+            dep_path("tpt-appfront")
+        )
     } else {
-        format!("{{ version = \"{}\", features = [{feats}] }}", published_version())
+        format!(
+            "{{ version = \"{}\", features = [{feats}] }}",
+            published_version()
+        )
     }
 }
 
@@ -566,10 +572,7 @@ fn scaffold_dom_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::dom_cargo_toml(
-            pkg_name,
-            &umbrella_ref(&["dom"]),
-        ),
+        templates::dom_cargo_toml(pkg_name, &umbrella_ref(&["dom"])),
     )?;
     fs::write(
         dir.join("src").join("lib.rs"),
@@ -583,10 +586,7 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::tui_cargo_toml(
-            pkg_name,
-            &umbrella_ref(&["tui"]),
-        ),
+        templates::tui_cargo_toml(pkg_name, &umbrella_ref(&["tui"])),
     )?;
     fs::write(
         dir.join("src").join("main.rs"),
@@ -599,10 +599,7 @@ fn scaffold_server_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow:
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::server_cargo_toml(
-            pkg_name,
-            &umbrella_ref(&["server"]),
-        ),
+        templates::server_cargo_toml(pkg_name, &umbrella_ref(&["server"])),
     )?;
     fs::write(
         dir.join("src").join("main.rs"),
@@ -623,10 +620,7 @@ fn scaffold_with_crate(
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::preset_cargo_toml(
-            pkg_name,
-            &umbrella_ref(&["dom", "templates"]),
-        ),
+        templates::preset_cargo_toml(pkg_name, &umbrella_ref(&["dom", "templates"])),
     )?;
     fs::write(
         dir.join("src").join("lib.rs"),
@@ -648,10 +642,7 @@ fn scaffold_preset_crate(
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::preset_cargo_toml(
-            pkg_name,
-            &umbrella_ref(&["dom", "templates"]),
-        ),
+        templates::preset_cargo_toml(pkg_name, &umbrella_ref(&["dom", "templates"])),
     )?;
     fs::write(
         dir.join("src").join("lib.rs"),
@@ -1323,14 +1314,24 @@ fn collect_a11y_matches(dir: &Path, hits: &mut Vec<(PathBuf, usize, String)>) {
 fn a11y_flag(line: &str) -> Option<String> {
     let t = line.trim();
     // `image(src, alt)`: an empty alt string (`""`) is the second argument.
-    if t.contains(".image(") && (t.contains(", \"\"") || t.contains(",\"\"") || t.contains(", \"\")") || t.contains(",\"\")")) {
+    if t.contains(".image(")
+        && (t.contains(", \"\"")
+            || t.contains(",\"\"")
+            || t.contains(", \"\")")
+            || t.contains(",\"\")"))
+    {
         return Some(
             "image with empty alt text (`\"\"`) — confirm it's decorative, or give it a description"
                 .to_string(),
         );
     }
     // `link(href, text)`: an empty link text is the second argument.
-    if t.contains(".link(") && (t.contains(", \"\"") || t.contains(",\"\"") || t.contains(", \"\")") || t.contains(",\"\")")) {
+    if t.contains(".link(")
+        && (t.contains(", \"\"")
+            || t.contains(",\"\"")
+            || t.contains(", \"\")")
+            || t.contains(",\"\")"))
+    {
         return Some(
             "link with empty text — links need accessible text, not just an href".to_string(),
         );
@@ -1722,7 +1723,10 @@ mod tests {
             assert!(r.contains("features = [\"dom\", \"templates\"]"), "got {r}");
         } else {
             let r = umbrella_ref(&["dom"]);
-            assert!(r.starts_with("{ version ="), "expected version dep, got {r}");
+            assert!(
+                r.starts_with("{ version ="),
+                "expected version dep, got {r}"
+            );
             assert!(r.contains("features = [\"dom\"]"), "got {r}");
         }
     }
@@ -1969,8 +1973,15 @@ mod tests {
     fn generate_llm_bails_without_feature() {
         // Without the `llm` feature compiled in, `--llm` must error loudly
         // rather than silently producing the offline snippet.
-        let err = generate_ui("a dashboard", None, true, "anthropic", "claude-sonnet-4-5", None)
-            .expect_err("expected a feature error without the `llm` feature");
+        let err = generate_ui(
+            "a dashboard",
+            None,
+            true,
+            "anthropic",
+            "claude-sonnet-4-5",
+            None,
+        )
+        .expect_err("expected a feature error without the `llm` feature");
         assert!(err.to_string().contains("`llm` feature"), "got: {err}");
     }
 

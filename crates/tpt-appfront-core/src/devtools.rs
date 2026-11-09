@@ -64,7 +64,9 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::Portal { target, .. } => format!("Portal -> \"{target}\""),
         NodeKind::Image { alt, .. } => format!("Image alt=\"{alt}\""),
         NodeKind::Link { href, text } => format!("Link \"{text}\" -> {href}"),
-        NodeKind::Media { media_type, alt, .. } => format!(
+        NodeKind::Media {
+            media_type, alt, ..
+        } => format!(
             "{} alt=\"{alt}\"",
             match media_type {
                 MediaType::Audio => "Audio",

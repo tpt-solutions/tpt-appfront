@@ -122,29 +122,17 @@ pub struct WebviewOptions {
 /// message.
 pub enum IpcRejection {
     /// Message exceeded [`MAX_IPC_MESSAGE_BYTES`].
-    TooLarge {
-        bytes: usize,
-    },
+    TooLarge { bytes: usize },
     /// `serde_json::from_str` failed.
-    Malformed {
-        error: String,
-    },
+    Malformed { error: String },
     /// No `action` field present.
     MissingAction,
     /// `action` not granted by the ACL, or its params failed validation.
-    ActionDenied {
-        action: String,
-        reason: String,
-    },
+    ActionDenied { action: String, reason: String },
     /// Per-process rate limit exceeded.
-    RateLimited {
-        action: String,
-    },
+    RateLimited { action: String },
     /// The app `on_command` closure returned an error.
-    DispatchError {
-        action: String,
-        error: String,
-    },
+    DispatchError { action: String, error: String },
 }
 
 impl WebviewOptions {
@@ -550,10 +538,7 @@ fn handle_ipc<F>(
     }
     if let Err(e) = on_command(&action, validated) {
         eprintln!("[appfront-webview] command `{action}` failed: {e}");
-        on_reject(IpcRejection::DispatchError {
-            action,
-            error: e,
-        });
+        on_reject(IpcRejection::DispatchError { action, error: e });
     }
 }
 
@@ -659,12 +644,24 @@ mod tests {
         };
 
         for _ in 0..3 {
-            handle_ipc(&acl, &limiter, &on_command, &|_: IpcRejection| {}, r#"{"action":"increment"}"#);
+            handle_ipc(
+                &acl,
+                &limiter,
+                &on_command,
+                &|_: IpcRejection| {},
+                r#"{"action":"increment"}"#,
+            );
         }
         assert_eq!(*calls.borrow(), 3);
 
         // Burst allowance (3) is now exhausted.
-        handle_ipc(&acl, &limiter, &on_command, &|_: IpcRejection| {}, r#"{"action":"increment"}"#);
+        handle_ipc(
+            &acl,
+            &limiter,
+            &on_command,
+            &|_: IpcRejection| {},
+            r#"{"action":"increment"}"#,
+        );
         assert_eq!(*calls.borrow(), 3);
     }
 
@@ -765,9 +762,8 @@ mod tests {
         let limiter = new_ipc_rate_limiter(10);
         let rejections = RefCell::new(Vec::new());
         let on_reject = |r: IpcRejection| rejections.borrow_mut().push(r);
-        let on_command = |_action: &str, _params: serde_json::Value| -> Result<(), String> {
-            Ok(())
-        };
+        let on_command =
+            |_action: &str, _params: serde_json::Value| -> Result<(), String> { Ok(()) };
 
         handle_ipc(
             &acl,

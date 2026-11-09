@@ -30,9 +30,10 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use tpt_appfront_core::ui_tree::MediaType;
 use tpt_appfront_core::{
-    apply_auto_virtual_scroll, create_effect, reconcile_keys, ui_tree::MediaType, HydrationPayload,
-    KeyEvent, KeyedDiff, NodeKind, NodeMeta, PointerEvent, Router, UITree,
+    apply_auto_virtual_scroll, create_effect, reconcile_keys, HydrationPayload, KeyEvent,
+    KeyedDiff, NodeKind, NodeMeta, PointerEvent, Router, UITree,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -175,8 +176,7 @@ where
                 .unwrap_or_else(|| "/".to_string());
             router.navigate(&path);
         });
-        window()?
-            .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref())?;
+        window()?.add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref())?;
         closure.forget();
     }
 
@@ -364,13 +364,18 @@ where
 /// reconciled by direct DOM queries, so they need no records here.
 fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
     let children: Vec<MountedNode> = match (&ui.kind, node.dyn_ref::<Element>()) {
-        (NodeKind::Container { children: ui_children }, Some(el)) => ui_children
+        (
+            NodeKind::Container {
+                children: ui_children,
+            },
+            Some(el),
+        ) => ui_children
             .iter()
             .enumerate()
             .filter_map(|(i, child_ui)| {
-                el.child_nodes().get(i as u32).map(|child_node| {
-                    record_mount_tree(child_ui, &child_node)
-                })
+                el.child_nodes()
+                    .get(i as u32)
+                    .map(|child_node| record_mount_tree(child_ui, &child_node))
             })
             .collect(),
         // Non-windowed grids: one record per `tbody` row (rows are leaves —
@@ -446,7 +451,9 @@ where
                 Some(r) => r.render(&new_ui).is_err(),
                 None => true,
             };
-            web_sys::console::log_1(&format!("DEBUG render_with: needs_remount={needs_remount}").into());
+            web_sys::console::log_1(
+                &format!("DEBUG render_with: needs_remount={needs_remount}").into(),
+            );
             if needs_remount {
                 if let Some(old) = slot.take() {
                     old.unmount();
@@ -1152,7 +1159,10 @@ where
                 if value == selected {
                     input.set_attribute("checked", "")?;
                 }
-                input.set_attribute("aria-checked", if value == selected { "true" } else { "false" })?;
+                input.set_attribute(
+                    "aria-checked",
+                    if value == selected { "true" } else { "false" },
+                )?;
                 label_el.append_child(&input)?;
                 let span = document.create_element("span")?;
                 span.set_text_content(Some(label));
@@ -1216,7 +1226,11 @@ where
             el.set_text_content(Some(text));
             el.into()
         }
-        NodeKind::Media { src, alt, media_type } => {
+        NodeKind::Media {
+            src,
+            alt,
+            media_type,
+        } => {
             let tag = match media_type {
                 MediaType::Audio => "audio",
                 MediaType::Video => "video",
@@ -1348,8 +1362,8 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
 
     if let Some(on_keydown) = meta.on_keydown.clone() {
         let dispatch = Rc::clone(dispatch);
-        let closure = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
-            move |ev: web_sys::KeyboardEvent| {
+        let closure =
+            Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
                 let event = KeyEvent {
                     key: ev.key(),
                     code: ev.code(),
@@ -1363,8 +1377,7 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
                     ev.prevent_default();
                     dispatch(msg);
                 }
-            },
-        );
+            });
         el.set_onkeydown(Some(closure.as_ref().unchecked_ref()));
         track_closure(node, closure);
     }
@@ -1376,8 +1389,8 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
         let on_pointer_down = meta.on_pointer_down.clone();
         let dispatch = Rc::clone(dispatch);
         let target = el.clone();
-        let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
-            move |ev: web_sys::PointerEvent| {
+        let closure =
+            Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |ev: web_sys::PointerEvent| {
                 if captures {
                     // Refused captures (the element is gone) only lose the drag, so ignore them.
                     let _ = target.set_pointer_capture(ev.pointer_id());
@@ -1387,8 +1400,7 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
                         dispatch(msg);
                     }
                 }
-            },
-        );
+            });
         el.set_onpointerdown(Some(closure.as_ref().unchecked_ref()));
         track_closure(node, closure);
     }
@@ -1396,13 +1408,12 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
     if let Some(on_pointer_move) = meta.on_pointer_move.clone() {
         let dispatch = Rc::clone(dispatch);
         let target = el.clone();
-        let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
-            move |ev: web_sys::PointerEvent| {
+        let closure =
+            Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |ev: web_sys::PointerEvent| {
                 if let Some(msg) = on_pointer_move(pointer_event_from(&ev, &target)) {
                     dispatch(msg);
                 }
-            },
-        );
+            });
         el.set_onpointermove(Some(closure.as_ref().unchecked_ref()));
         track_closure(node, closure);
     }
@@ -1410,13 +1421,12 @@ fn attach_focus_and_input_events<Msg: Clone + 'static>(
     if let Some(on_pointer_up) = meta.on_pointer_up.clone() {
         let dispatch = Rc::clone(dispatch);
         let target = el.clone();
-        let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
-            move |ev: web_sys::PointerEvent| {
+        let closure =
+            Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |ev: web_sys::PointerEvent| {
                 if let Some(msg) = on_pointer_up(pointer_event_from(&ev, &target)) {
                     dispatch(msg);
                 }
-            },
-        );
+            });
         el.set_onpointerup(Some(closure.as_ref().unchecked_ref()));
         track_closure(node, closure);
     }
@@ -1479,7 +1489,12 @@ fn pointer_event_from(ev: &web_sys::PointerEvent, target: &web_sys::HtmlElement)
 
 fn track_closure<T: ?Sized + 'static>(node: &Node, closure: Closure<T>) {
     let id = node_id(node);
-    LIVE_CLOSURES.with(|m| m.borrow_mut().entry(id).or_default().push(Box::new(closure)));
+    LIVE_CLOSURES.with(|m| {
+        m.borrow_mut()
+            .entry(id)
+            .or_default()
+            .push(Box::new(closure))
+    });
 }
 
 /// Drops and forgets every event `Closure` tracked for `node`, so its
@@ -1793,12 +1808,10 @@ where
                 // `data-appfront-id`. In debug builds surface it so the broken
                 // hydration is obvious rather than silently leaving a dead node.
                 #[cfg(debug_assertions)]
-                web_sys::console::warn_1(
-                    &wasm_bindgen::JsValue::from_str(&format!(
-                        "tpt-appfront hydrate: no DOM node for appfront id {id}; \
+                web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&format!(
+                    "tpt-appfront hydrate: no DOM node for appfront id {id}; \
                          SSR/CSR mismatch — listeners not attached"
-                    )),
-                );
+                )));
             }
         } else {
             // An interactive node with no id at all also indicates a server

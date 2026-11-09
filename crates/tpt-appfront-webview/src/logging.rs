@@ -27,4 +27,3 @@ impl LogSink for UnifiedLogSink {
         }
     }
 }
-
