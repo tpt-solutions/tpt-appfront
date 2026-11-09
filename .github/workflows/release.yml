@@ -30,7 +30,7 @@ jobs:
     env:
       DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name != 'workflow_dispatch' && vars.RELEASE_PUBLISH != 'true') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify the tag matches the workspace version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -65,7 +65,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') && vars.RELEASE_PUBLISH == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Create release from the tag
         env:
           GH_TOKEN: ${{ github.token }}
