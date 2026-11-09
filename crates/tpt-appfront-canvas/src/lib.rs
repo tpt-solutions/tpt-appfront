@@ -33,24 +33,30 @@ pub fn run_native<Msg: Clone + 'static>(
 /// Mounts the canvas app onto an existing `<canvas id="...">` element in
 /// the page. Must be awaited from a `wasm_bindgen(start)` entry point (see
 /// `examples/counter-canvas`'s wasm target, once wired up).
+///
+/// Returns an error (rather than panicking) when there is no window or
+/// document, when no element has `canvas_id`, or when that element is not
+/// a `<canvas>`.
 #[cfg(target_arch = "wasm32")]
 pub async fn run_web<Msg: Clone + 'static>(
     canvas_id: &str,
     build_ui: impl FnMut() -> UITree<Msg> + 'static,
     dispatch: impl Fn(Msg) + 'static,
 ) -> Result<(), wasm_bindgen::JsValue> {
-    use wasm_bindgen::JsCast;
+    use wasm_bindgen::{JsCast, JsValue};
+
+    let document = web_sys::window()
+        .ok_or_else(|| JsValue::from_str("no window"))?
+        .document()
+        .ok_or_else(|| JsValue::from_str("no document"))?;
+    let element = document
+        .get_element_by_id(canvas_id)
+        .ok_or_else(|| JsValue::from_str(&format!("no element with id `{canvas_id}`")))?;
+    let canvas = element
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .map_err(|_| JsValue::from_str(&format!("element `{canvas_id}` is not a <canvas>")))?;
 
     let app = CanvasApp::new(build_ui, dispatch);
-    let document = web_sys::window()
-        .expect("no window")
-        .document()
-        .expect("no document");
-    let canvas = document
-        .get_element_by_id(canvas_id)
-        .expect("canvas element not found")
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .expect("element is not a canvas");
 
     eframe::WebRunner::new()
         .start(

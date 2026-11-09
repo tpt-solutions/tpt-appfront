@@ -261,6 +261,7 @@ fn has_input_handlers<Msg>(meta: &NodeMeta<Msg>) -> bool {
     meta.on_focus.is_some()
         || meta.on_blur.is_some()
         || meta.on_keydown.is_some()
+        || meta.on_paste.is_some()
         || meta.on_pointer_down.is_some()
         || meta.on_pointer_move.is_some()
         || meta.on_pointer_up.is_some()
@@ -310,18 +311,19 @@ fn pointer_button_index(button: egui::PointerButton) -> i16 {
     }
 }
 
-/// Runs the focused node's keydown handler before its widget sees the keys. A key the handler
-/// takes is consumed, so the widget (for example a button that activates on Enter) does not also
-/// act on it.
+/// Runs the focused node's keydown and paste handlers before its widget sees the input. A key the
+/// handler takes is consumed, so the widget (for example a button that activates on Enter) does
+/// not also act on it. Paste is handled the same way: a paste the handler takes is removed from
+/// the event queue, so a focused text field does not also insert it.
 fn dispatch_keydown<Msg: Clone>(
     ui: &egui::Ui,
     node_id: egui::Id,
     meta: &NodeMeta<Msg>,
     dispatch: &Rc<dyn Fn(Msg)>,
 ) {
-    let Some(on_keydown) = meta.on_keydown.as_ref() else {
+    if meta.on_keydown.is_none() && meta.on_paste.is_none() {
         return;
-    };
+    }
     // The widget's own id is only known once it has painted, so use the id recorded last frame.
     let Some(widget_id) = ui.data(|d| d.get_temp::<egui::Id>(node_id)) else {
         return;
@@ -329,27 +331,54 @@ fn dispatch_keydown<Msg: Clone>(
     if !ui.memory(|m| m.has_focus(widget_id)) {
         return;
     }
-    let presses: Vec<(egui::Key, egui::Modifiers, bool)> = ui.input(|i| {
-        i.events
-            .iter()
-            .filter_map(|e| match e {
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    repeat,
-                    modifiers,
-                    ..
-                } => Some((*key, *modifiers, *repeat)),
-                _ => None,
-            })
-            .collect()
-    });
-    for (key, modifiers, repeat) in presses {
-        if let Some(msg) = on_keydown(ui_key_event(key, modifiers, repeat)) {
-            ui.input_mut(|i| {
-                i.consume_key(modifiers, key);
-            });
-            dispatch(msg);
+    if let Some(on_keydown) = meta.on_keydown.as_ref() {
+        let presses: Vec<(egui::Key, egui::Modifiers, bool)> = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        repeat,
+                        modifiers,
+                        ..
+                    } => Some((*key, *modifiers, *repeat)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (key, modifiers, repeat) in presses {
+            if let Some(msg) = on_keydown(ui_key_event(key, modifiers, repeat)) {
+                ui.input_mut(|i| {
+                    i.consume_key(modifiers, key);
+                });
+                dispatch(msg);
+            }
+        }
+    }
+    if let Some(on_paste) = meta.on_paste.as_ref() {
+        let pastes: Vec<String> = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Paste(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+        for text in pastes {
+            if let Some(msg) = on_paste(text.clone()) {
+                ui.input_mut(|i| {
+                    if let Some(pos) = i
+                        .events
+                        .iter()
+                        .position(|e| matches!(e, egui::Event::Paste(t) if *t == text))
+                    {
+                        i.events.remove(pos);
+                    }
+                });
+                dispatch(msg);
+            }
         }
     }
 }

@@ -638,6 +638,61 @@ pub struct Edge<T> {
     pub bottom: T,
 }
 
+/// Utility names that [`canvas_style_for`] renders. Keep in sync with its match arms;
+/// the `canvas_utilities_are_recognized_by_core` test checks each one is a real core utility.
+pub const CANVAS_UTILITIES: &[&str] = &[
+    "p-0",
+    "p-1",
+    "p-2",
+    "p-4",
+    "p-8",
+    "px-4",
+    "py-2",
+    "text-xs",
+    "text-sm",
+    "text-lg",
+    "text-2xl",
+    "text-white",
+    "text-gray-700",
+    "bg-blue-500",
+    "bg-gray-100",
+    "bg-white",
+];
+
+/// Core utility names in `class` that the canvas does not render. Custom
+/// component classes (for example `user-badge`) are not core utilities and are
+/// not reported, since they are expected to have no canvas styling.
+pub fn unsupported_utilities(class: &str) -> impl Iterator<Item = &str> {
+    class.split_whitespace().filter_map(|util| {
+        let name = util.strip_prefix("af-u-").unwrap_or(util);
+        (tpt_appfront_core::styling::is_utility(name) && !CANVAS_UTILITIES.contains(&name))
+            .then_some(name)
+    })
+}
+
+thread_local! {
+    /// Names already reported, so each unsupported utility is logged once per thread.
+    static REPORTED_UTILITIES: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Logs (once per name) each core utility in `class` that the canvas ignores, so a
+/// class that looks styled but renders plain is visible in the console.
+fn report_unsupported_utilities(class: &str) {
+    for name in unsupported_utilities(class) {
+        let first_time = REPORTED_UTILITIES.with(|r| r.borrow_mut().insert(name.to_string()));
+        if first_time {
+            let msg = format!(
+                "tpt-appfront-canvas: utility class `{name}` is not rendered by the canvas backend and is ignored"
+            );
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(&msg.into());
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{msg}");
+        }
+    }
+}
+
 /// Parses a node's `meta.class` into a [`CanvasStyle`], reading the utility
 /// names recognized by `tpt_appfront_core::styling::UTILITIES`. Returns the
 /// default (no-op) style when there is no class or none of the mapped utilities
@@ -646,6 +701,7 @@ pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
     let Some(class) = class else {
         return CanvasStyle::default();
     };
+    report_unsupported_utilities(class);
     let mut style = CanvasStyle::default();
     let mut have_padding = false;
     let mut pad = Edge {
@@ -940,5 +996,23 @@ mod tests {
             -4.0
         );
         assert_eq!(canvas_style_for(&None).font_delta, 0.0);
+    }
+
+    #[test]
+    fn canvas_utilities_are_recognized_by_core() {
+        for name in CANVAS_UTILITIES {
+            assert!(
+                tpt_appfront_core::styling::is_utility(name),
+                "`{name}` is listed in CANVAS_UTILITIES but is not a core utility"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_utilities_reports_core_utilities_canvas_ignores() {
+        // `rounded` is a core utility the canvas does not paint; `user-badge` is a custom class.
+        let found: Vec<&str> = unsupported_utilities("p-4 rounded user-badge af-u-shadow").collect();
+        assert_eq!(found, vec!["rounded", "shadow"]);
+        assert_eq!(unsupported_utilities("p-4 bg-white").count(), 0);
     }
 }
