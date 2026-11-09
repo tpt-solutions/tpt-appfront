@@ -307,6 +307,13 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 - [x] Signal effects: buffer reuse and no double `Rc` per dependency. 100 effects per set: 212 → 12 allocations
 - [x] `lint_tree`: borrow keys instead of cloning them. 1,000 keyed rows: 2,019 → 19 allocations, about 3× faster
 - [ ] Competitor comparison benchmarks (React, Leptos, Dioxus on the same workload and machine). Not started; no published claims until then
+- [x] Browser benchmark for the DOM backend (`crates/tpt-appfront-dom/tests/bench.rs`), run in headless Chrome 156 against a release wasm build. Results in `docs/benchmarks.md`
+- [x] Fix: `MountedRoot::render` failed on every keyed list after mount ("list item count changed"). Mount wrapped items in `<li>`, and `record_mount_tree` did not record list children. Items are now bare nodes with `data-key`. Regression tests in `tests/list_update.rs`
+- [x] CI: `wasm-tests` ran zero browser tests (the glob matched only the lib binary, which has none). It now runs every test binary, and pins `wasm-bindgen-cli` to the version in `Cargo.lock`, which the test runner must match exactly
+- [ ] DOM re-render walks the whole tree: 3.4 ms for a 1,000-row list even when one label changed. Skip unchanged subtrees (pointer or version comparison). This is the top DOM performance item
+- [ ] Windowed (virtual-scroll) lists still use `<li>` wrappers and spacers, and the count guard still sends them to full replace. Give them their own reconcile path
+- [ ] List add and remove still go to full replace. The keyed diff can insert and remove, but nothing tests it yet
+- [ ] Benchmark `reactive_text` (signal to DOM text). It flushes on `requestAnimationFrame`, so it needs an async harness
 
 ### Deferred ideas
 Design tokens/theming, i18n `t!`, `.tptrec` session record/replay, `view!` formatter/LSP, state-preserving hot reload, static OpenAPI/`llms.txt` export, AI-powered layout optimization ("Layer 5" of the spec: an LLM proposes structural UI changes; dropped from the active plan, see Phase 23a).

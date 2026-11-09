@@ -61,10 +61,11 @@ fn counter_view(count: i32) -> UITree<Msg> {
 - **Events return messages.** A click does not run a closure inside the view. It queues a `Msg`
   that your dispatch function handles. That makes the flow easy to test: `Harness::click` then
   `drain_msgs`.
-- **Re-rendering is explicit.** A view is rebuilt when you call the function again. The DOM
-  backend diffs the new tree against the mounted one and keeps unchanged nodes, so rebuilding is
-  cheap in practice (see [benchmarks](../benchmarks.md)). Fine-grained updates for a single
-  text node are available with `reactive_text`.
+- **Re-rendering is explicit, and it is not free.** A view is rebuilt when you call the function
+  again, and the DOM backend then walks the whole tree. On a 1,000-row list that is about 3 ms per
+  render, whether one row changed or all of them (see [benchmarks](../benchmarks.md)). Keep large
+  lists small, use keys, and put frequently changing values in signals with `reactive_text`, which
+  updates a single text node without a re-render.
 - **CSS classes are typed.** `class!("p-4")` is checked at compile time. Anything that doesn't
   match the curated utility set is a build error, not a silently unstyled element. Plan a
   migration of your Tailwind classes to that set, or keep your own stylesheet and use the class

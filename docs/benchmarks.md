@@ -38,6 +38,43 @@ Machine: Intel Core i7-12700 (20 logical cores), 16 GB RAM, Windows 11 Pro. Rele
 Timings vary by up to about 2× between sessions on this machine, so read them as order of magnitude.
 The allocation column does not vary.
 
+## Browser results (DOM backend)
+
+Run with `wasm-bindgen-test-runner` in headless Chrome 156, against a release wasm build.
+Source: [`crates/tpt-appfront-dom/tests/bench.rs`](../crates/tpt-appfront-dom/tests/bench.rs).
+The baseline is hand-written `web-sys` code that produces the same visible result with the minimum
+DOM work. It is a floor, not a competitor.
+
+| Operation | Time |
+|-----------|-----:|
+| Mount 1,000 keyed rows (framework) | 4,200 µs |
+| Mount 1,000 rows (hand-written baseline) | 980 µs |
+| Re-render, one of 1,000 labels changed (framework) | 3,380 µs |
+| Re-render, all 1,000 labels changed (framework) | 3,900 µs |
+| Rebuild all labels (hand-written baseline) | 865 µs |
+| Set one label (hand-written baseline, average of 1,000 writes) | 0.4 µs |
+
+What these show:
+
+- **Mounting costs about 4× the hand-written baseline.** That overhead is the price of keys,
+  handlers and the backend's bookkeeping. It is worth measuring again once the DOM work below
+  lands.
+- **A re-render costs the same whether one label changed or all of them.** Each render walks the
+  whole tree, so its cost depends on the size of the tree, not the size of the change. This is the
+  most important finding here. A re-render of a 1,000-row list costs over 3 ms, which is the
+  budget of a whole 60 fps frame. It is the biggest performance opportunity in the DOM backend.
+  Skipping unchanged subtrees (by pointer or version comparison) would make an unchanged subtree
+  free. That is tracked in `todo.md`.
+- **Single-node updates are cheap when they are direct.** A label write on its own takes under a
+  microsecond. The cost comes from the framework walking the tree, not from DOM writes.
+
+Timer resolution in this browser is about 5 µs, so single operations are averaged over batches.
+
+Bug found by this benchmark: a `render` of any keyed list failed with "list item count changed"
+after mount. Mounting wrapped each item in an `<li>` that the keyed diff did not expect, and
+`record_mount_tree` did not record list children. Both are fixed, with regression tests in
+`tests/list_update.rs`.
+
 ## What changed, and why it was measured
 
 **Signal fan-out: 212 → 12 allocations per `set` with 100 effects.** Two causes. Each dependency was
