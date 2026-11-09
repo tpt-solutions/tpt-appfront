@@ -99,14 +99,24 @@ jobs:
           set -e
           sudo apt-get update
           sudo apt-get install -y chromium
-          cargo install wasm-bindgen-test-runner
+          # Pin the runner to the wasm-bindgen version the project resolves to. The runner must
+          # match it exactly, or wasm-bindgen-test-runner fails with a schema-version error.
+          WB=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 2p | cut -d'"' -f2)
+          cargo install wasm-bindgen-cli --version "$WB" --locked
       - name: Build & run tpt-appfront-dom browser tests
         env:
           WASM_BINDGEN_TEST_RUNNER_CHROME: /usr/bin/chromium
         run: |
           set -e
           cargo test -p tpt-appfront-dom --target wasm32-unknown-unknown --no-run
-          wasm-bindgen-test-runner target/wasm32-unknown-unknown/debug/deps/tpt_appfront_dom-*.wasm
+          # Run every test binary this build produced: the unit tests and each file in tests/.
+          # The old glob matched only the unit-test binary, which has no browser tests, so the
+          # tests in tests/ never ran.
+          set -e
+          for w in target/wasm32-unknown-unknown/debug/deps/*.wasm; do
+            echo "== $w"
+            wasm-bindgen-test-runner "$w"
+          done
 
   cli-llm:
     name: CLI `llm` feature (clippy)
