@@ -24,9 +24,8 @@ trait Trackable {
 
 impl<T> Trackable for RefCell<SignalInner<T>> {
     fn unsubscribe(&self, effect_ptr: *const EffectNode) {
-        self.borrow_mut()
-            .subscribers
-            .retain(|weak| weak.as_ptr() != effect_ptr);
+        // O(1). The stale `Weak` stays in `subscribers` until the next `notify` drops it.
+        self.borrow_mut().members.remove(&(effect_ptr as usize));
     }
 }
 
@@ -170,6 +169,10 @@ pub struct Signal<T> {
 struct SignalInner<T> {
     value: T,
     subscribers: Vec<Weak<EffectNode>>,
+    /// The effects that currently subscribe, keyed by address. Membership checks and unsubscribing
+    /// are O(1), so a signal with N subscribers costs O(N) per set rather than O(N²). The `Weak`
+    /// lets a lookup tell a live effect from a dead one whose address has been reused.
+    members: HashMap<usize, Weak<EffectNode>>,
     /// Set only for signals created by `create_memo`: the internal effect
     /// that recomputes `value`. Kept alive here so it keeps reacting for as
     /// long as the returned `Signal` handle (or a clone of it) is alive, and
@@ -223,6 +226,7 @@ impl<T: 'static> Signal<T> {
             inner: Rc::new(RefCell::new(SignalInner {
                 value,
                 subscribers: Vec::new(),
+                members: HashMap::new(),
                 memo_effect: None,
                 label: None,
             })),
@@ -283,17 +287,20 @@ impl<T: 'static> Signal<T> {
                     node.rank.set(producing_rank);
                 }
 
-                let already_subscribed = self
-                    .inner
-                    .borrow()
-                    .subscribers
-                    .iter()
-                    .any(|weak| weak.as_ptr() == Rc::as_ptr(node));
-                if !already_subscribed {
-                    self.inner
-                        .borrow_mut()
-                        .subscribers
-                        .push(Rc::downgrade(node));
+                let key = Rc::as_ptr(node) as usize;
+                let newly_subscribed = {
+                    let mut inner = self.inner.borrow_mut();
+                    let live = inner
+                        .members
+                        .get(&key)
+                        .is_some_and(|member| member.strong_count() > 0);
+                    if !live {
+                        inner.members.insert(key, Rc::downgrade(node));
+                        inner.subscribers.push(Rc::downgrade(node));
+                    }
+                    !live
+                };
+                if newly_subscribed {
                     // `RefCell<SignalInner<T>>` implements `Trackable`, so this
                     // unsizes the existing Rc instead of allocating a second one per dependency.
                     node.deps
@@ -326,8 +333,25 @@ impl<T: 'static> Signal<T> {
         let label = self.inner.borrow().label.clone();
         let effects: Vec<Rc<EffectNode>> = {
             let mut inner = self.inner.borrow_mut();
-            inner.subscribers.retain(|weak| weak.strong_count() > 0);
-            inner.subscribers.iter().filter_map(Weak::upgrade).collect()
+            let SignalInner {
+                subscribers,
+                members,
+                ..
+            } = &mut *inner;
+            // Keep one live entry per current member. Drops dead entries, entries whose effect
+            // has since unsubscribed, and duplicates left by a re-subscribe.
+            let mut seen = HashSet::with_capacity(subscribers.len());
+            subscribers.retain(|weak| match weak.upgrade() {
+                Some(node) => {
+                    let address = Rc::as_ptr(&node) as usize;
+                    let member_is_live = members
+                        .get(&address)
+                        .is_some_and(|member| member.strong_count() > 0);
+                    member_is_live && seen.insert(address)
+                }
+                None => false,
+            });
+            subscribers.iter().filter_map(Weak::upgrade).collect()
         };
         enqueue(effects);
         if BATCH_DEPTH.with(Cell::get) == 0 {
