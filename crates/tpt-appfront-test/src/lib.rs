@@ -309,6 +309,34 @@ pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
     issues
 }
 
+/// Panics with every issue [`lint_tree`] finds. Put it in a test, so an accessibility regression
+/// fails the build the same way a broken assertion does.
+///
+/// ```ignore
+/// #[test]
+/// fn home_page_is_accessible() {
+///     tpt_appfront_test::assert_accessible(&home_view());
+/// }
+/// ```
+pub fn assert_accessible<Msg>(root: &UITree<Msg>) {
+    let issues = lint_tree(root);
+    if issues.is_empty() {
+        return;
+    }
+    let lines: Vec<String> = issues
+        .iter()
+        .map(|issue| match &issue.key {
+            Some(key) => format!("  [{}] node {key:?}: {}", issue.rule, issue.message),
+            None => format!("  [{}] {}", issue.rule, issue.message),
+        })
+        .collect();
+    panic!(
+        "the view has {} accessibility issue(s):\n{}",
+        issues.len(),
+        lines.join("\n")
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use tpt_appfront_core::ContainerBuilder;
@@ -424,6 +452,24 @@ mod tests {
         ] {
             assert!(rules.contains(&rule), "expected `{rule}` in {rules:?}");
         }
+    }
+
+    #[test]
+    fn assert_accessible_passes_a_clean_view() {
+        let tree: UITree<Msg> = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.heading(1, "Hi");
+            c.button("Go").on_click(Msg::Submit);
+        });
+        assert_accessible(&tree);
+    }
+
+    #[test]
+    #[should_panic(expected = "[unlabeled-input]")]
+    fn assert_accessible_reports_each_rule_it_fails() {
+        let tree: UITree<Msg> = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.input("");
+        });
+        assert_accessible(&tree);
     }
 
     #[test]
