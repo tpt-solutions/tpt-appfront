@@ -1504,6 +1504,67 @@ struct Check {
 /// Runs a pre-flight environment check, printing one line per check and exiting
 /// non-zero if any required check failed. Mirrors what `cargo`/toolchain checks
 /// surface early instead of failing mid-build with an obscure error.
+/// Walks up from `start` to the nearest directory holding `file` whose text contains `needle`.
+/// An empty `needle` matches any file with that name.
+fn find_file_upwards(start: &Path, file: &str, needle: &str) -> Option<PathBuf> {
+    let mut dir = start.canonicalize().ok()?;
+    loop {
+        let candidate = dir.join(file);
+        if let Ok(text) = fs::read_to_string(&candidate) {
+            if text.contains(needle) {
+                return Some(candidate);
+            }
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Parses the first `MAJOR.MINOR[.PATCH]` token in `text`. A missing patch counts as zero.
+fn parse_semver(text: &str) -> Option<(u64, u64, u64)> {
+    // The first run of digits and dots, wherever it sits (quotes and `=` may surround it).
+    let start = text.find(|c: char| c.is_ascii_digit())?;
+    let rest = &text[start..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(rest.len());
+    let token = &rest[..end];
+    let mut parts = token
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse::<u64>().ok());
+    let major = parts.next()??;
+    let minor = parts.next()??;
+    let patch = parts.next().flatten().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// The version `Cargo.lock` resolves `package` to, if it is listed.
+fn locked_version(lock: &str, package: &str) -> Option<String> {
+    let mut lines = lock.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() == format!("name = \"{package}\"") {
+            let version = lines.next()?.trim();
+            return version
+                .strip_prefix("version = \"")
+                .and_then(|v| v.strip_suffix('"'))
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
+/// The `rust-version` the workspace declares, if a `Cargo.toml` above `project` sets one.
+fn declared_msrv(project: &Path) -> Option<(u64, u64, u64)> {
+    let manifest = find_file_upwards(project, "Cargo.toml", "rust-version")?;
+    let text = fs::read_to_string(manifest).ok()?;
+    let line = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("rust-version"))?;
+    parse_semver(line.split('=').nth(1)?)
+}
+
 fn doctor(project: &Path) -> anyhow::Result<()> {
     let mut checks: Vec<Check> = Vec::new();
 
@@ -1564,7 +1625,41 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
         },
     });
 
-    let _ = project;
+    // The toolchain must be at least the workspace's declared MSRV, or the build fails in ways that
+    // are hard to read. A failure here fails `doctor`.
+    let rustc_version = Process::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| parse_semver(&String::from_utf8_lossy(&o.stdout)));
+    if let Some(have) = rustc_version {
+        let (have_s, msrv) = (
+            format!("{}.{}.{}", have.0, have.1, have.2),
+            declared_msrv(project),
+        );
+        match msrv {
+            Some(need) => {
+                let ok = have >= need;
+                checks.push(Check {
+                    name: "rustc meets MSRV",
+                    ok,
+                    detail: if ok {
+                        format!("rustc {have_s} (workspace requires {}.{}.{})", need.0, need.1, need.2)
+                    } else {
+                        format!(
+                            "rustc {have_s} is older than the workspace's rust-version {}.{}.{} — `rustup update stable`",
+                            need.0, need.1, need.2
+                        )
+                    },
+                });
+            }
+            None => checks.push(Check {
+                name: "rustc meets MSRV",
+                ok: true,
+                detail: format!("rustc {have_s} (no rust-version declared above this project)"),
+            }),
+        }
+    }
 
     let mut failed = false;
     for c in &checks {
@@ -1579,6 +1674,44 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
     // dev may legitimately not have the local pre-commit hook installed or may
     // be mid-edit on an unformatted tree.
     let mut info: Vec<Check> = Vec::new();
+
+    // The wasm test runner must be exactly the wasm-bindgen version in Cargo.lock. Any other version
+    // fails with a schema-version error, so compare them here.
+    let locked_bindgen = find_file_upwards(project, "Cargo.lock", "name = \"wasm-bindgen\"")
+        .and_then(|lock| fs::read_to_string(lock).ok())
+        .and_then(|lock| locked_version(&lock, "wasm-bindgen"));
+    if let Some(locked) = locked_bindgen {
+        let install = format!("cargo install wasm-bindgen-cli --version {locked} --locked");
+        let runner = Process::new("wasm-bindgen-test-runner")
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let (ok, detail) = match runner {
+            None => (false, format!("not installed — `{install}`")),
+            Some(out) => {
+                let have = out
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("unknown")
+                    .to_string();
+                if have == locked {
+                    (true, format!("matches Cargo.lock ({locked})"))
+                } else {
+                    (
+                        false,
+                        format!("{have}, but Cargo.lock uses {locked} — `{install}`"),
+                    )
+                }
+            }
+        };
+        info.push(Check {
+            name: "wasm-bindgen-test-runner",
+            ok,
+            detail,
+        });
+    }
 
     let rustfmt_ok = Process::new("rustfmt").arg("--version").output().is_ok();
     info.push(Check {
@@ -1983,6 +2116,31 @@ mod tests {
         )
         .expect_err("expected a feature error without the `llm` feature");
         assert!(err.to_string().contains("`llm` feature"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_semver_reads_rustc_and_runner_output() {
+        assert_eq!(
+            parse_semver("rustc 1.99.0 (abc 2026-01-01)"),
+            Some((1, 99, 0))
+        );
+        assert_eq!(
+            parse_semver("wasm-bindgen-test-runner 0.2.126"),
+            Some((0, 2, 126))
+        );
+        assert_eq!(parse_semver("rust-version = \"1.85\""), Some((1, 85, 0)));
+        assert_eq!(parse_semver("no version here"), None);
+    }
+
+    #[test]
+    fn locked_version_finds_the_package_entry() {
+        let lock = "[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n\n\
+                    [[package]]\nname = \"wasm-bindgen\"\nversion = \"0.2.126\"\n";
+        assert_eq!(
+            locked_version(lock, "wasm-bindgen").as_deref(),
+            Some("0.2.126")
+        );
+        assert_eq!(locked_version(lock, "missing"), None);
     }
 
     #[test]
