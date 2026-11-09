@@ -88,7 +88,10 @@ fn recipe_form_validation() {
     form.set("email", "ada@example.nz");
     assert!(form.error("email").is_none());
     assert!(form.is_valid());
-    assert_eq!(form.values().get("email").map(String::as_str), Some("ada@example.nz"));
+    assert_eq!(
+        form.values().get("email").map(String::as_str),
+        Some("ada@example.nz")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +103,9 @@ fn people(items: &[(u32, &str)]) -> UITree<Msg> {
         c.heading(1, "People");
         c.list(|list| {
             for (id, name) in items {
-                list.button(*name).key(id.to_string()).on_click(Msg::Select(*id));
+                list.button(*name)
+                    .key(id.to_string())
+                    .on_click(Msg::Select(*id));
             }
         });
     })
@@ -155,10 +160,14 @@ fn recipe_routing_with_params_and_fallback() {
 
     let router = Router::new(table, "/users/42");
     assert_eq!(router.current_path(), "/users/42");
-    assert!(Harness::new(router.current_view()).find_by_text("User 42").is_some());
+    assert!(Harness::new(router.current_view())
+        .find_by_text("User 42")
+        .is_some());
 
     router.navigate("/nowhere");
-    assert!(Harness::new(router.current_view()).find_by_text("Not found").is_some());
+    assert!(Harness::new(router.current_view())
+        .find_by_text("Not found")
+        .is_some());
 }
 
 // ---------------------------------------------------------------------------
@@ -185,22 +194,22 @@ fn recipe_store_notifies_subscribers() {
 #[test]
 fn recipe_resource_and_suspense() {
     let user = Resource::new(|| Ok::<String, String>("Ada".to_string()));
-    let boundary = Suspense::new(|| {
-        titled("Hello Ada")
-    })
-    .track(&user)
-    .fallback(loading);
+    let boundary = Suspense::new(|| titled("Hello Ada"))
+        .track(&user)
+        .fallback(loading);
     assert!(boundary.is_ready());
-    assert!(Harness::new(boundary.build()).find_by_text("Hello Ada").is_some());
+    assert!(Harness::new(boundary.build())
+        .find_by_text("Hello Ada")
+        .is_some());
 
     let failed: Resource<String> = Resource::error("network down");
-    let boundary = Suspense::new(|| {
-        titled("Hello")
-    })
-    .track(&failed)
-    .fallback(loading);
+    let boundary = Suspense::new(|| titled("Hello"))
+        .track(&failed)
+        .fallback(loading);
     assert!(!boundary.is_ready());
-    assert!(Harness::new(boundary.build()).find_by_text("Loading…").is_some());
+    assert!(Harness::new(boundary.build())
+        .find_by_text("Loading…")
+        .is_some());
 }
 
 // ---------------------------------------------------------------------------
