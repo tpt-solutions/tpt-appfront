@@ -1,0 +1,72 @@
+name: Release
+
+# Tag-triggered crate publish. Publishing is dry-run unless one of these is set:
+#   - the repository variable RELEASE_PUBLISH is "true", or
+#   - the workflow is started by hand with `dry_run` unchecked.
+# A dry run runs `cargo package` for every crate in dependency order, so packaging
+# problems surface without uploading anything.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only package, do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Package and publish crates
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name != 'workflow_dispatch' && vars.RELEASE_PUBLISH != 'true') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify the tag matches the workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ws=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$tag" != "$ws" ]; then
+            echo "tag v$tag does not match workspace version $ws" >&2
+            exit 1
+          fi
+      - name: Package or publish in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # Dependencies first. tpt-appfront-webview is `publish = false` and is left out.
+          # The umbrella comes after every backend it can enable, and the test crate after core.
+          crates="tpt-appfront-macros tpt-appfront-core tpt-appfront-templates tpt-appfront-test tpt-appfront-html tpt-appfront-ai-schema tpt-appfront-server tpt-appfront-tui tpt-appfront-canvas tpt-appfront-dom tpt-appfront-mcp tpt-appfront tpt-appfront-cli"
+          echo "dry run: $DRY_RUN"
+          for c in $crates; do
+            if [ "$DRY_RUN" = "true" ]; then
+              cargo package -p "$c" --no-verify --allow-dirty
+            else
+              cargo publish -p "$c"
+              # Give the crates.io index time to show the new version before dependents publish.
+              sleep 60
+            fi
+          done
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v') && vars.RELEASE_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release from the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
