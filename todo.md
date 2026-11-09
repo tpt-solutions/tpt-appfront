@@ -294,7 +294,8 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 - [x] `.github/workflows/release.yml`: tag-triggered (and manual), dependency-ordered `cargo publish` (macros → core → templates → html → ai-schema → server → tui → canvas → dom → mcp → cli; webview skipped as `publish = false`), GitHub Release. **Dry-run by default**: a tag push only packages, unless the repo variable `RELEASE_PUBLISH` is `true`. Not yet exercised on GitHub
 - [x] CLI: `completions <shell>` (bash, zsh, fish, powershell, elvish) via `clap_complete` 4. Accepted the `clap_derive` bump and `syn` 3.x. Both are in the CLI's build tree only
 - [x] CLI: `doctor` checks for rustc against the workspace's declared `rust-version` (a failure, since an older toolchain cannot build), and for the installed `wasm-bindgen-test-runner` against the version in `Cargo.lock` (the exact drift that broke the browser tests). Unit tests cover the parsing
-- [ ] CLI: `doctor` checks for webview system libraries; `add template|store|form|route|test`; `templates list` — still open
+- [x] `templates list`: already covered by `tpt-appfront init --list-presets`, which lists the presets and the `--with` pieces. A second command would duplicate it
+- [ ] CLI: `doctor` checks for webview system libraries; `add template|store|form|route|test` — still open
 - [ ] README hero example, backend capability matrix, status/maturity; migration guides (React/Leptos/Dioxus); cookbook (forms, routing, Resource/Suspense, SSR hydration)
 
 ### 23g — Adoption docs and benchmarks
