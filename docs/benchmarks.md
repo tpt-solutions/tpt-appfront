@@ -47,22 +47,26 @@ DOM work. It is a floor, not a competitor.
 
 | Operation | Time |
 |-----------|-----:|
-| Mount 1,000 keyed rows (framework) | 4,200 µs |
-| Mount 1,000 rows (hand-written baseline) | 980 µs |
-| Re-render, one of 1,000 labels changed (framework) | 3,380 µs |
-| Re-render, all 1,000 labels changed (framework) | 3,900 µs |
-| Rebuild all labels (hand-written baseline) | 865 µs |
+| Mount 1,000 keyed rows (framework) | 5,000 µs |
+| Mount 1,000 rows (hand-written baseline) | 900 µs |
+| Re-render, one of 1,000 labels changed (framework) | 2,300 µs |
+| Re-render, all 1,000 labels changed (framework) | 2,700 µs |
+| Rebuild all labels (hand-written baseline) | 870 µs |
 | Set one label (hand-written baseline, average of 1,000 writes) | 0.4 µs |
+
+These are from the current code, which keeps event handlers current on re-render (see below). The
+earlier numbers, about 3,400 µs for a re-render, were from code that did not update handlers. They
+were faster only because they were wrong.
 
 What these show:
 
-- **Mounting costs about 4× the hand-written baseline.** That overhead is the price of keys,
-  handlers and the backend's bookkeeping. It is worth measuring again once the DOM work below
-  lands.
-- **A re-render costs the same whether one label changed or all of them.** Each render walks the
-  whole tree, so its cost depends on the size of the tree, not the size of the change. This is the
-  most important finding here. A re-render of a 1,000-row list costs over 3 ms, which is the
-  budget of a whole 60 fps frame. It is the biggest performance opportunity in the DOM backend.
+- **Mounting costs about 5× the hand-written baseline.** That overhead is the price of keys,
+  handlers and the backend's bookkeeping. Each clickable element gets a shared handler record, so
+  mounting is slower than before the handler fix.
+- **A re-render costs about the same whether one label changed or all of them.** Each render walks
+  the whole tree, so its cost depends on the size of the tree, not the size of the change. A
+  re-render of a 1,000-row list costs about 2.3 ms, which is most of a 60 fps frame. It is the
+  biggest performance opportunity in the DOM backend.
   Skipping unchanged subtrees (by pointer or version comparison) would make an unchanged subtree
   free. That is tracked in `todo.md`.
 - **Single-node updates are cheap when they are direct.** A label write on its own takes under a
@@ -74,6 +78,16 @@ Bug found by this benchmark: a `render` of any keyed list failed with "list item
 after mount. Mounting wrapped each item in an `<li>` that the keyed diff did not expect, and
 `record_mount_tree` did not record list children. Both are fixed, with regression tests in
 `tests/list_update.rs`.
+
+Two more bugs came out of the re-render work, and both are fixed:
+
+- **Stale event handlers.** A re-render did not update event handlers. A button that kept its key
+  but got a new message still sent the old one. Handlers now read their message from a slot that
+  each re-render updates. A change in which handlers a node has is reported as a full replace.
+  Tests: `tests/list_update.rs` and `tests/input_rebind.rs`.
+- **Handler leak and wrong release.** Closures were tracked under the address of a Rust value,
+  which changes when the value moves, so unmount never released them. Node identity is now a
+  number stored on the DOM object.
 
 ## What changed, and why it was measured
 

@@ -62,7 +62,7 @@ fn counter_view(count: i32) -> UITree<Msg> {
   that your dispatch function handles. That makes the flow easy to test: `Harness::click` then
   `drain_msgs`.
 - **Re-rendering is explicit, and it is not free.** A view is rebuilt when you call the function
-  again, and the DOM backend then walks the whole tree. On a 1,000-row list that is about 3 ms per
+  again, and the DOM backend then walks the whole tree. On a 1,000-row list that is about 2 ms per
   render, whether one row changed or all of them (see [benchmarks](../benchmarks.md)). Keep large
   lists small, use keys, and put frequently changing values in signals with `reactive_text`, which
   updates a single text node without a re-render.
