@@ -31,17 +31,20 @@ enum Msg {{
     Increment,
 }}
 
+/// The starter view. It is a function of the count, so the test below builds it without a window.
+fn view(count: &Signal<i32>) -> UITree<Msg> {{
+    UITree::container(|c| {{
+        c.heading(1, "{app_title}");
+        c.text(format!("Count: {{}}", count.get()));
+        c.button("+1").on_click(Msg::Increment);
+    }})
+}}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let count = Signal::new(0i32);
 
     let count_for_ui = count.clone();
-    let build_ui = move || -> UITree<Msg> {{
-        UITree::container(|c| {{
-            c.heading(1, "{app_title}");
-            c.text(format!("Count: {{}}", count_for_ui.get()));
-            c.button("+1").on_click(Msg::Increment);
-        }})
-    }};
+    let build_ui = move || view(&count_for_ui);
 
     let dispatch = move |msg: Msg| match msg {{
         Msg::Increment => count.set(count.get() + 1),
@@ -56,6 +59,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
 
     tpt_appfront::canvas::run_native("{app_title}", build_ui, dispatch)?;
     Ok(())
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    /// The starter UI must pass the accessibility lint.
+    #[test]
+    fn starter_view_is_accessible() {{
+        let count = Signal::new(0i32);
+        tpt_appfront::test::assert_accessible(&view(&count));
+    }}
 }}
 "#
     )
@@ -189,17 +204,20 @@ enum Msg {{
     Increment,
 }}
 
+/// The starter view. It is a function of the count, so the test below builds it without a terminal.
+fn view(count: &Signal<i32>) -> UITree<Msg> {{
+    UITree::container(|c| {{
+        c.heading(1, "{app_title}");
+        c.text(format!("Count: {{}}", count.get()));
+        c.button("+1").on_click(Msg::Increment);
+    }})
+}}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let count = Signal::new(0i32);
 
     let count_for_ui = count.clone();
-    let build_ui = move || -> UITree<Msg> {{
-        UITree::container(|c| {{
-            c.heading(1, "{app_title}");
-            c.text(format!("Count: {{}}", count_for_ui.get()));
-            c.button("+1").on_click(Msg::Increment);
-        }})
-    }};
+    let build_ui = move || view(&count_for_ui);
 
     let dispatch = move |msg: Msg| match msg {{
         Msg::Increment => count.set(count.get() + 1),
@@ -215,6 +233,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // Tab/Arrows move focus, Enter/Space activate, Esc quits.
     tpt_appfront::tui::run(build_ui, dispatch)?;
     Ok(())
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    /// The starter UI must pass the accessibility lint.
+    #[test]
+    fn starter_view_is_accessible() {{
+        let count = Signal::new(0i32);
+        tpt_appfront::test::assert_accessible(&view(&count));
+    }}
 }}
 "#
     )

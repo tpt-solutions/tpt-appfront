@@ -586,7 +586,8 @@ fn scaffold_canvas_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow:
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::canvas_cargo_toml(pkg_name, &umbrella_ref(&["canvas"])),
+        // `test` brings the accessibility assertion into the starter's own test.
+        templates::canvas_cargo_toml(pkg_name, &umbrella_ref(&["canvas", "test"])),
     )?;
     fs::write(
         dir.join("src").join("main.rs"),
@@ -613,7 +614,7 @@ fn scaffold_tui_crate(dir: &Path, pkg_name: &str, app_title: &str) -> anyhow::Re
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
         dir.join("Cargo.toml"),
-        templates::tui_cargo_toml(pkg_name, &umbrella_ref(&["tui"])),
+        templates::tui_cargo_toml(pkg_name, &umbrella_ref(&["tui", "test"])),
     )?;
     fs::write(
         dir.join("src").join("main.rs"),
