@@ -11,6 +11,8 @@
 
 use std::io;
 use std::path::PathBuf;
+
+use crate::crash::CrashReporter;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -63,6 +65,10 @@ pub struct SidecarConfig {
     /// If `true`, an unexpected exit is restarted with backoff. If `false`, the
     /// supervisor simply reports the exit and stops.
     pub restart_on_crash: bool,
+    /// Called with `("sidecar-crash", detail)` for every unexpected exit (a
+    /// non-zero status, a signal, or a failed launch), whether or not the
+    /// child is restarted. `None` disables the report.
+    pub crash_reporter: Option<CrashReporter>,
 }
 
 /// Handle to a running supervisor. Dropping it requests a graceful shutdown of
@@ -82,6 +88,7 @@ impl SidecarSupervisor {
             config,
             rx,
             child_slot: child_slot.clone(),
+            stop: false,
         };
 
         let handle = thread::Builder::new()
@@ -114,11 +121,17 @@ impl Drop for SidecarSupervisor {
     }
 }
 
+/// How often the worker checks on a running child while waiting for it to exit.
+const POLL_INTERVAL: Duration = Duration::from_millis(25);
+
 /// Internal worker that owns the restart loop.
 struct SupervisorWorker {
     config: SidecarConfig,
     rx: Receiver<SupCommand>,
     child_slot: Arc<Mutex<Option<Child>>>,
+    /// Set once a shutdown has been requested. It is sticky, because the
+    /// channel message is consumed the first time it is seen.
+    stop: bool,
 }
 
 impl SupervisorWorker {
@@ -126,24 +139,40 @@ impl SupervisorWorker {
         let mut backoff = BASE_BACKOFF;
 
         loop {
-            if self.should_shutdown() {
+            if self.poll_shutdown() {
                 self.kill_child();
                 break;
             }
 
-            match self.launch() {
-                Ok(code) => {
+            let outcome = self.launch();
+            if self.stop {
+                // Shut down while the child was running; `launch` has already killed it.
+                break;
+            }
+            match outcome {
+                Ok(Some(0)) => {
                     // Clean exit — no restart regardless of `restart_on_crash`.
                     self.config.log_sink.emit(
                         Stream::Stdout,
-                        &format!("sidecar exited cleanly with code {code:?}; not restarting"),
+                        "sidecar exited cleanly with code 0; not restarting",
                     );
                     break;
+                }
+                Ok(code) => {
+                    let status = code.map_or_else(
+                        || "no exit code (terminated by a signal)".to_string(),
+                        |c| format!("exit code {c}"),
+                    );
+                    self.report_crash(&format!("exited with {status}"));
+                    if !self.config.restart_on_crash {
+                        break;
+                    }
                 }
                 Err(e) => {
                     self.config
                         .log_sink
                         .emit(Stream::Stderr, &format!("sidecar launch failed: {e}"));
+                    self.report_crash(&format!("launch failed: {e}"));
                     if !self.config.restart_on_crash {
                         break;
                     }
@@ -152,27 +181,43 @@ impl SupervisorWorker {
 
             // Wait for either backoff to elapse or a shutdown signal.
             if self.wait_with_shutdown(backoff) {
-                self.kill_child();
                 break;
             }
             backoff = (backoff * 2).min(MAX_BACKOFF);
         }
     }
 
-    /// Returns `true` if a shutdown was requested.
-    fn should_shutdown(&self) -> bool {
-        matches!(
-            self.rx.try_recv(),
-            Ok(SupCommand::Shutdown) | Err(mpsc::TryRecvError::Disconnected)
-        )
+    /// Sends an unexpected exit to the configured crash reporter, if any.
+    fn report_crash(&self, detail: &str) {
+        if let Some(reporter) = &self.config.crash_reporter {
+            reporter(
+                "sidecar-crash",
+                &format!("{}: {detail}", self.config.program.display()),
+            );
+        }
+    }
+
+    /// Records a pending shutdown (explicit or because the handle was dropped). Returns the sticky
+    /// flag, so callers can ask again later.
+    fn poll_shutdown(&mut self) -> bool {
+        if !self.stop {
+            self.stop = matches!(
+                self.rx.try_recv(),
+                Ok(SupCommand::Shutdown) | Err(mpsc::TryRecvError::Disconnected)
+            );
+        }
+        self.stop
     }
 
     /// Blocks up to `dur`, returning `true` if shutdown arrived first.
-    fn wait_with_shutdown(&self, dur: Duration) -> bool {
-        matches!(
-            self.rx.recv_timeout(dur),
-            Ok(SupCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected)
-        )
+    fn wait_with_shutdown(&mut self, dur: Duration) -> bool {
+        if !self.stop {
+            self.stop = matches!(
+                self.rx.recv_timeout(dur),
+                Ok(SupCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected)
+            );
+        }
+        self.stop
     }
 
     /// Force-kills any running child process.
@@ -217,17 +262,27 @@ impl SupervisorWorker {
             spawn_pump(err, Stream::Stderr, sink.clone());
         }
 
-        let code = {
-            let mut slot = self.child_slot.lock().unwrap();
-            let child = slot.as_mut().expect("child just set");
-            child.wait()?.code()
+        // Poll rather than block in `wait`, so a shutdown can stop a child that is still running.
+        let exit = loop {
+            let polled = {
+                let mut slot = self.child_slot.lock().unwrap();
+                let child = slot.as_mut().expect("child just set");
+                child.try_wait()?
+            };
+            if let Some(status) = polled {
+                break status.code();
+            }
+            if self.poll_shutdown() {
+                self.kill_child();
+                self.child_slot.lock().unwrap().take();
+                // The caller sees `stop` and does not read this value.
+                return Ok(None);
+            }
+            thread::sleep(POLL_INTERVAL);
         };
-        {
-            let mut slot = self.child_slot.lock().unwrap();
-            *slot = None;
-        }
+        self.child_slot.lock().unwrap().take();
 
-        Ok(code)
+        Ok(exit)
     }
 }
 
@@ -295,17 +350,90 @@ mod tests {
             working_dir: None,
             log_sink: sink,
             restart_on_crash: false,
+            crash_reporter: None,
         };
 
         let sup = SidecarSupervisor::spawn(cfg).expect("spawn supervisor");
-        // Give the worker time to launch + pump + exit.
-        thread::sleep(Duration::from_millis(500));
+        // Wait for both lines rather than a fixed time: a shutdown stops a child that is still
+        // running, so an early shutdown could cut the output short.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while count.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
         sup.shutdown();
 
         assert!(
             count.load(Ordering::SeqCst) >= 2,
             "expected stdout+stderr lines"
         );
+    }
+
+    #[test]
+    fn nonzero_exit_is_reported_and_restarted() {
+        let (program, args): (&str, Vec<String>) = if cfg!(windows) {
+            ("cmd.exe", vec!["/C".into(), "exit 3".into()])
+        } else {
+            ("sh", vec!["-c".into(), "exit 3".into()])
+        };
+        let reports = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink_reports = reports.clone();
+        let reporter: CrashReporter = Arc::new(move |source: &str, detail: &str| {
+            assert_eq!(source, "sidecar-crash");
+            sink_reports.lock().unwrap().push(detail.to_string());
+        });
+        let cfg = SidecarConfig {
+            program: PathBuf::from(program),
+            args,
+            working_dir: None,
+            log_sink: Arc::new(CountingSink(Arc::new(AtomicUsize::new(0)))),
+            restart_on_crash: true,
+            crash_reporter: Some(reporter),
+        };
+
+        let sup = SidecarSupervisor::spawn(cfg).expect("spawn supervisor");
+        // Backoff starts at 250 ms. Process start-up can be slow on Windows, so wait for the
+        // restart to show up rather than sleeping a fixed time.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while reports.lock().unwrap().len() < 2 && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        sup.shutdown();
+
+        let reports = reports.lock().unwrap();
+        assert!(reports.len() >= 2, "expected a restart, got {reports:?}");
+        assert!(reports[0].contains("exit code 3"), "{reports:?}");
+    }
+
+    #[test]
+    fn shutdown_stops_a_running_child_promptly() {
+        let (program, args): (&str, Vec<String>) = if cfg!(windows) {
+            ("cmd.exe", vec!["/C".into(), "ping -n 60 127.0.0.1 >nul".into()])
+        } else {
+            ("sh", vec!["-c".into(), "sleep 60".into()])
+        };
+        let reports = Arc::new(Mutex::new(0usize));
+        let sink_reports = reports.clone();
+        let reporter: CrashReporter = Arc::new(move |_: &str, _: &str| {
+            *sink_reports.lock().unwrap() += 1;
+        });
+        let cfg = SidecarConfig {
+            program: PathBuf::from(program),
+            args,
+            working_dir: None,
+            log_sink: Arc::new(CountingSink(Arc::new(AtomicUsize::new(0)))),
+            restart_on_crash: true,
+            crash_reporter: Some(reporter),
+        };
+
+        let sup = SidecarSupervisor::spawn(cfg).expect("spawn supervisor");
+        thread::sleep(Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        sup.shutdown();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "shutdown waited for the child to exit on its own"
+        );
+        assert_eq!(*reports.lock().unwrap(), 0, "a requested shutdown is not a crash");
     }
 
     #[test]
@@ -332,6 +460,7 @@ mod tests {
             working_dir: None,
             log_sink: sink,
             restart_on_crash: false,
+            crash_reporter: None,
         };
 
         let sup = SidecarSupervisor::spawn(cfg).expect("spawn supervisor");

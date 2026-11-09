@@ -46,23 +46,14 @@ pub struct TrayController {
 impl TrayController {
     /// Builds a tray controller for the current platform.
     ///
-    /// On unsupported platforms (or without the `tray` feature on non-Windows)
-    /// this returns `Err`.
+    /// Always returns `Err` for now. The Windows backend is a scaffold: it does not create a
+    /// message window or call `Shell_NotifyIconW`, so an icon would never appear. Failing here
+    /// tells the app at startup, instead of accepting menu updates that go nowhere.
     pub fn new(icon_tooltip: &str) -> anyhow::Result<Self> {
-        #[cfg(all(feature = "tray", windows))]
-        {
-            let backend = crate::tray::win::WindowsTray::new(icon_tooltip)?;
-            Ok(TrayController {
-                backend: Box::new(backend),
-            })
-        }
-        #[cfg(not(all(feature = "tray", windows)))]
-        {
-            let _ = icon_tooltip;
-            Err(anyhow::anyhow!(
-                "tray is only supported with `--features tray` on Windows in this build"
-            ))
-        }
+        let _ = icon_tooltip;
+        Err(anyhow::anyhow!(
+            "the system tray is not implemented yet on this platform; see todo.md (Phase 23)"
+        ))
     }
 
     /// Updates the tooltip.
@@ -81,7 +72,10 @@ impl TrayController {
     }
 }
 
+/// Scaffold for the Windows backend. It is not constructed yet (see [`TrayController::new`]), so
+/// it is compiled only under the `tray` feature and kept as the starting point for the real one.
 #[cfg(all(feature = "tray", windows))]
+#[allow(dead_code)]
 pub mod win {
     //! Minimal Win32 system tray via `windows-sys`.
     use std::collections::HashMap;
