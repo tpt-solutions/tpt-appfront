@@ -83,7 +83,7 @@ pub(crate) const PROVIDER_CONFIGS: &[(&str, ProviderConfig)] = &[
         ProviderConfig {
             base_url: "https://api.anthropic.com/v1/messages",
             key_env: Some("ANTHROPIC_API_KEY"),
-            default_model: "claude-sonnet-4-5",
+            default_model: "claude-sonnet-5-5",
         },
     ),
     (
@@ -117,6 +117,67 @@ pub(crate) const PROVIDER_CONFIGS: &[(&str, ProviderConfig)] = &[
         ProviderConfig {
             base_url: "http://localhost:11434/v1/chat/completions",
             key_env: None,
+            default_model: "",
+        },
+    ),
+    (
+        "gemini",
+        // Google's OpenAI-compatibility layer for the Gemini API.
+        ProviderConfig {
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            key_env: Some("GEMINI_API_KEY"),
+            default_model: "",
+        },
+    ),
+    (
+        "groq",
+        ProviderConfig {
+            base_url: "https://api.groq.com/openai/v1/chat/completions",
+            key_env: Some("GROQ_API_KEY"),
+            default_model: "",
+        },
+    ),
+    (
+        "mistral",
+        ProviderConfig {
+            base_url: "https://api.mistral.ai/v1/chat/completions",
+            key_env: Some("MISTRAL_API_KEY"),
+            default_model: "",
+        },
+    ),
+    (
+        "deepseek",
+        ProviderConfig {
+            base_url: "https://api.deepseek.com/v1/chat/completions",
+            key_env: Some("DEEPSEEK_API_KEY"),
+            default_model: "",
+        },
+    ),
+    (
+        "together",
+        ProviderConfig {
+            base_url: "https://api.together.xyz/v1/chat/completions",
+            key_env: Some("TOGETHER_API_KEY"),
+            default_model: "",
+        },
+    ),
+    (
+        "lmstudio",
+        // LM Studio's local server speaks the OpenAI chat-completions shape and needs no key.
+        ProviderConfig {
+            base_url: "http://localhost:1234/v1/chat/completions",
+            key_env: None,
+            default_model: "",
+        },
+    ),
+    (
+        "azure-openai",
+        // Azure routes by deployment, so the endpoint is per-resource and must come from
+        // `--base-url` (include the `?api-version=...` query). The key is sent as an `api-key`
+        // header (see `openai_compat`), and `--model` names the deployment.
+        ProviderConfig {
+            base_url: "",
+            key_env: Some("AZURE_OPENAI_API_KEY"),
             default_model: "",
         },
     ),
@@ -157,6 +218,12 @@ pub fn build_provider(
         bail!("`--provider {provider}` requires an explicit `--model` (e.g. `--model llama3.1`)");
     };
 
+    // Providers with no built-in endpoint (Azure: per-resource) must be given one.
+    if config.base_url.is_empty() && base_url.is_none() {
+        bail!("`--provider {provider}` requires `--base-url` (the endpoint for your resource/deployment)");
+    }
+    let endpoint = base_url.unwrap_or(config.base_url);
+
     // Resolve the API key (key-less providers skip this).
     let api_key = match config.key_env {
         Some(env) => Some(std::env::var(env).with_context(|| {
@@ -167,8 +234,6 @@ pub fn build_provider(
         })?),
         None => None,
     };
-
-    let endpoint = base_url.unwrap_or(config.base_url);
 
     if provider == "anthropic" {
         Ok(Box::new(anthropic::AnthropicProvider::new(
@@ -320,17 +385,55 @@ mod tests {
         }
     }
 
+    /// Providers that need no API key (local servers).
+    const KEYLESS: &[&str] = &["ollama", "lmstudio"];
+    /// Providers with no default model id, so `--model` must be given. Defaults are left out
+    /// on purpose for these: model ids change too often to pin without checking each provider.
+    const EXPLICIT_MODEL: &[&str] = &[
+        "ollama",
+        "lmstudio",
+        "gemini",
+        "groq",
+        "mistral",
+        "deepseek",
+        "together",
+        "azure-openai",
+    ];
+
     #[test]
     fn provider_config_table_is_consistent() {
-        // Every provider but ollama has a key env and a default model; ollama is
-        // key-less and needs an explicit model.
+        let mut seen = std::collections::HashSet::new();
         for (name, cfg) in PROVIDER_CONFIGS {
-            if *name == "ollama" {
-                assert!(cfg.key_env.is_none(), "ollama needs no API key");
-                assert!(cfg.default_model.is_empty(), "ollama has no default model");
+            assert!(seen.insert(*name), "duplicate provider `{name}`");
+            // Every entry must be classified above, so a new provider can't skip these rules.
+            assert!(
+                KEYLESS.contains(name) || cfg.key_env.is_some(),
+                "{name} needs an API key env or a KEYLESS entry"
+            );
+            assert_eq!(
+                KEYLESS.contains(name),
+                cfg.key_env.is_none(),
+                "{name}: key_env and the KEYLESS list disagree"
+            );
+            assert_eq!(
+                EXPLICIT_MODEL.contains(name),
+                cfg.default_model.is_empty(),
+                "{name}: default_model and the EXPLICIT_MODEL list disagree"
+            );
+            if let Some(env) = cfg.key_env {
+                assert!(
+                    env.chars().all(|c| c.is_ascii_uppercase() || c == '_'),
+                    "{name}: env var `{env}` should be an upper-case identifier"
+                );
+            }
+            if *name == "azure-openai" {
+                assert!(cfg.base_url.is_empty(), "azure has no built-in endpoint");
             } else {
-                assert!(cfg.key_env.is_some(), "{name} needs an API key env");
-                assert!(!cfg.default_model.is_empty(), "{name} needs a default model");
+                assert!(
+                    cfg.base_url.starts_with("https://") || cfg.base_url.starts_with("http://"),
+                    "{name}: base URL `{}` must be http(s)",
+                    cfg.base_url
+                );
             }
         }
     }
@@ -343,9 +446,39 @@ mod tests {
     }
 
     #[test]
-    fn build_provider_ollama_requires_explicit_model() {
-        assert!(build_provider("ollama", "", None).is_err());
+    fn build_provider_requires_explicit_model_where_there_is_no_default() {
+        for name in EXPLICIT_MODEL {
+            let err = build_provider(name, "", Some("http://127.0.0.1:9"))
+                .err()
+                .unwrap_or_else(|| panic!("{name} should require --model"));
+            assert!(err.to_string().contains("--model"), "{name}: got {err}");
+        }
+    }
+
+    #[test]
+    fn build_provider_keyless_local_providers_resolve_without_env() {
         assert!(build_provider("ollama", "llama3.1", None).is_ok());
+        assert!(build_provider("lmstudio", "qwen2.5-coder", None).is_ok());
+    }
+
+    #[test]
+    fn build_provider_azure_requires_base_url() {
+        let err = build_provider("azure-openai", "my-deployment", None)
+            .err()
+            .expect("azure needs --base-url");
+        assert!(err.to_string().contains("--base-url"), "got: {err}");
+    }
+
+    #[test]
+    fn build_provider_missing_key_error_names_the_env_var() {
+        // Only meaningful when the variable is unset on this machine.
+        if std::env::var("GROQ_API_KEY").is_ok() {
+            return;
+        }
+        let err = build_provider("groq", "llama-3.3-70b", None)
+            .err()
+            .expect("groq needs GROQ_API_KEY");
+        assert!(err.to_string().contains("GROQ_API_KEY"), "got: {err}");
     }
 
     #[test]

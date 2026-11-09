@@ -263,7 +263,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {{
 
     let addr: std::net::SocketAddr = "127.0.0.1:3000".parse()?;
     println!("Serving on http://{{addr}}");
-    serve(router, addr).await;
+    serve(router, addr).await?;
     Ok(())
 }}
 "#
@@ -346,10 +346,12 @@ pub enum Msg {{
     Activated,
 }}
 
-/// Builds the component's `UITree`. Wire `dispatch` into your app's `Msg`.
-pub fn {name}() -> UITree<Msg> {{
-    let dispatch: Rc<dyn Fn(Msg)> = Rc::new(|msg| match msg {{
-        Msg::Activated => {{ /* TODO: handle activation */ }}
+/// Builds the component's `UITree`. `on_activate` runs when the button is
+/// pressed; the component holds no state of its own, so the caller decides
+/// what activation means for the app.
+pub fn {name}(on_activate: Rc<dyn Fn()>) -> UITree<Msg> {{
+    let dispatch: Rc<dyn Fn(Msg)> = Rc::new(move |msg| match msg {{
+        Msg::Activated => on_activate(),
     }});
     view! {{
         <Container class="{kebab}">
@@ -1008,7 +1010,7 @@ mod tests {
         let out = server_main_rs("My App");
         assert!(out.contains("SmartRouterBuilder::new"));
         assert!(out.contains("tpt_appfront_server::{SmartRouterBuilder, serve}"));
-        assert!(out.contains("serve(router, addr).await;"));
+        assert!(out.contains("serve(router, addr).await?;"));
         assert!(!out.contains("{{"));
     }
 
@@ -1049,7 +1051,8 @@ mod tests {
     #[test]
     fn component_rs_is_view_macro_shaped() {
         let out = component_rs("UserBadge", "user-badge");
-        assert!(out.contains("pub fn UserBadge() -> UITree<Msg>"));
+        assert!(out.contains("pub fn UserBadge(on_activate: Rc<dyn Fn()>) -> UITree<Msg>"));
+        assert!(!out.contains("TODO"));
         assert!(out.contains("class=\"user-badge\""));
         assert!(out.contains("view!"));
         assert!(!out.contains("{{"));

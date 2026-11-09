@@ -153,13 +153,17 @@ enum Command {
         /// Requires this CLI to be built with the `llm` feature.
         #[arg(long)]
         llm: bool,
-        /// Which LLM provider to use with `--llm` (only `anthropic` today).
+        /// Which LLM provider to use with `--llm`: anthropic, openai, openrouter, grok, ollama,
+        /// gemini, groq, mistral, deepseek, together, lmstudio or azure-openai.
         #[arg(long, default_value = "anthropic")]
         provider: String,
-        /// Model id passed to the provider (e.g. `claude-sonnet-4-5`).
-        #[arg(long, default_value = "claude-sonnet-4-5")]
-        model: String,
-        /// Override the provider's default API endpoint (self-hosted/proxy).
+        /// Model id passed to the provider (e.g. `claude-sonnet-5-5`). Omit to use the
+        /// provider's default; ollama, lmstudio, gemini, groq, mistral, deepseek, together and
+        /// azure-openai (where it names the deployment) require it.
+        #[arg(long)]
+        model: Option<String>,
+        /// Override the provider's default API endpoint (self-hosted/proxy). Required for
+        /// azure-openai, e.g. `https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-10-21`.
         #[arg(long)]
         base_url: Option<String>,
     },
@@ -275,7 +279,15 @@ fn main() -> anyhow::Result<()> {
             provider,
             model,
             base_url,
-        } => generate_ui(&prompt, out.as_deref(), llm, &provider, &model, base_url.as_deref()),
+        } => generate_ui(
+            &prompt,
+            out.as_deref(),
+            llm,
+            &provider,
+            // An empty model means "use the provider's default" (resolved in `llm::build_provider`).
+            model.as_deref().unwrap_or(""),
+            base_url.as_deref(),
+        ),
         Command::Ingest { input, out } => ingest::ingest_file(&input, out.as_deref()),
         Command::Add { kind } => match kind {
             AddKind::Component { name, project } => add_component(&name, &project),
@@ -2072,7 +2084,7 @@ mod tests {
         let file = dir.join("src").join("components").join("userbadge.rs");
         assert!(file.exists(), "component file created");
         let src = fs::read_to_string(&file).unwrap();
-        assert!(src.contains("pub fn UserBadge() -> UITree<Msg>"));
+        assert!(src.contains("pub fn UserBadge(on_activate: Rc<dyn Fn()>) -> UITree<Msg>"));
         assert!(src.contains("class=\"user-badge\""));
 
         let root = fs::read_to_string(dir.join("src").join("lib.rs")).unwrap();

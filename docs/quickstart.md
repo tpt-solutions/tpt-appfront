@@ -78,21 +78,35 @@ export ANTHROPIC_API_KEY=sk-...
 tpt-appfront generate --prompt "a kanban board with drag handles" --llm
 ```
 
-Five providers ship, all behind the `llm` Cargo feature:
+Twelve providers ship, all behind the `llm` Cargo feature:
 
-| `--provider` | Key env var            | Default model       |
-|--------------|------------------------|---------------------|
-| `anthropic`  | `ANTHROPIC_API_KEY`    | `claude-sonnet-4-5` |
-| `openai`     | `OPENAI_API_KEY`       | `gpt-4o`            |
-| `openrouter` | `OPENROUTER_API_KEY`   | `openai/gpt-4o`     |
-| `grok`       | `XAI_API_KEY`          | `grok-3`            |
-| `ollama`     | *(none — local)*       | *(requires `--model`)* |
+| `--provider`   | Key env var              | Default model                 |
+|----------------|--------------------------|-------------------------------|
+| `anthropic`    | `ANTHROPIC_API_KEY`      | `claude-sonnet-5-5`           |
+| `openai`       | `OPENAI_API_KEY`         | `gpt-4o`                      |
+| `openrouter`   | `OPENROUTER_API_KEY`     | `openai/gpt-4o`               |
+| `grok`         | `XAI_API_KEY`            | `grok-3`                      |
+| `gemini`       | `GEMINI_API_KEY`         | *(requires `--model`)*        |
+| `groq`         | `GROQ_API_KEY`           | *(requires `--model`)*        |
+| `mistral`      | `MISTRAL_API_KEY`        | *(requires `--model`)*        |
+| `deepseek`     | `DEEPSEEK_API_KEY`       | *(requires `--model`)*        |
+| `together`     | `TOGETHER_API_KEY`       | *(requires `--model`)*        |
+| `azure-openai` | `AZURE_OPENAI_API_KEY`   | *(requires `--model`, the deployment name; and `--base-url`)* |
+| `ollama`       | *(none — local)*         | *(requires `--model`)*        |
+| `lmstudio`     | *(none — local)*         | *(requires `--model`)*        |
+
+Defaults are only listed where they are pinned in the table. Model ids change
+often, so the providers without one ask for `--model` rather than guess.
 
 ```sh
 tpt-appfront generate --prompt "a dashboard with live metrics" --llm --provider openai --model gpt-4o
 tpt-appfront generate --prompt "a local RAG chat" --llm --provider ollama --model llama3.1
+tpt-appfront generate --prompt "a settings page" --llm --provider groq --model llama-3.3-70b-versatile
 # self-hosted / proxy endpoints:
 tpt-appfront generate --prompt "..." --llm --provider openai --base-url https://my-proxy.example/v1/chat/completions
+# Azure OpenAI: the endpoint is per resource and deployment, and the key goes in an `api-key` header.
+tpt-appfront generate --prompt "..." --llm --provider azure-openai --model my-deployment \
+  --base-url "https://<resource>.openai.azure.com/openai/deployments/my-deployment/chat/completions?api-version=2024-10-21"
 ```
 
 - **Feature-gated**: `--llm` only works when the CLI is built with the `llm`

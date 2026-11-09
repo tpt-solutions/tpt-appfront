@@ -95,9 +95,14 @@ impl LlmProvider for OpenAiCompatProvider {
             .set("content-type", "application/json")
             .set("accept", "application/json");
         if let Some(key) = &self.api_key {
-            // Ollama (and some self-hosted OpenAI-compatible servers) ignore the
-            // auth header; sending `Bearer` is harmless when a key is present.
-            builder = builder.set("authorization", &format!("Bearer {key}"));
+            // Azure OpenAI takes the key in an `api-key` header; everyone else uses a Bearer token.
+            // Ollama (and some self-hosted OpenAI-compatible servers) ignore the auth header, so
+            // sending it is harmless when a key is present.
+            builder = if self.provider == "azure-openai" {
+                builder.set("api-key", key)
+            } else {
+                builder.set("authorization", &format!("Bearer {key}"))
+            };
         }
 
         let resp = builder.send_json(&req).with_context(|| {
