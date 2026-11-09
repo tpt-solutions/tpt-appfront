@@ -105,10 +105,7 @@ where
     /// is incompatible with the mounted one (callers should `unmount` and
     /// re-`mount` in that rare case).
     pub fn render(&mut self, new_ui: &UITree<Msg>) -> Result<(), wasm_bindgen::JsValue> {
-        let document = web_sys::window()
-            .expect("no window")
-            .document()
-            .expect("no document");
+        let document = document()?;
         reconcile_node(&document, &self.dispatch, &mut self.mounted, new_ui)
     }
 
@@ -166,10 +163,8 @@ pub fn mount_router_with<Msg>(
 where
     Msg: Clone + 'static,
 {
-    let document = web_sys::window()
-        .expect("no window")
-        .document()
-        .expect("no document");
+    // Fail early (before registering anything) when there is no window or document.
+    let document = document()?;
 
     // Sync browser URL -> router on back/forward.
     {
@@ -180,8 +175,7 @@ where
                 .unwrap_or_else(|| "/".to_string());
             router.navigate(&path);
         });
-        web_sys::window()
-            .expect("no window")
+        window()?
             .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref())?;
         closure.forget();
     }
@@ -348,10 +342,7 @@ pub fn mount<Msg>(
 where
     Msg: Clone + 'static,
 {
-    let document = web_sys::window()
-        .expect("no window")
-        .document()
-        .expect("no document");
+    let document = document()?;
     let node = render_node(&document, ui, &dispatch)?;
     let mounted = record_mount_tree(ui, &node);
     container.append_child(&node)?;
@@ -900,6 +891,19 @@ fn append_row_spacer(
     Ok(())
 }
 
+/// The browser window, or a `JsValue` error when there is none (for example in a non-browser
+/// host). Used by the mount paths so a missing window is reported rather than panicking.
+fn window() -> Result<web_sys::Window, wasm_bindgen::JsValue> {
+    web_sys::window().ok_or_else(|| wasm_bindgen::JsValue::from_str("no window"))
+}
+
+/// The window's document, or a `JsValue` error when either is missing.
+fn document() -> Result<Document, wasm_bindgen::JsValue> {
+    window()?
+        .document()
+        .ok_or_else(|| wasm_bindgen::JsValue::from_str("no document"))
+}
+
 /// Appends an `aria-hidden` `<li>` of the given pixel height to `ul` so a
 /// virtualized list's scrollable area still matches the full (unrendered)
 /// list's total height. A `height` of `0.0` appends nothing.
@@ -932,33 +936,63 @@ fn new_ui_text<Msg>(ui: &UITree<Msg>) -> Option<&str> {
     }
 }
 
-/// Applies the shared `NodeMeta` (class, ai action/params) to a live element,
-/// updating only when changed. `None` (text-node case) is a no-op.
+/// Marker attribute listing (space-separated) the author-supplied attribute names last applied to
+/// an element, so a patch can remove the ones the tree no longer carries.
+const AUTHOR_ATTRS_MARKER: &str = "data-af-attrs";
+
+/// Sets or removes a single attribute so the element matches `value`.
+fn sync_attribute(el: &Element, name: &str, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            if el.get_attribute(name).as_deref() != Some(value) {
+                let _ = el.set_attribute(name, value);
+            }
+        }
+        None => {
+            if el.has_attribute(name) {
+                let _ = el.remove_attribute(name);
+            }
+        }
+    }
+}
+
+/// Applies author-supplied attributes (`title`, `aria-*`, …) and removes any that were applied
+/// before but are no longer in `attrs`. Only names recorded in [`AUTHOR_ATTRS_MARKER`] are
+/// removed, so attributes the browser or other code set are left alone.
+fn sync_author_attrs(el: &Element, attrs: &[(String, String)]) {
+    let previous: Vec<String> = el
+        .get_attribute(AUTHOR_ATTRS_MARKER)
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    for name in &previous {
+        if !attrs.iter().any(|(n, _)| n == name) {
+            let _ = el.remove_attribute(name);
+        }
+    }
+    for (name, value) in attrs {
+        sync_attribute(el, name, Some(value));
+    }
+    if attrs.is_empty() {
+        let _ = el.remove_attribute(AUTHOR_ATTRS_MARKER);
+    } else {
+        let names: Vec<&str> = attrs.iter().map(|(n, _)| n.as_str()).collect();
+        sync_attribute(el, AUTHOR_ATTRS_MARKER, Some(&names.join(" ")));
+    }
+}
+
+/// Applies the shared `NodeMeta` (class, ai action/params, author attributes) to a live element,
+/// updating only what changed and removing what the tree no longer sets. `None` (text-node case)
+/// is a no-op.
 fn apply_meta_to_element<Msg>(el: Option<&Element>, ui: &UITree<Msg>) {
     let Some(el) = el else { return };
-    if let Some(class) = &ui.meta.class {
-        if el.get_attribute("class").as_deref() != Some(class) {
-            let _ = el.set_attribute("class", class);
-        }
-    }
-    if let Some(action) = &ui.meta.ai.action {
-        if el.get_attribute("data-ai-action").as_deref() != Some(action) {
-            let _ = el.set_attribute("data-ai-action", action);
-        }
-        if !ui.meta.ai.params.is_empty() {
-            let params_json =
-                serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default();
-            let _ = el.set_attribute("data-ai-params", &params_json);
-        }
-    }
-    // Author-supplied attributes (`title`, `aria-*`, …). Set when absent or
-    // changed; attrs removed from the tree are left in place (attrs are meant
-    // as declarative metadata, not dynamic state).
-    for (name, value) in &ui.meta.attrs {
-        if el.get_attribute(name).as_deref() != Some(value) {
-            let _ = el.set_attribute(name, value);
-        }
-    }
+    sync_attribute(el, "class", ui.meta.class.as_deref());
+    sync_attribute(el, "data-ai-action", ui.meta.ai.action.as_deref());
+    let params_json = (!ui.meta.ai.params.is_empty() && ui.meta.ai.action.is_some())
+        .then(|| serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default());
+    sync_attribute(el, "data-ai-params", params_json.as_deref());
+    sync_author_attrs(el, &ui.meta.attrs);
 }
 
 /// Identity used to match a `List` item across renders: the explicit
@@ -1210,10 +1244,8 @@ where
         }
     }
 
-    for (name, value) in &ui.meta.attrs {
-        if let Some(el) = node.dyn_ref::<Element>() {
-            el.set_attribute(name, value)?;
-        }
+    if let Some(el) = node.dyn_ref::<Element>() {
+        sync_author_attrs(el, &ui.meta.attrs);
     }
 
     if let Some(action) = &ui.meta.ai.action {
@@ -1596,15 +1628,24 @@ fn schedule_text_update(id: u32, node: web_sys::Text, value: String) {
         return;
     }
 
-    let window = web_sys::window().expect("no window");
+    // No window (e.g. a non-browser host) means there is nothing to flush into.
+    let Some(window) = web_sys::window() else {
+        TEXT_FLUSH_SCHEDULED.with(|s| s.set(false));
+        return;
+    };
     let closure = Closure::once(flush_text_updates);
     // `Closure::once` is consumed by the JS callback invocation itself; the
     // `.forget()` here only leaks if the browser never fires the callback
     // (e.g. the page is torn down first), the same tradeoff every other
     // fire-and-forget closure in this module makes.
-    window
+    if window
         .request_animation_frame(closure.as_ref().unchecked_ref())
-        .expect("requestAnimationFrame");
+        .is_err()
+    {
+        // Could not schedule: clear the flag so a later update retries, and drop the closure.
+        TEXT_FLUSH_SCHEDULED.with(|s| s.set(false));
+        return;
+    }
     closure.forget();
 }
 
@@ -1656,10 +1697,7 @@ fn read_state_payload<Msg>() -> Result<Option<HydrationPayload<Msg>>, wasm_bindg
 where
     Msg: serde::de::DeserializeOwned,
 {
-    let document = web_sys::window()
-        .expect("no window")
-        .document()
-        .expect("no document");
+    let document = document()?;
 
     let Some(script_el) = document.get_element_by_id("__APPFRONT_STATE__") else {
         return Ok(None);
@@ -1724,6 +1762,16 @@ where
                 }
             }
         }
+        // A portal renders its content in place, so interactive content inside it needs hydrating
+        // just like any other child.
+        NodeKind::Portal { content, .. } => {
+            if hydrate_node(content, dispatch, id_map)? {
+                needs_hydration = true;
+            }
+        }
+        // Image, Link and Media have no child nodes; their own handlers are covered by the
+        // `needs_hydration` check above.
+        NodeKind::Image { .. } | NodeKind::Link { .. } | NodeKind::Media { .. } => {}
         NodeKind::DataGrid { .. }
         | NodeKind::Heading { .. }
         | NodeKind::Text { .. }
@@ -1732,11 +1780,7 @@ where
         | NodeKind::Textarea { .. }
         | NodeKind::Checkbox { .. }
         | NodeKind::Select { .. }
-        | NodeKind::Radio { .. }
-        | NodeKind::Image { .. }
-        | NodeKind::Link { .. }
-        | NodeKind::Media { .. }
-        | NodeKind::Portal { .. } => {}
+        | NodeKind::Radio { .. } => {}
     }
 
     if needs_hydration {
