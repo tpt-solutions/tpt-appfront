@@ -1,0 +1,32 @@
+[package]
+name = "tpt-appfront"
+description = "Umbrella crate for TPT AppFront: one UITree, many backends behind feature flags, with a prelude."
+readme = "README.md"
+keywords = ["ui", "wasm", "egui", "ssr", "tui"]
+categories = ["gui", "web-programming", "wasm"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
+tpt-appfront-dom = { path = "../tpt-appfront-dom", version = "0.1", optional = true }
+tpt-appfront-canvas = { path = "../tpt-appfront-canvas", version = "0.1", optional = true }
+tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1", optional = true }
+tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema", version = "0.1", optional = true }
+tpt-appfront-server = { path = "../tpt-appfront-server", version = "0.1", optional = true }
+tpt-appfront-tui = { path = "../tpt-appfront-tui", version = "0.1", optional = true }
+tpt-appfront-mcp = { path = "../tpt-appfront-mcp", version = "0.1", optional = true }
+tpt-appfront-test = { path = "../tpt-appfront-test", version = "0.1", optional = true }
+
+[features]
+default = []
+dom = ["dep:tpt-appfront-dom"]
+canvas = ["dep:tpt-appfront-canvas"]
+html = ["dep:tpt-appfront-html"]
+ai-schema = ["dep:tpt-appfront-ai-schema"]
+server = ["dep:tpt-appfront-server"]
+tui = ["dep:tpt-appfront-tui"]
+mcp = ["dep:tpt-appfront-mcp"]
+test = ["dep:tpt-appfront-test"]

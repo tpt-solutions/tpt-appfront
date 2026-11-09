@@ -13,6 +13,8 @@ members = [
     "crates/tpt-appfront-tui",
     "crates/tpt-appfront-webview",
     "crates/tpt-appfront-templates",
+    "crates/tpt-appfront-test",
+    "crates/tpt-appfront",
 ]
 exclude = ["examples"]
 

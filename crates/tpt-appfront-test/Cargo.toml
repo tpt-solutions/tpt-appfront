@@ -1,0 +1,13 @@
+[package]
+name = "tpt-appfront-test"
+description = "Headless test harness for TPT AppFront UI trees: find nodes, click, type, assert emitted messages, and lint a11y/AI affordances."
+readme = "README.md"
+keywords = ["ui", "testing", "accessibility", "lint"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
