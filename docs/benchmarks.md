@@ -95,6 +95,29 @@ Two more bugs came out of the re-render work, and both are fixed:
   which changes when the value moves, so unmount never released them. Node identity is now a
   number stored on the DOM object.
 
+## Signal-driven text (`reactive_text`)
+
+Source: [`crates/tpt-appfront-dom/tests/reactive_text_bench.rs`](../crates/tpt-appfront-dom/tests/reactive_text_bench.rs).
+One signal drives 1,000 text nodes. The flush is private, so two numbers are reported: the
+synchronous cost of `Signal::set`, and the time from `set` until the frame that applies the update.
+
+| Operation | Time |
+|-----------|-----:|
+| `Signal::set`, 1,000 bound text nodes (synchronous) | 365 µs |
+| Frame with no update (baseline) | 16,660 µs (vsync) |
+| Set to applied frame | 16,695 µs |
+| Above the idle-frame baseline (flush and timing noise) | about 35 µs |
+
+The flush costs about the same as one frame's timing noise, so updates are applied in the frame
+after `set`. Latency is set by the frame, not by the work.
+
+This benchmark found a scaling bug. Every effect that re-ran checked its signal's subscriber list
+linearly and then unsubscribed by scanning the same list, so a set with N subscribers cost O(N²).
+The first measurement was 2,355 µs. Subscribers are now tracked in a map, and a set costs O(N). At
+5,000 nodes the set takes 1,155 µs, about 3× the 1,000-node figure for 5× the nodes. The fix is in
+`tpt-appfront-core` and covers every signal, not only text. Regression tests:
+`crates/tpt-appfront-core/tests/subscriber_reuse.rs`.
+
 ## What changed, and why it was measured
 
 **Signal fan-out: 212 → 12 allocations per `set` with 100 effects.** Two causes. Each dependency was

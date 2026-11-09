@@ -317,7 +317,7 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 - [ ] Re-render with every label changed: about 3 ms, of which about 0.3 ms is fingerprinting. Remaining per-row costs: a `String` key per item per render, and several DOM reads per element in `apply_meta_to_element`. The fingerprint could also be cached on the `UITree` builder to avoid recomputing it
 - [ ] Windowed (virtual-scroll) lists still use `<li>` wrappers and spacers, and the count guard still sends them to full replace. Give them their own reconcile path
 - [x] List add and remove reconcile in place. The count guard now applies only to windowed lists, which have no per-item records. Items that stay keep their DOM nodes. Tests: `tests/list_add_remove.rs` (append, remove, insert in the middle, empty and refill). The old guard made each of these a full remount
-- [ ] Benchmark `reactive_text` (signal to DOM text). It flushes on `requestAnimationFrame`, so it needs an async harness
+- [x] Benchmark `reactive_text` (signal to DOM text), with an async browser harness that waits for animation frames. Found and fixed an O(N²) bug: every subscribe and unsubscribe scanned the signal's full subscriber list, so one set with N subscribers cost N². 1,000 bound nodes: 2,355 → 365 µs for the synchronous set. Results in `docs/benchmarks.md`; regression tests in `tpt-appfront-core/tests/subscriber_reuse.rs`
 
 ### Deferred ideas
 Design tokens/theming, i18n `t!`, `.tptrec` session record/replay, `view!` formatter/LSP, state-preserving hot reload, static OpenAPI/`llms.txt` export, AI-powered layout optimization ("Layer 5" of the spec: an LLM proposes structural UI changes; dropped from the active plan, see Phase 23a).
