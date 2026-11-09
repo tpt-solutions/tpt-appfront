@@ -20,15 +20,15 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
-use tpt_appfront_core::{KeyEvent as UiKeyEvent, OnKeyDown};
+use tpt_appfront_core::ui_tree::MediaType;
 use tpt_appfront_core::{
-    NodeKind, UITree, VirtualScroll, apply_auto_virtual_scroll, ui_tree::MediaType,
+    apply_auto_virtual_scroll, KeyEvent as UiKeyEvent, NodeKind, OnKeyDown, UITree, VirtualScroll,
 };
 
 /// A focusable element discovered while walking the tree, in document order.
