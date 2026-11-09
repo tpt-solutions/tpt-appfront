@@ -296,5 +296,13 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 - [ ] CLI: `doctor` checks (rustc vs MSRV 1.85, wasm-bindgen-cli drift, webview libs); `add template|store|form|route|test`; `templates list` — still open
 - [ ] README hero example, backend capability matrix, status/maturity; migration guides (React/Leptos/Dioxus); cookbook (forms, routing, Resource/Suspense, SSR hydration)
 
+### 23g — Adoption docs and benchmarks
+- [x] README rewrite with a hero example, a backend matrix, status, and links to the docs below
+- [x] Cookbook (`docs/cookbook.md`): nine recipes, each a passing test in `crates/tpt-appfront/tests/cookbook.rs`
+- [x] Migration guides for React, Leptos and Dioxus (`docs/migration/`). Framework-side snippets are not compiled here and say so
+- [x] Benchmarks: `cargo bench -p tpt-appfront --bench perf`, with a dependency-free runner; results and caveats in `docs/benchmarks.md`
+- [ ] Investigate static hoisting: on a 5-node subtree the `view!` version is ~1.7× slower than the builder, because the cached tree is cloned on each call. Measure larger static subtrees, and consider returning a cheaper shared handle. Until then, do not claim a speedup for hoisting
+- [ ] Competitor comparison benchmarks (React, Leptos, Dioxus on the same workload and machine). Not started; no published claims until then
+
 ### Deferred ideas
 Design tokens/theming, i18n `t!`, `.tptrec` session record/replay, `view!` formatter/LSP, state-preserving hot reload, static OpenAPI/`llms.txt` export, AI-powered layout optimization ("Layer 5" of the spec: an LLM proposes structural UI changes; dropped from the active plan, see Phase 23a).
