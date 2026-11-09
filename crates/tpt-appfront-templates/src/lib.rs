@@ -10,7 +10,7 @@
 //! closures that map template interactions to the app's `Msg` values. This
 //! keeps the templates decoupled from any specific app.
 
-use tpt_appfront_core::{ContainerBuilder, NodeKind, UITree};
+use tpt_appfront_core::{ContainerBuilder, UITree};
 
 /// A callback that composes content into an existing `ContainerBuilder`. Used by
 /// [`DashboardShellConfig::content`] so callers can nest arbitrary trees
@@ -142,18 +142,10 @@ pub fn settings_list<Msg: Clone + 'static>(cfg: &SettingsListConfig<Msg>) -> UIT
     })
 }
 
-/// Keeps `NodeKind` referenced so the crate's public surface stays explicit
-/// about the node types these templates build.
-#[allow(dead_code)]
-fn _assert_node_kinds<Msg>() -> NodeKind<Msg> {
-    NodeKind::Container {
-        children: Vec::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tpt_appfront_core::NodeKind;
 
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {

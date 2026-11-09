@@ -123,8 +123,8 @@ fn parse_code(token: &str) -> Option<Code> {
 /// Owns the global-hotkey manager and the id->spec mapping. Shortcut presses
 /// are delivered on a receiver the app pumps from its event loop.
 pub struct ShortcutRegistry {
-    #[allow(dead_code)]
-    manager: GlobalHotKeyManager,
+    // Never read, but must stay alive: dropping the manager unregisters every hotkey.
+    _manager: GlobalHotKeyManager,
     ids: HashMap<u32, String>,
 }
 
@@ -141,7 +141,10 @@ impl ShortcutRegistry {
                 .map_err(|e| ShortcutError::Register(e.to_string()))?;
             ids.insert(hotkey.id(), id.clone());
         }
-        Ok(ShortcutRegistry { manager, ids })
+        Ok(ShortcutRegistry {
+            _manager: manager,
+            ids,
+        })
     }
 
     /// Returns the receiver that yields [`GlobalHotKeyEvent`]s on press.

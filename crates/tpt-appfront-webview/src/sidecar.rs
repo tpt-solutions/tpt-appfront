@@ -49,20 +49,6 @@ pub enum Stream {
     Stderr,
 }
 
-/// A [`LogSink`] that forwards every line to `eprintln!` with a `[sidecar]` tag.
-///
-/// Provided as a zero-config default for apps that just want sidecar output
-/// to show up in the terminal; callers needing file/in-memory capture can
-/// implement their own [`LogSink`].
-#[allow(dead_code)]
-pub struct EphemeralLogSink;
-
-impl LogSink for EphemeralLogSink {
-    fn emit(&self, stream: Stream, line: &str) {
-        eprintln!("[sidecar:{stream:?}] {line}");
-    }
-}
-
 /// Configuration for [`SidecarSupervisor::spawn`].
 #[derive(Clone)]
 pub struct SidecarConfig {

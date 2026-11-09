@@ -99,8 +99,6 @@ pub mod win {
 
     /// Win32 tray backend.
     pub struct WindowsTray {
-        #[allow(dead_code)]
-        hwnd: HWND,
         menu: HashMap<u32, String>,
         next_id: u32,
     }
@@ -124,7 +122,6 @@ pub mod win {
             // real hwnd. Kept as data-only here.
             let _ = &nid;
             Ok(WindowsTray {
-                hwnd,
                 menu: HashMap::new(),
                 next_id: ID_TRAY_ACTIVATE + 1,
             })

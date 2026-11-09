@@ -488,6 +488,24 @@ fn dispatch_ipc(
     on_reject: &Option<std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>>,
     message: &str,
 ) {
+    // Bound the message before parsing so a hosted page cannot make the native process parse an
+    // arbitrarily large payload.
+    if message.len() > crate::MAX_IPC_MESSAGE_BYTES {
+        log_sink.emit(
+            crate::sidecar::Stream::Stderr,
+            &format!(
+                "[appfront-webview] rejecting IPC message: {} bytes exceeds {} byte limit",
+                message.len(),
+                crate::MAX_IPC_MESSAGE_BYTES
+            ),
+        );
+        if let Some(h) = on_reject {
+            h(crate::IpcRejection::TooLarge {
+                bytes: message.len(),
+            });
+        }
+        return;
+    }
     let parsed: serde_json::Value = match serde_json::from_str(message) {
         Ok(v) => v,
         Err(e) => {

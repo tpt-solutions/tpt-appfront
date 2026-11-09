@@ -8,7 +8,7 @@
 //! returns the value over the IPC reply channel. Every action is capability-
 //! gated by the [`crate::Acl`], so a page can only touch keys the grant allows.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde_json::json;
 
 /// Prefix applied to credential-store service names so appfront secrets don't
@@ -104,56 +104,3 @@ pub fn handle_secret_action(
     }
 }
 
-/// Convenience helper used by tests/examples to build the three standard secret
-/// capabilities in one shot.
-#[allow(dead_code)]
-pub fn secret_capabilities(keys: &[&str]) -> Vec<crate::Capability> {
-    keys.iter()
-        .flat_map(|_| {
-            [
-                crate::Capability {
-                    action: "secret.get".into(),
-                    params: vec![crate::ParamSpec {
-                        name: "key".into(),
-                        required: true,
-                        kind: crate::ParamKind::String,
-                        default: None,
-                    }],
-                },
-                crate::Capability {
-                    action: "secret.set".into(),
-                    params: vec![
-                        crate::ParamSpec {
-                            name: "key".into(),
-                            required: true,
-                            kind: crate::ParamKind::String,
-                            default: None,
-                        },
-                        crate::ParamSpec {
-                            name: "value".into(),
-                            required: true,
-                            kind: crate::ParamKind::String,
-                            default: None,
-                        },
-                    ],
-                },
-                crate::Capability {
-                    action: "secret.delete".into(),
-                    params: vec![crate::ParamSpec {
-                        name: "key".into(),
-                        required: true,
-                        kind: crate::ParamKind::String,
-                        default: None,
-                    }],
-                },
-            ]
-        })
-        .collect()
-}
-
-/// Marker so the unused `anyhow`/`Context` imports remain meaningful if the
-/// keyring surface changes; kept for downstream `?`-based callers.
-#[allow(dead_code)]
-fn _assert_anyhow() -> Result<()> {
-    Err(anyhow!("placeholder")).context("ctx")
-}

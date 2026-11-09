@@ -2,8 +2,6 @@
 //! Rust shell log lines through a single [`LogSink`] so they interleave in one
 //! place (terminal, file, or whatever the app configures).
 
-use std::sync::Arc;
-
 use crate::sidecar::{LogSink, Stream};
 
 /// Convenience macro that forwards a native shell log line through the unified
@@ -30,15 +28,3 @@ impl LogSink for UnifiedLogSink {
     }
 }
 
-/// Tag a line as originating from the native shell (not the sidecar) and push it
-/// through the same sink the sidecar uses, keeping a single log stream.
-#[allow(dead_code)]
-pub fn log_shell(sink: &Arc<dyn LogSink>, line: &str) {
-    sink.emit(Stream::Stdout, line);
-}
-
-/// Tag a native shell *error* line and push it through the unified sink.
-#[allow(dead_code)]
-pub fn log_shell_error(sink: &Arc<dyn LogSink>, line: &str) {
-    sink.emit(Stream::Stderr, line);
-}

@@ -65,12 +65,6 @@ pub fn save(app_id: &str, window_id: &str, geo: &WindowGeometry) {
     }
 }
 
-/// Removes persisted state for `window_id` (e.g. on reset).
-#[allow(dead_code)]
-pub fn clear(app_id: &str, window_id: &str) {
-    let _ = std::fs::remove_file(state_path(app_id, window_id));
-}
-
 /// Helper to derive a `Path` reference for callers needing the raw path.
 pub fn _path(app_id: &str, window_id: &str) -> PathBuf {
     state_path(app_id, window_id)

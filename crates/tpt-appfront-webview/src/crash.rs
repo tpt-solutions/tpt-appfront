@@ -1,11 +1,10 @@
-//! Crash reporting hook: installs a Rust panic hook and surfaces sidecar
-//! crash events, forwarding both to a telemetry callback.
+//! Crash reporting hook: installs a Rust panic hook that forwards panics to a
+//! telemetry callback.
 //!
-//! Titan wants a single place to learn about failures: native panics and the
-//! Go backend dying. [`install_crash_hooks`] installs a panic hook that calls
-//! the supplied reporter, and [`SidecarCrashMonitor`] wraps the
-//! [`crate::SidecarSupervisor`] exit so unexpected backend deaths are reported
-//! too.
+//! Titan wants a single place to learn about failures. [`install_panic_hook`]
+//! forwards native panics to the supplied reporter. Reporting sidecar
+//! (backend) crashes is not wired into [`crate::SidecarSupervisor`] yet; the
+//! supervisor logs them through its log sink and restarts with backoff.
 
 use std::panic;
 
@@ -41,12 +40,6 @@ pub struct SidecarCrash {
     pub program: String,
     /// Detail about the crash (exit code or launch failure).
     pub detail: String,
-}
-
-/// Reports a sidecar crash to the configured [`CrashReporter`].
-#[allow(dead_code)]
-pub fn report_sidecar_crash(reporter: &CrashReporter, program: &str, detail: &str) {
-    reporter("sidecar-crash", &format!("{program}: {detail}"));
 }
 
 #[cfg(test)]

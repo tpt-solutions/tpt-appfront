@@ -461,8 +461,7 @@ fn not_found() -> Response<Cow<'static, [u8]>> {
 /// above this ceiling before `serde_json::from_str` runs. Messages are plain
 /// `{action, params, requestId}` JSON, so 16 KiB is ample for any realistic
 /// command while keeping the worst-case parse cost bounded.
-#[allow(dead_code)]
-const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
 
 /// Direct (unkeyed) in-process rate limiter for the IPC bridge — there's no
 /// per-client concept here, just one hosted page in one local process.
@@ -484,7 +483,13 @@ fn new_ipc_rate_limiter(max_commands_per_second: u32) -> IpcRateLimiter {
 /// to `on_command`. `on_reject` is invoked (in addition to the crate's own
 /// log output) at every rejection point so the host can surface it to
 /// telemetry.
-#[cfg_attr(not(test), allow(dead_code))]
+///
+/// The production IPC path is `manager::dispatch_ipc`, which needs a live
+/// `WebView` to reply and so cannot be driven from unit tests. This function
+/// is kept as a self-contained, test-only model of the same checks (size,
+/// parse, ACL, rate limit) so those rules have direct tests. Keep the two in
+/// step when changing either.
+#[cfg(test)]
 fn handle_ipc<F>(
     acl: &Acl,
     limiter: &IpcRateLimiter,
