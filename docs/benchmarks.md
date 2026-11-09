@@ -49,8 +49,8 @@ DOM work. It is a floor, not a competitor.
 |-----------|-----:|
 | Mount 1,000 keyed rows (framework) | 5,000 µs |
 | Mount 1,000 rows (hand-written baseline) | 900 µs |
-| Re-render, one of 1,000 labels changed (framework) | 2,300 µs |
-| Re-render, all 1,000 labels changed (framework) | 2,700 µs |
+| Re-render, one of 1,000 labels changed (framework) | 680 µs |
+| Re-render, all 1,000 labels changed (framework) | 2,950 µs |
 | Rebuild all labels (hand-written baseline) | 870 µs |
 | Set one label (hand-written baseline, average of 1,000 writes) | 0.4 µs |
 
@@ -63,10 +63,16 @@ What these show:
 - **Mounting costs about 5× the hand-written baseline.** That overhead is the price of keys,
   handlers and the backend's bookkeeping. Each clickable element gets a shared handler record, so
   mounting is slower than before the handler fix.
-- **A re-render costs about the same whether one label changed or all of them.** Each render walks
-  the whole tree, so its cost depends on the size of the tree, not the size of the change. A
-  re-render of a 1,000-row list costs about 2.3 ms, which is most of a 60 fps frame. It is the
-  biggest performance opportunity in the DOM backend.
+- **A re-render with one changed label costs about 0.7 ms.** Unchanged subtrees are skipped. Each
+  one is fingerprinted, and when the fingerprint matches the last render, the DOM is left alone.
+  Only the handler messages are refreshed. Before this, every render walked the whole tree and
+  cost about 2.3 ms.
+- **A re-render with every label changed costs about 3 ms.** Nothing can be skipped there, and the
+  fingerprints add a small cost (about 0.3 ms over the earlier figure).
+- **Skipping trades a guarantee for speed.** A skipped subtree is not compared with the live DOM. If
+  something outside the framework changes the DOM, the next render corrects it only when the
+  content of that subtree changes. Inputs, selects, checkboxes and radios are never skipped, since
+  their state lives in the DOM.
   Skipping unchanged subtrees (by pointer or version comparison) would make an unchanged subtree
   free. That is tracked in `todo.md`.
 - **Single-node updates are cheap when they are direct.** A label write on its own takes under a
