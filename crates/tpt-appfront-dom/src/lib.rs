@@ -30,7 +30,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use tpt_appfront_core::ui_tree::MediaType;
+use tpt_appfront_core::ui_tree::{
+    MediaType, OnInput, OnKeyDown, OnPaste, OnPointerDown, OnPointerMove, OnPointerUp, OnToggle,
+};
 use tpt_appfront_core::{
     apply_auto_virtual_scroll, create_effect, reconcile_keys, HydrationPayload, KeyEvent,
     KeyedDiff, NodeKind, NodeMeta, PointerEvent, Router, UITree,
@@ -60,6 +62,11 @@ struct MountedNode {
     handles: Vec<tpt_appfront_core::EffectHandle>,
     /// Child records, in document order.
     children: Vec<MountedNode>,
+    /// The diff key this node was last reconciled under (a list item's key). Kept here so a
+    /// re-render compares keys without reading `data-key` back from the DOM.
+    key: Option<String>,
+    /// `presence_mask` of the handlers this node was mounted or last reconciled with.
+    handlers: u32,
 }
 
 impl MountedNode {
@@ -391,6 +398,8 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
                             node: tr,
                             handles: Vec::new(),
                             children: Vec::new(),
+                            key: None,
+                            handlers: 0,
                         })
                     })
                     .collect()
@@ -402,9 +411,11 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
             .iter()
             .enumerate()
             .filter_map(|(i, item_ui)| {
-                el.child_nodes()
-                    .get(i as u32)
-                    .map(|item_node| record_mount_tree(item_ui, &item_node))
+                el.child_nodes().get(i as u32).map(|item_node| {
+                    let mut record = record_mount_tree(item_ui, &item_node);
+                    record.key = Some(list_key(item_ui, i));
+                    record
+                })
             })
             .collect(),
         _ => Vec::new(),
@@ -413,6 +424,8 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
         node: node.clone(),
         handles: Vec::new(),
         children,
+        key: None,
+        handlers: presence_mask(&ui.meta),
     }
 }
 
@@ -537,6 +550,18 @@ where
         }
         Some(el) => {
             apply_meta_to_element(Some(el), new_ui);
+
+            // Handlers are attached to the element, so a change in which handlers exist cannot be
+            // applied in place. Handler messages that change are applied by rebinding below.
+            let presence = presence_mask(&new_ui.meta);
+            if presence != mounted.handlers {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "event handlers added or removed; full replace required",
+                ));
+            }
+            if presence != 0 {
+                rebind_handlers(&mounted.node, new_ui, dispatch);
+            }
 
             match &new_ui.kind {
                 NodeKind::Container {
@@ -665,20 +690,8 @@ fn reconcile_children<Msg>(
 where
     Msg: Clone + 'static,
 {
-    // Key for a child: keyed lists read the `data-key` attribute off the
-    // mounted DOM node (falling back to position); unkeyed children use their
-    // positional index. `new_keys` come straight from `key_fn`/position.
-    let old_key_of = |m: &MountedNode, i: usize| -> String {
-        match key_fn {
-            Some(_) => m
-                .node
-                .dyn_ref::<Element>()
-                .and_then(|el| el.get_attribute("data-key"))
-                .unwrap_or_else(|| i.to_string()),
-            None => i.to_string(),
-        }
-    };
-
+    // Keys come from the mounted records (`MountedNode::key`), not from `data-key` read back off
+    // the DOM. Unkeyed children are matched by position.
     let new_keys: Vec<String> = new_children
         .iter()
         .enumerate()
@@ -690,15 +703,29 @@ where
     let old_keys: Vec<String> = old_children
         .iter()
         .enumerate()
-        .map(|(i, m)| old_key_of(m, i))
+        .map(|(i, m)| match key_fn {
+            Some(_) => m.key.clone().unwrap_or_else(|| i.to_string()),
+            None => i.to_string(),
+        })
         .collect();
 
+    // Debug builds report duplicate keys here. The result is not needed in release.
+    #[cfg(debug_assertions)]
     let _: KeyedDiff<String> = reconcile_keys(&old_keys, &new_keys);
+
+    // Fast path: the same keys in the same order. Every child is updated where it is, so
+    // there is no map to build and nothing to move.
+    if old_keys == new_keys {
+        for (existing, new_child) in old_children.iter_mut().zip(new_children) {
+            reconcile_node(document, dispatch, existing, new_child)?;
+        }
+        return Ok(());
+    }
 
     // Pull mounted children into a reusable map keyed by their diff key.
     let mut old_by_key: HashMap<String, MountedNode> = HashMap::new();
-    for (i, m) in old_children.drain(..).enumerate() {
-        old_by_key.insert(old_key_of(&m, i), m);
+    for (m, key) in old_children.drain(..).zip(old_keys) {
+        old_by_key.insert(key, m);
     }
 
     let mut next: Vec<MountedNode> = Vec::with_capacity(new_children.len());
@@ -707,6 +734,7 @@ where
         if let Some(mut existing) = old_by_key.remove(key) {
             reconcile_node(document, dispatch, &mut existing, new_child)?;
             position_child(parent, &existing.node, i)?;
+            existing.key = Some(key.clone());
             next.push(existing);
         } else {
             let node = render_node(document, new_child, dispatch)?;
@@ -716,7 +744,8 @@ where
                     el.set_attribute("data-key", key)?;
                 }
             }
-            let mounted = record_mount_tree(new_child, &node);
+            let mut mounted = record_mount_tree(new_child, &node);
+            mounted.key = Some(key.clone());
             position_child(parent, &node, i)?;
             next.push(mounted);
         }
@@ -844,6 +873,8 @@ where
                 node: tr.into(),
                 handles: Vec::new(),
                 children: Vec::new(),
+                key: None,
+                handlers: 0,
             });
         }
     }
@@ -1290,45 +1321,307 @@ where
         }
     }
 
-    if let Some(msg) = ui.meta.on_click.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
-        if let Some(el) = node.dyn_ref::<web_sys::HtmlElement>() {
-            el.set_onclick(Some(closure.as_ref().unchecked_ref()));
+    attach_node_handlers(ui, dispatch, &node);
+    Ok(node)
+}
+
+/// Handler bits for [`presence_mask`]: one per message handler a node can carry.
+const H_CLICK: u32 = 1 << 0;
+const H_INPUT: u32 = 1 << 1;
+const H_TOGGLE: u32 = 1 << 2;
+const H_FOCUS: u32 = 1 << 3;
+const H_BLUR: u32 = 1 << 4;
+const H_KEYDOWN: u32 = 1 << 5;
+const H_POINTER_DOWN: u32 = 1 << 6;
+const H_POINTER_MOVE: u32 = 1 << 7;
+const H_POINTER_UP: u32 = 1 << 8;
+const H_PASTE: u32 = 1 << 9;
+
+/// Which message handlers `meta` declares, as one bit per handler. A re-render can update a
+/// handler's message in place. It cannot add or remove one, so the bits must match.
+fn presence_mask<Msg>(meta: &NodeMeta<Msg>) -> u32 {
+    let mut mask = 0;
+    let bits = [
+        (meta.on_click.is_some(), H_CLICK),
+        (meta.on_input.is_some(), H_INPUT),
+        (meta.on_toggle.is_some(), H_TOGGLE),
+        (meta.on_focus.is_some(), H_FOCUS),
+        (meta.on_blur.is_some(), H_BLUR),
+        (meta.on_keydown.is_some(), H_KEYDOWN),
+        (meta.on_pointer_down.is_some(), H_POINTER_DOWN),
+        (meta.on_pointer_move.is_some(), H_POINTER_MOVE),
+        (meta.on_pointer_up.is_some(), H_POINTER_UP),
+        (meta.on_paste.is_some(), H_PASTE),
+    ];
+    for (present, bit) in bits {
+        if present {
+            mask |= bit;
         }
-        // Track the closure so `unmount` can release it once the browser lets
-        // go of the handler (`set_onclick(None)`).
-        track_closure(&node, closure);
+    }
+    mask
+}
+
+/// The message handlers an element has now, shared with the event closures attached to it.
+///
+/// Closures read these slots when an event fires instead of capturing a handler at attach time.
+/// A re-render then only overwrites the slots. No closure is created and no DOM property is set.
+struct HandlerSlots<Msg> {
+    dispatch: Rc<dyn Fn(Msg)>,
+    click: Option<Msg>,
+    input: Option<OnInput<Msg>>,
+    toggle: Option<OnToggle<Msg>>,
+    focus: Option<Msg>,
+    blur: Option<Msg>,
+    keydown: Option<OnKeyDown<Msg>>,
+    pointer_down: Option<OnPointerDown<Msg>>,
+    pointer_move: Option<OnPointerMove<Msg>>,
+    pointer_up: Option<OnPointerUp<Msg>>,
+    paste: Option<OnPaste<Msg>>,
+}
+
+impl<Msg: Clone> HandlerSlots<Msg> {
+    fn new(dispatch: &Rc<dyn Fn(Msg)>) -> Self {
+        HandlerSlots {
+            dispatch: Rc::clone(dispatch),
+            click: None,
+            input: None,
+            toggle: None,
+            focus: None,
+            blur: None,
+            keydown: None,
+            pointer_down: None,
+            pointer_move: None,
+            pointer_up: None,
+            paste: None,
+        }
     }
 
-    if let Some(on_input) = ui.meta.on_input.clone() {
-        let dispatch = Rc::clone(dispatch);
+    /// Overwrites every slot from `meta`. The presence check in `reconcile_node` guarantees the
+    /// same handlers exist as before, so only their values change.
+    fn update(&mut self, meta: &NodeMeta<Msg>, dispatch: &Rc<dyn Fn(Msg)>) {
+        self.dispatch = Rc::clone(dispatch);
+        self.click = meta.on_click.clone();
+        self.input = meta.on_input.clone();
+        self.toggle = meta.on_toggle.clone();
+        self.focus = meta.on_focus.clone();
+        self.blur = meta.on_blur.clone();
+        self.keydown = meta.on_keydown.clone();
+        self.pointer_down = meta.on_pointer_down.clone();
+        self.pointer_move = meta.on_pointer_move.clone();
+        self.pointer_up = meta.on_pointer_up.clone();
+        self.paste = meta.on_paste.clone();
+    }
+}
+
+type SharedSlots<Msg> = Rc<std::cell::RefCell<HandlerSlots<Msg>>>;
+
+/// Sends `msg`, if there is one, through the slots' current dispatch. The dispatch is cloned out
+/// first, so a handler that re-renders synchronously does not run into a live borrow.
+fn fire<Msg: Clone>(slots: &std::cell::RefCell<HandlerSlots<Msg>>, msg: Option<Msg>) {
+    if let Some(msg) = msg {
+        let dispatch = Rc::clone(&slots.borrow().dispatch);
+        dispatch(msg);
+    }
+}
+
+/// Attaches every event handler `ui` declares to `node`. Mount runs it through [`render_node`]
+/// and hydration through [`attach_listeners`]. A re-render updates the same slots through
+/// [`rebind_handlers`].
+fn attach_node_handlers<Msg: Clone + 'static>(
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+    node: &Node,
+) {
+    let presence = presence_mask(&ui.meta);
+    if presence == 0 {
+        return;
+    }
+    let mut initial = HandlerSlots::new(dispatch);
+    initial.update(&ui.meta, dispatch);
+    let slots: SharedSlots<Msg> = Rc::new(std::cell::RefCell::new(initial));
+    // Holds the slots for as long as the node is tracked, so a re-render can find them.
+    track_value(node, Box::new(Rc::clone(&slots)));
+    attach_slot_closures(node, &slots, presence);
+}
+
+/// Creates one closure per present handler, each reading its message from `slots`.
+fn attach_slot_closures<Msg: Clone + 'static>(
+    node: &Node,
+    slots: &SharedSlots<Msg>,
+    presence: u32,
+) {
+    if let Some(el) = node.dyn_ref::<web_sys::HtmlElement>() {
+        if presence & H_CLICK != 0 {
+            let slots = Rc::clone(slots);
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                let msg = slots.borrow().click.clone();
+                fire(&slots, msg);
+            });
+            el.set_onclick(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        if presence & H_FOCUS != 0 {
+            let slots = Rc::clone(slots);
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                let msg = slots.borrow().focus.clone();
+                fire(&slots, msg);
+            });
+            el.set_onfocus(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        if presence & H_BLUR != 0 {
+            let slots = Rc::clone(slots);
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                let msg = slots.borrow().blur.clone();
+                fire(&slots, msg);
+            });
+            el.set_onblur(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        if presence & H_KEYDOWN != 0 {
+            let slots = Rc::clone(slots);
+            let closure = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+                move |ev: web_sys::KeyboardEvent| {
+                    let Some(on_keydown) = slots.borrow().keydown.clone() else {
+                        return;
+                    };
+                    let event = KeyEvent {
+                        key: ev.key(),
+                        code: ev.code(),
+                        ctrl: ev.ctrl_key(),
+                        shift: ev.shift_key(),
+                        alt: ev.alt_key(),
+                        meta: ev.meta_key(),
+                        repeat: ev.repeat(),
+                    };
+                    if let Some(msg) = on_keydown(event) {
+                        ev.prevent_default();
+                        fire(&slots, Some(msg));
+                    }
+                },
+            );
+            el.set_onkeydown(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        // A node with move or up handlers captures the pointer when it is pressed, so a drag keeps
+        // reporting to it after the pointer leaves the element.
+        if presence & (H_POINTER_DOWN | H_POINTER_MOVE | H_POINTER_UP) != 0 {
+            let slots = Rc::clone(slots);
+            let target = el.clone();
+            let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+                move |ev: web_sys::PointerEvent| {
+                    let (captures, on_down) = {
+                        let s = slots.borrow();
+                        (
+                            s.pointer_move.is_some() || s.pointer_up.is_some(),
+                            s.pointer_down.clone(),
+                        )
+                    };
+                    if captures {
+                        // Refused captures (the element is gone) only lose the drag, so ignore them.
+                        let _ = target.set_pointer_capture(ev.pointer_id());
+                    }
+                    if let Some(on_down) = on_down {
+                        let msg = on_down(pointer_event_from(&ev, &target));
+                        fire(&slots, msg);
+                    }
+                },
+            );
+            el.set_onpointerdown(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        if presence & H_POINTER_MOVE != 0 {
+            let slots = Rc::clone(slots);
+            let target = el.clone();
+            let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+                move |ev: web_sys::PointerEvent| {
+                    let handler = slots.borrow().pointer_move.clone();
+                    if let Some(handler) = handler {
+                        let msg = handler(pointer_event_from(&ev, &target));
+                        fire(&slots, msg);
+                    }
+                },
+            );
+            el.set_onpointermove(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        if presence & H_POINTER_UP != 0 {
+            let slots = Rc::clone(slots);
+            let target = el.clone();
+            let closure = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+                move |ev: web_sys::PointerEvent| {
+                    let handler = slots.borrow().pointer_up.clone();
+                    if let Some(handler) = handler {
+                        let msg = handler(pointer_event_from(&ev, &target));
+                        fire(&slots, msg);
+                    }
+                },
+            );
+            el.set_onpointerup(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+
+        if presence & H_PASTE != 0 {
+            let slots = Rc::clone(slots);
+            let closure = Closure::<dyn FnMut(web_sys::ClipboardEvent)>::new(
+                move |ev: web_sys::ClipboardEvent| {
+                    let text = ev
+                        .clipboard_data()
+                        .and_then(|data| data.get_data("text/plain").ok())
+                        .unwrap_or_default();
+                    let handler = slots.borrow().paste.clone();
+                    if let Some(handler) = handler {
+                        if let Some(msg) = handler(text) {
+                            ev.prevent_default();
+                            fire(&slots, Some(msg));
+                        }
+                    }
+                },
+            );
+            el.set_onpaste(Some(closure.as_ref().unchecked_ref()));
+            track_closure(node, closure);
+        }
+    }
+
+    // Form controls: `oninput` on text fields and selects, `onchange` on a checkbox in a label.
+    if presence & H_INPUT != 0 {
         if let Some(input_el) = node.dyn_ref::<web_sys::HtmlInputElement>() {
             let target = input_el.clone();
+            let slots = Rc::clone(slots);
             let closure = Closure::<dyn FnMut()>::new(move || {
-                dispatch(on_input(target.value()));
+                let msg = slots.borrow().input.as_ref().map(|f| f(target.value()));
+                fire(&slots, msg);
             });
             input_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
-            track_closure(&node, closure);
+            track_closure(node, closure);
         } else if let Some(ta_el) = node.dyn_ref::<web_sys::HtmlTextAreaElement>() {
             let target = ta_el.clone();
+            let slots = Rc::clone(slots);
             let closure = Closure::<dyn FnMut()>::new(move || {
-                dispatch(on_input(target.value()));
+                let msg = slots.borrow().input.as_ref().map(|f| f(target.value()));
+                fire(&slots, msg);
             });
             ta_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
-            track_closure(&node, closure);
+            track_closure(node, closure);
         } else if let Some(select_el) = node.dyn_ref::<web_sys::HtmlSelectElement>() {
             let target = select_el.clone();
+            let slots = Rc::clone(slots);
             let closure = Closure::<dyn FnMut()>::new(move || {
-                dispatch(on_input(target.value()));
+                let msg = slots.borrow().input.as_ref().map(|f| f(target.value()));
+                fire(&slots, msg);
             });
             select_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
-            track_closure(&node, closure);
+            track_closure(node, closure);
         }
     }
 
-    if let Some(on_toggle) = ui.meta.on_toggle.clone() {
-        let dispatch = Rc::clone(dispatch);
+    if presence & H_TOGGLE != 0 {
         if let Some(label_el) = node.dyn_ref::<web_sys::HtmlLabelElement>() {
             if let Some(input_el) = label_el
                 .query_selector("input[type=checkbox]")
@@ -1337,134 +1630,81 @@ where
             {
                 if let Some(checkbox_el) = input_el.dyn_ref::<web_sys::HtmlInputElement>() {
                     let target = checkbox_el.clone();
+                    let slots = Rc::clone(slots);
                     let closure = Closure::<dyn FnMut()>::new(move || {
-                        dispatch(on_toggle(target.checked()));
+                        let msg = slots.borrow().toggle.as_ref().map(|f| f(target.checked()));
+                        fire(&slots, msg);
                     });
                     checkbox_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
-                    track_closure(&node, closure);
+                    track_closure(node, closure);
                 }
             }
         }
     }
-
-    attach_focus_and_input_events(&ui.meta, dispatch, &node);
-
-    Ok(node)
 }
 
-/// Wires the focus, blur, keydown, pointer-down and paste handlers in `meta` to `node`. Shared
-/// by [`render_node`] and [`attach_listeners`] so that mounting and hydrating behave the same.
-fn attach_focus_and_input_events<Msg: Clone + 'static>(
-    meta: &NodeMeta<Msg>,
-    dispatch: &Rc<dyn Fn(Msg)>,
+/// Finds the slots `node` was given at attach time and writes `ui`'s handler values into them.
+/// Returns `false` when the node has none, so the caller attaches fresh closures instead.
+fn update_handler_slots<Msg: Clone + 'static>(
     node: &Node,
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+) -> bool {
+    let id = node_id(node);
+    let found: Option<SharedSlots<Msg>> = LIVE_CLOSURES.with(|m| {
+        m.borrow().get(&id).and_then(|entries| {
+            entries.iter().find_map(|entry| {
+                let any: &dyn std::any::Any = &**entry;
+                any.downcast_ref::<SharedSlots<Msg>>().cloned()
+            })
+        })
+    });
+    match found {
+        Some(slots) => {
+            slots.borrow_mut().update(&ui.meta, dispatch);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Brings `node`'s handlers up to date after a re-render whose handler set is unchanged (see
+/// [`presence_mask`]). The message values are updated in place, so no closure is re-created.
+fn rebind_handlers<Msg: Clone + 'static>(
+    node: &Node,
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
 ) {
-    let Some(el) = node.dyn_ref::<web_sys::HtmlElement>() else {
-        return;
-    };
+    if !update_handler_slots(node, ui, dispatch) {
+        let previous = take_node_closures(node);
+        attach_node_handlers(ui, dispatch, node);
+        drop(previous);
+    }
+}
 
-    if let Some(msg) = meta.on_focus.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
-        el.set_onfocus(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
+/// Attaches the handlers and AI attributes of `ui` to an element that already exists in the DOM,
+/// as hydration does for server-rendered markup.
+fn attach_listeners<Msg>(
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+    el: &Element,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    let node: &Node = el.as_ref();
+    attach_node_handlers(ui, dispatch, node);
+
+    if let Some(action) = &ui.meta.ai.action {
+        el.set_attribute("data-ai-action", action)?;
+        if !ui.meta.ai.params.is_empty() {
+            let params_json =
+                serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default();
+            el.set_attribute("data-ai-params", &params_json)?;
+        }
     }
 
-    if let Some(msg) = meta.on_blur.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
-        el.set_onblur(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
-    }
-
-    if let Some(on_keydown) = meta.on_keydown.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let closure =
-            Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
-                let event = KeyEvent {
-                    key: ev.key(),
-                    code: ev.code(),
-                    ctrl: ev.ctrl_key(),
-                    shift: ev.shift_key(),
-                    alt: ev.alt_key(),
-                    meta: ev.meta_key(),
-                    repeat: ev.repeat(),
-                };
-                if let Some(msg) = on_keydown(event) {
-                    ev.prevent_default();
-                    dispatch(msg);
-                }
-            });
-        el.set_onkeydown(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
-    }
-
-    // A node with move or up handlers captures the pointer when it is pressed, so a drag keeps
-    // reporting to it after the pointer leaves the element.
-    let captures = meta.on_pointer_move.is_some() || meta.on_pointer_up.is_some();
-    if meta.on_pointer_down.is_some() || captures {
-        let on_pointer_down = meta.on_pointer_down.clone();
-        let dispatch = Rc::clone(dispatch);
-        let target = el.clone();
-        let closure =
-            Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |ev: web_sys::PointerEvent| {
-                if captures {
-                    // Refused captures (the element is gone) only lose the drag, so ignore them.
-                    let _ = target.set_pointer_capture(ev.pointer_id());
-                }
-                if let Some(on_pointer_down) = on_pointer_down.as_ref() {
-                    if let Some(msg) = on_pointer_down(pointer_event_from(&ev, &target)) {
-                        dispatch(msg);
-                    }
-                }
-            });
-        el.set_onpointerdown(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
-    }
-
-    if let Some(on_pointer_move) = meta.on_pointer_move.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let target = el.clone();
-        let closure =
-            Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |ev: web_sys::PointerEvent| {
-                if let Some(msg) = on_pointer_move(pointer_event_from(&ev, &target)) {
-                    dispatch(msg);
-                }
-            });
-        el.set_onpointermove(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
-    }
-
-    if let Some(on_pointer_up) = meta.on_pointer_up.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let target = el.clone();
-        let closure =
-            Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |ev: web_sys::PointerEvent| {
-                if let Some(msg) = on_pointer_up(pointer_event_from(&ev, &target)) {
-                    dispatch(msg);
-                }
-            });
-        el.set_onpointerup(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
-    }
-
-    if let Some(on_paste) = meta.on_paste.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let closure = Closure::<dyn FnMut(web_sys::ClipboardEvent)>::new(
-            move |ev: web_sys::ClipboardEvent| {
-                let text = ev
-                    .clipboard_data()
-                    .and_then(|data| data.get_data("text/plain").ok())
-                    .unwrap_or_default();
-                if let Some(msg) = on_paste(text) {
-                    ev.prevent_default();
-                    dispatch(msg);
-                }
-            },
-        );
-        el.set_onpaste(Some(closure.as_ref().unchecked_ref()));
-        track_closure(node, closure);
-    }
+    Ok(())
 }
 
 // Keeps event `Closure`s alive for as long as their DOM node lives, keyed by
@@ -1481,10 +1721,35 @@ thread_local! {
     static LIVE_CLOSURES: LiveClosures = std::cell::RefCell::new(HashMap::new());
 }
 
-/// Stable identity for a DOM node across renders (unique for the node's
-/// lifetime), used to map closures for cleanup.
+/// Stable identity for a DOM node across renders, used to map its closures for cleanup.
+///
+/// This is a number stored on the JavaScript object, not the address of the Rust `Node`. A `Node`
+/// is moved when it is returned from `render_node` and when it is stored in a `MountedNode`, so an
+/// address-based key would differ between attaching a handler and releasing it.
 fn node_id(node: &Node) -> u64 {
-    (node as *const Node as u64) ^ ((node.node_type() as u64) << 32).wrapping_mul(0x9e3779b1)
+    thread_local! {
+        static NEXT_UID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    let key = wasm_bindgen::JsValue::from_str("__appfront_uid");
+    let target: &wasm_bindgen::JsValue = node.as_ref();
+    if let Ok(existing) = js_sys::Reflect::get(target, &key) {
+        if let Some(uid) = existing.as_f64() {
+            return uid as u64;
+        }
+    }
+    let uid = NEXT_UID.with(|next| {
+        let uid = next.get() + 1;
+        next.set(uid);
+        uid
+    });
+    let _ = js_sys::Reflect::set(target, &key, &wasm_bindgen::JsValue::from_f64(uid as f64));
+    uid
+}
+
+/// Removes and returns every closure tracked for `node`, without dropping them.
+fn take_node_closures(node: &Node) -> Vec<Box<dyn std::any::Any>> {
+    let id = node_id(node);
+    LIVE_CLOSURES.with(|m| m.borrow_mut().remove(&id).unwrap_or_default())
 }
 
 /// The appfront pointer event for a DOM pointer event dispatched to `target`, the element that
@@ -1505,13 +1770,13 @@ fn pointer_event_from(ev: &web_sys::PointerEvent, target: &web_sys::HtmlElement)
 }
 
 fn track_closure<T: ?Sized + 'static>(node: &Node, closure: Closure<T>) {
+    track_value(node, Box::new(closure));
+}
+
+/// Keeps `value` (a closure, or the slots its closures read) alive until `node` is released.
+fn track_value(node: &Node, value: Box<dyn std::any::Any>) {
     let id = node_id(node);
-    LIVE_CLOSURES.with(|m| {
-        m.borrow_mut()
-            .entry(id)
-            .or_default()
-            .push(Box::new(closure))
-    });
+    LIVE_CLOSURES.with(|m| m.borrow_mut().entry(id).or_default().push(value));
 }
 
 /// Drops and forgets every event `Closure` tracked for `node`, so its
@@ -1842,83 +2107,4 @@ where
     }
 
     Ok(needs_hydration)
-}
-
-/// Attach event listeners (and AI attributes) to a single existing element.
-fn attach_listeners<Msg>(
-    ui: &UITree<Msg>,
-    dispatch: &Rc<dyn Fn(Msg)>,
-    el: &Element,
-) -> Result<(), wasm_bindgen::JsValue>
-where
-    Msg: Clone + 'static,
-{
-    if let Some(msg) = ui.meta.on_click.clone() {
-        let dispatch = Rc::clone(dispatch);
-        let closure = Closure::<dyn FnMut()>::new(move || dispatch(msg.clone()));
-        let html_el: &web_sys::HtmlElement = el
-            .dyn_ref::<web_sys::HtmlElement>()
-            .ok_or_else(|| wasm_bindgen::JsValue::from_str("element is not an HtmlElement"))?;
-        html_el.set_onclick(Some(closure.as_ref().unchecked_ref()));
-        track_closure(&el.clone().into(), closure);
-    }
-
-    if let Some(on_input) = ui.meta.on_input.clone() {
-        let dispatch = Rc::clone(dispatch);
-        if let Some(input_el) = el.dyn_ref::<web_sys::HtmlInputElement>() {
-            let target = input_el.clone();
-            let closure = Closure::<dyn FnMut()>::new(move || {
-                dispatch(on_input(target.value()));
-            });
-            input_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
-            track_closure(&el.clone().into(), closure);
-        } else if let Some(ta_el) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
-            let target = ta_el.clone();
-            let closure = Closure::<dyn FnMut()>::new(move || {
-                dispatch(on_input(target.value()));
-            });
-            ta_el.set_oninput(Some(closure.as_ref().unchecked_ref()));
-            track_closure(&el.clone().into(), closure);
-        } else if let Some(select_el) = el.dyn_ref::<web_sys::HtmlSelectElement>() {
-            let target = select_el.clone();
-            let closure = Closure::<dyn FnMut()>::new(move || {
-                dispatch(on_input(target.value()));
-            });
-            select_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
-            track_closure(&el.clone().into(), closure);
-        }
-    }
-
-    if let Some(on_toggle) = ui.meta.on_toggle.clone() {
-        let dispatch = Rc::clone(dispatch);
-        if let Some(label_el) = el.dyn_ref::<web_sys::HtmlLabelElement>() {
-            if let Some(input_el) = label_el
-                .query_selector("input[type=checkbox]")
-                .ok()
-                .flatten()
-            {
-                if let Some(checkbox_el) = input_el.dyn_ref::<web_sys::HtmlInputElement>() {
-                    let target = checkbox_el.clone();
-                    let closure = Closure::<dyn FnMut()>::new(move || {
-                        dispatch(on_toggle(target.checked()));
-                    });
-                    checkbox_el.set_onchange(Some(closure.as_ref().unchecked_ref()));
-                    track_closure(&el.clone().into(), closure);
-                }
-            }
-        }
-    }
-
-    attach_focus_and_input_events(&ui.meta, dispatch, &el.clone().into());
-
-    if let Some(action) = &ui.meta.ai.action {
-        el.set_attribute("data-ai-action", action)?;
-        if !ui.meta.ai.params.is_empty() {
-            let params_json =
-                serde_json::to_string(&json_obj(&ui.meta.ai.params)).unwrap_or_default();
-            el.set_attribute("data-ai-params", &params_json)?;
-        }
-    }
-
-    Ok(())
 }
