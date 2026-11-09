@@ -32,3 +32,14 @@ tui = ["dep:tpt-appfront-tui"]
 mcp = ["dep:tpt-appfront-mcp"]
 test = ["dep:tpt-appfront-test"]
 templates = ["dep:tpt-appfront-templates"]
+
+[dev-dependencies]
+# Enables the umbrella features for its own tests, so the README example resolves as written.
+tpt-appfront = { path = ".", features = ["test"] }
+# The cookbook tests (tests/cookbook.rs) exercise these without needing extra features.
+tpt-appfront-test = { path = "../tpt-appfront-test", version = "0.1" }
+tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1" }
+
+[[bench]]
+name = "perf"
+harness = false

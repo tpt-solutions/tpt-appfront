@@ -27,7 +27,9 @@ pub use tpt_appfront_core as core;
 
 /// Re-exports of the core types and macros most apps use.
 pub mod prelude {
-    pub use tpt_appfront_core::{class, component, view, FormState, Router, Signal, Store, UITree};
+    pub use tpt_appfront_core::{
+        class, component, view, ContainerBuilder, FormState, Router, Signal, Store, UITree,
+    };
 }
 
 #[cfg(feature = "ai-schema")]
