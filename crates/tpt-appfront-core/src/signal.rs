@@ -22,7 +22,7 @@ trait Trackable {
     fn unsubscribe(&self, effect_ptr: *const EffectNode);
 }
 
-impl<T> Trackable for Rc<RefCell<SignalInner<T>>> {
+impl<T> Trackable for RefCell<SignalInner<T>> {
     fn unsubscribe(&self, effect_ptr: *const EffectNode) {
         self.borrow_mut()
             .subscribers
@@ -294,7 +294,11 @@ impl<T: 'static> Signal<T> {
                         .borrow_mut()
                         .subscribers
                         .push(Rc::downgrade(node));
-                    node.deps.borrow_mut().push(Rc::new(Rc::clone(&self.inner)));
+                    // `RefCell<SignalInner<T>>` implements `Trackable`, so this
+                    // unsizes the existing Rc instead of allocating a second one per dependency.
+                    node.deps
+                        .borrow_mut()
+                        .push(Rc::clone(&self.inner) as Rc<dyn Trackable>);
                 }
             }
         });
@@ -439,11 +443,15 @@ pub fn create_effect(f: impl FnMut() + 'static) -> EffectHandle {
 
 fn run_effect(node: &Rc<EffectNode>) {
     node.rank.set(0);
-    let stale_deps = node.deps.replace(Vec::new());
+    let mut stale_deps = node.deps.replace(Vec::new());
     let effect_ptr: *const EffectNode = Rc::as_ptr(node);
     for dep in &stale_deps {
         dep.unsubscribe(effect_ptr);
     }
+    // Keep the emptied buffer for this run's dependencies, so an effect that re-runs does not
+    // regrow its dependency list from nothing every time.
+    stale_deps.clear();
+    node.deps.replace(stale_deps);
 
     // Run (and clear) any cleanups registered during the previous run before
     // re-running the effect — SolidJS-style `on_cleanup` teardown.
