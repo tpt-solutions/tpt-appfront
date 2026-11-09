@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `generate --llm` chooses the model from the provider's live model list when `--model` is omitted, and `generate --list-models` prints that list. Adds GLM, DeepSeek and Qwen. No model ids are pinned any more.
+- `tpt_appfront_test::assert_accessible` panics with every accessibility issue. The canvas and TUI starters include a test that calls it.
+- `tpt_appfront_test::parity` (feature `parity`): reports which words HTML, the terminal and the AI schema drop, and `assert_parity` fails when HTML or the terminal drop required text.
+- `tpt-appfront doctor` checks rustc against the workspace's `rust-version`, and the wasm test runner against `Cargo.lock`.
 - `tpt-appfront` (new umbrella crate): feature flags for each backend and a `prelude`. `view!`, `rsx!` and `#[component]` resolve their core paths through `proc-macro-crate`, so depending on the umbrella alone works.
 - `tpt-appfront-test` (new crate): a headless `Harness` (find, click, type, press key, assert emitted messages) and `lint_tree`, an accessibility and AI-affordance linter.
 - `tpt-appfront-cli`: `generate --llm` providers `gemini`, `groq`, `mistral`, `deepseek`, `together`, `lmstudio` and `azure-openai` (`--base-url` required).
