@@ -37,7 +37,7 @@ use tpt_appfront_core::ui_tree::{
 use tpt_appfront_core::KeyedDiff;
 use tpt_appfront_core::{
     apply_auto_virtual_scroll, create_effect, reconcile_keys, HydrationPayload, KeyEvent, NodeKind,
-    NodeMeta, PointerEvent, Router, UITree,
+    NodeMeta, PointerEvent, Router, UITree, VirtualScroll,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -423,6 +423,9 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
                 })
             })
             .collect(),
+        // Windowed lists: the rendered window is the only record, taken from the live DOM so that
+        // unmounting releases the closures of the visible rows.
+        (NodeKind::List { .. }, Some(el)) => dom_records(el.as_ref()),
         _ => Vec::new(),
     };
     MountedNode {
@@ -564,6 +567,11 @@ fn subtree_hash<Msg>(ui: &UITree<Msg>) -> Option<u64> {
 
 fn hash_node<Msg>(ui: &UITree<Msg>, hasher: &mut impl std::hash::Hasher) -> Option<()> {
     use std::hash::Hash;
+    // A windowed node's rendered rows depend on its scroll position, which is not hashed. Any
+    // subtree that contains one must be reconciled, including its ancestors.
+    if ui.meta.virtual_scroll.is_some() {
+        return None;
+    }
     ui.meta.key.hash(hasher);
     ui.meta.class.hash(hasher);
     ui.meta.attrs.hash(hasher);
@@ -697,21 +705,40 @@ where
                     )?;
                 }
                 NodeKind::List { items: new_items } => {
-                    if new_ui.meta.virtual_scroll.is_some() {
+                    if let Some(vs) = new_ui.meta.virtual_scroll {
                         // Windowed lists have no mounted record per item, so the keyed diff cannot
-                        // match them. They go to render_with's full unmount/re-mount path.
-                        return Err(wasm_bindgen::JsValue::from_str(
-                            "windowed list re-render requires a full replace",
-                        ));
+                        // match them. Their records are the live DOM children, so release those
+                        // closures, rebuild the visible window, and record the new children.
+                        for child in mounted.children.drain(..) {
+                            child.unmount();
+                        }
+                        while let Some(child) = el.first_child() {
+                            el.remove_child(&child)?;
+                        }
+                        el.set_attribute(
+                            "style",
+                            &format!("overflow-y:auto;height:{}px", vs.viewport_height),
+                        )?;
+                        render_window_body(document, el, new_items, vs, dispatch)?;
+                        mounted.children = dom_records(el.as_ref());
+                    } else {
+                        // A list that changes between windowed and plain while it has children
+                        // cannot be diffed: its records do not match its DOM. Full replace.
+                        if mounted.children.iter().any(|child| child.key.is_none()) {
+                            return Err(wasm_bindgen::JsValue::from_str(
+                                "list layout changed; full replace required",
+                            ));
+                        }
+                        let _ = el.remove_attribute("style");
+                        reconcile_children(
+                            document,
+                            dispatch,
+                            el,
+                            &mut mounted.children,
+                            new_items,
+                            Some(list_key),
+                        )?;
                     }
-                    reconcile_children(
-                        document,
-                        dispatch,
-                        el,
-                        &mut mounted.children,
-                        new_items,
-                        Some(list_key),
-                    )?;
                 }
                 NodeKind::Heading { level, text } => {
                     let tag = format!("h{}", (*level).clamp(1, 6));
@@ -1176,6 +1203,45 @@ fn list_key<Msg>(item: &UITree<Msg>, index: usize) -> String {
     item.meta.key.clone().unwrap_or_else(|| index.to_string())
 }
 
+/// Fills a windowed list's `ul` with the rows its scroll window shows, between spacers that keep the
+/// full height. Shared by mount and by re-render.
+fn render_window_body<Msg: Clone + 'static>(
+    document: &Document,
+    el: &Element,
+    items: &[UITree<Msg>],
+    vs: VirtualScroll,
+    dispatch: &Rc<dyn Fn(Msg)>,
+) -> Result<(), wasm_bindgen::JsValue> {
+    let range = vs.visible_range(items.len());
+    append_spacer(document, el, range.top_spacer)?;
+    for (i, item) in items.iter().enumerate().take(range.end).skip(range.start) {
+        let li = document.create_element("li")?;
+        li.set_attribute("data-key", &list_key(item, i))?;
+        let item_node = render_node(document, item, dispatch)?;
+        li.append_child(&item_node)?;
+        el.append_child(&li)?;
+    }
+    append_spacer(document, el, range.bottom_spacer)
+}
+
+/// Records for the live DOM children of `node`, each with its own children. Unmounting these
+/// records releases every event closure below `node`. Used where the UI tree has no record per
+/// child, such as a windowed list.
+fn dom_records(node: &Node) -> Vec<MountedNode> {
+    let children = node.child_nodes();
+    (0..children.length())
+        .filter_map(|i| children.item(i))
+        .map(|child| MountedNode {
+            children: dom_records(&child),
+            node: child,
+            handles: Vec::new(),
+            key: None,
+            handlers: 0,
+            hash: None,
+        })
+        .collect()
+}
+
 fn render_node<Msg>(
     document: &Document,
     ui: &UITree<Msg>,
@@ -1200,16 +1266,7 @@ where
                     "style",
                     &format!("overflow-y:auto;height:{}px", vs.viewport_height),
                 )?;
-                let range = vs.visible_range(items.len());
-                append_spacer(document, &el, range.top_spacer)?;
-                for (i, item) in items.iter().enumerate().take(range.end).skip(range.start) {
-                    let li = document.create_element("li")?;
-                    li.set_attribute("data-key", &list_key(item, i))?;
-                    let item_node = render_node(document, item, dispatch)?;
-                    li.append_child(&item_node)?;
-                    el.append_child(&li)?;
-                }
-                append_spacer(document, &el, range.bottom_spacer)?;
+                render_window_body(document, &el, items, vs, dispatch)?;
             } else {
                 // Items are bare nodes that carry their key in `data-key`. The keyed diff in
                 // `reconcile_children` reads that attribute and reuses the node, so a list
