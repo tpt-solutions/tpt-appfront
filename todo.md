@@ -301,7 +301,11 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 - [x] Cookbook (`docs/cookbook.md`): nine recipes, each a passing test in `crates/tpt-appfront/tests/cookbook.rs`
 - [x] Migration guides for React, Leptos and Dioxus (`docs/migration/`). Framework-side snippets are not compiled here and say so
 - [x] Benchmarks: `cargo bench -p tpt-appfront --bench perf`, with a dependency-free runner; results and caveats in `docs/benchmarks.md`
-- [ ] Investigate static hoisting: on a 5-node subtree the `view!` version is ~1.7× slower than the builder, because the cached tree is cloned on each call. Measure larger static subtrees, and consider returning a cheaper shared handle. Until then, do not claim a speedup for hoisting
+- [x] Investigate static hoisting. Result: the cache clones the stored tree on every call, and the clone makes as many allocations as rebuilding (501 vs 508 for 500 text nodes), so it saves no allocations. Timing flipped sign between sessions, so no speed claim holds. Default codegen is unchanged. Recorded in `docs/benchmarks.md`
+- [ ] Shared static trees: make a cached subtree cost one `Rc` clone instead of a deep copy. This needs an AST change (children stored as shared handles), touching every backend. It is the only route where hoisting can clearly win. Do not start without a benchmark that shows the gain
+- [x] Allocation budgets as a regression test (`crates/tpt-appfront/tests/alloc_budget.rs`). Deterministic, unlike timing, so it can run in CI
+- [x] Signal effects: buffer reuse and no double `Rc` per dependency. 100 effects per set: 212 → 12 allocations
+- [x] `lint_tree`: borrow keys instead of cloning them. 1,000 keyed rows: 2,019 → 19 allocations, about 3× faster
 - [ ] Competitor comparison benchmarks (React, Leptos, Dioxus on the same workload and machine). Not started; no published claims until then
 
 ### Deferred ideas
