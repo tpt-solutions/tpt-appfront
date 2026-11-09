@@ -67,6 +67,8 @@ struct MountedNode {
     key: Option<String>,
     /// `presence_mask` of the handlers this node was mounted or last reconciled with.
     handlers: u32,
+    /// `subtree_hash` of the subtree as last reconciled, or `None` when it is not skippable.
+    hash: Option<u64>,
 }
 
 impl MountedNode {
@@ -400,6 +402,7 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
                             children: Vec::new(),
                             key: None,
                             handlers: 0,
+                            hash: None,
                         })
                     })
                     .collect()
@@ -426,6 +429,7 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
         children,
         key: None,
         handlers: presence_mask(&ui.meta),
+        hash: subtree_hash(ui),
     }
 }
 
@@ -515,12 +519,126 @@ where
     render_with(container, view, dispatch, false)
 }
 
+/// Diffs `new_ui` against the live `mounted` record. A subtree whose fingerprint has not changed
+/// since the last render is skipped: its DOM already shows it, so only its handler messages are
+/// refreshed (see [`subtree_hash`]). Everything else goes through [`reconcile_node_inner`].
+fn reconcile_node<Msg>(
+    document: &Document,
+    dispatch: &Rc<dyn Fn(Msg)>,
+    mounted: &mut MountedNode,
+    new_ui: &UITree<Msg>,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    Msg: Clone + 'static,
+{
+    let hash = subtree_hash(new_ui);
+    if let (Some(hash), Some(previous)) = (hash, mounted.hash) {
+        if hash == previous && mounted.node.dyn_ref::<Element>().is_some() {
+            rebind_subtree(mounted, new_ui, dispatch);
+            return Ok(());
+        }
+    }
+    reconcile_node_inner(document, dispatch, mounted, new_ui)?;
+    mounted.hash = hash;
+    Ok(())
+}
+
+/// A fingerprint of everything a re-render would write for `ui`, or `None` when the subtree must
+/// always be reconciled. Handler messages are closures, so they are not part of the fingerprint.
+/// Their presence is, because it decides which closures exist.
+///
+/// Not skippable: inputs, text areas, selects, checkboxes and radios (their value or checked state
+/// lives in the DOM, and a re-render restores it), portals, data grids and windowed lists (no
+/// one-to-one mounted records), and any subtree that contains one of these.
+fn subtree_hash<Msg>(ui: &UITree<Msg>) -> Option<u64> {
+    use std::hash::Hasher;
+    if ui.meta.virtual_scroll.is_some() {
+        return None;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_node(ui, &mut hasher)?;
+    Some(hasher.finish())
+}
+
+fn hash_node<Msg>(ui: &UITree<Msg>, hasher: &mut impl std::hash::Hasher) -> Option<()> {
+    use std::hash::Hash;
+    ui.meta.key.hash(hasher);
+    ui.meta.class.hash(hasher);
+    ui.meta.attrs.hash(hasher);
+    ui.meta.ai.action.hash(hasher);
+    ui.meta.ai.params.hash(hasher);
+    ui.meta.ai.description.hash(hasher);
+    ui.meta.ai.title.hash(hasher);
+    presence_mask(&ui.meta).hash(hasher);
+    match &ui.kind {
+        NodeKind::Container { children } => {
+            0u8.hash(hasher);
+            children.len().hash(hasher);
+            for child in children {
+                hash_node(child, hasher)?;
+            }
+        }
+        NodeKind::List { items } => {
+            1u8.hash(hasher);
+            items.len().hash(hasher);
+            for item in items {
+                hash_node(item, hasher)?;
+            }
+        }
+        NodeKind::Heading { level, text } => {
+            2u8.hash(hasher);
+            level.hash(hasher);
+            text.hash(hasher);
+        }
+        NodeKind::Text { text } => {
+            3u8.hash(hasher);
+            text.hash(hasher);
+        }
+        NodeKind::Button { label } => {
+            4u8.hash(hasher);
+            label.hash(hasher);
+        }
+        NodeKind::Image { src, alt } => {
+            5u8.hash(hasher);
+            src.hash(hasher);
+            alt.hash(hasher);
+        }
+        NodeKind::Link { href, text } => {
+            6u8.hash(hasher);
+            href.hash(hasher);
+            text.hash(hasher);
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+/// Refreshes the handler messages of a subtree that was skipped. The subtree's fingerprint matched,
+/// so its records and `ui` have the same shape.
+fn rebind_subtree<Msg: Clone + 'static>(
+    mounted: &MountedNode,
+    ui: &UITree<Msg>,
+    dispatch: &Rc<dyn Fn(Msg)>,
+) {
+    if presence_mask(&ui.meta) != 0 {
+        rebind_handlers(&mounted.node, ui, dispatch);
+    }
+    match &ui.kind {
+        NodeKind::Container { children } | NodeKind::List { items: children } => {
+            for (record, child) in mounted.children.iter().zip(children) {
+                rebind_subtree(record, child, dispatch);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Diffs `new_ui` against the live `mounted` record and updates the DOM *in
 /// place*: reused nodes keep their identity (and listeners), only changed
 /// attributes/text/children are touched, and removed subtrees are unmounted so
 /// their listeners/handles are released. Returns `Err` if the root kind of
 /// `new_ui` is incompatible with the mounted node (caller should full-replace).
-fn reconcile_node<Msg>(
+fn reconcile_node_inner<Msg>(
     document: &Document,
     dispatch: &Rc<dyn Fn(Msg)>,
     mounted: &mut MountedNode,
@@ -875,6 +993,7 @@ where
                 children: Vec::new(),
                 key: None,
                 handlers: 0,
+                hash: None,
             });
         }
     }
