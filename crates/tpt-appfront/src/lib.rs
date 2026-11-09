@@ -12,6 +12,7 @@
 //! | `server`    | [`server`]              | Axum smart router                          |
 //! | `mcp`       | [`mcp`]                 | MCP server over stdio                      |
 //! | `test`      | [`test`]                | headless test harness and linter           |
+//! | `templates` | [`templates`]           | prebuilt login, dashboard and settings UI  |
 //!
 //! The `webview` backend is not included: it is `publish = false`, and a published crate
 //! cannot depend on an unpublished one. Use `tpt-appfront-webview` directly, from a
@@ -54,6 +55,9 @@ pub use tpt_appfront_mcp as mcp;
 
 #[cfg(feature = "test")]
 pub use tpt_appfront_test as test;
+
+#[cfg(feature = "templates")]
+pub use tpt_appfront_templates as templates;
 
 #[cfg(test)]
 mod tests {

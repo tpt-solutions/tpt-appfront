@@ -19,6 +19,7 @@ tpt-appfront-server = { path = "../tpt-appfront-server", version = "0.1", option
 tpt-appfront-tui = { path = "../tpt-appfront-tui", version = "0.1", optional = true }
 tpt-appfront-mcp = { path = "../tpt-appfront-mcp", version = "0.1", optional = true }
 tpt-appfront-test = { path = "../tpt-appfront-test", version = "0.1", optional = true }
+tpt-appfront-templates = { path = "../tpt-appfront-templates", version = "0.1", optional = true }
 
 [features]
 default = []
@@ -30,3 +31,4 @@ server = ["dep:tpt-appfront-server"]
 tui = ["dep:tpt-appfront-tui"]
 mcp = ["dep:tpt-appfront-mcp"]
 test = ["dep:tpt-appfront-test"]
+templates = ["dep:tpt-appfront-templates"]
