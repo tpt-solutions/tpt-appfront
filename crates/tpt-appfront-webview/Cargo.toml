@@ -19,7 +19,7 @@ arboard = "3"
 dirs = "5"
 notify-rust = "4"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
-keyring = "3"
+keyring = "4"
 global-hotkey = "0.9"
 crossbeam-channel = "0.5"
 fs4 = "0.9"
