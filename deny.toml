@@ -25,6 +25,11 @@ ignore = [
     # protocol .xml files, never untrusted network input)
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # zbus 5 / zvariant 5 unmaintained (Linux accessibility + desktop portal
+    # stack via accesskit_unix, ashpd, rfd). No newer zbus release drops them yet.
+    "RUSTSEC-2026-0370", # zvariant
+    "RUSTSEC-2026-0371", # zbus_names
+    "RUSTSEC-2026-0372", # zvariant_derive
 ]
 
 [licenses]
@@ -44,6 +49,8 @@ allow = [
     # epaint_default_fonts (bundled fonts in egui/eframe via tpt-appfront-canvas)
     "OFL-1.1",
     "Ubuntu-font-1.0",
+    # webpki-roots (Mozilla CA bundle data; ureq dep of tpt-appfront-cli)
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
