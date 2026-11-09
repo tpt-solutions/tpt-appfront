@@ -396,6 +396,17 @@ fn record_mount_tree<Msg>(ui: &UITree<Msg>, node: &Node) -> MountedNode {
                     .collect()
             })
             .unwrap_or_default(),
+        // Non-windowed lists: one record per item node, matching `render_node` (items are bare
+        // children of the `ul`). Windowed lists add spacers and are reconciled separately.
+        (NodeKind::List { items }, Some(el)) if ui.meta.virtual_scroll.is_none() => items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item_ui)| {
+                el.child_nodes()
+                    .get(i as u32)
+                    .map(|item_node| record_mount_tree(item_ui, &item_node))
+            })
+            .collect(),
         _ => Vec::new(),
     };
     MountedNode {
@@ -542,12 +553,9 @@ where
                 }
                 NodeKind::List { items: new_items } => {
                     if new_items.len() != mounted.children.len() {
-                        // Fresh mounts wrap every item in an <li data-key=...>;
-                        // the generic keyed diff below renders bare item nodes,
-                        // so it cannot append or remove list entries safely.
-                        // A count change is the rare structural case — hand it
-                        // to render_with's full unmount/re-mount path, which
-                        // re-creates the wrappers and rebinds item listeners.
+                        // The keyed diff below can insert and remove items, but adding or
+                        // removing entries has no test coverage yet. Until it does, a count
+                        // change goes to render_with's full unmount/re-mount path.
                         return Err(wasm_bindgen::JsValue::from_str(
                             "list item count changed; full replace required",
                         ));
@@ -702,6 +710,12 @@ where
             next.push(existing);
         } else {
             let node = render_node(document, new_child, dispatch)?;
+            // A keyed child must carry its key on the node, or the next diff cannot match it.
+            if key_fn.is_some() {
+                if let Some(el) = node.dyn_ref::<Element>() {
+                    el.set_attribute("data-key", key)?;
+                }
+            }
             let mounted = record_mount_tree(new_child, &node);
             position_child(parent, &node, i)?;
             next.push(mounted);
@@ -1046,12 +1060,15 @@ where
                 }
                 append_spacer(document, &el, range.bottom_spacer)?;
             } else {
+                // Items are bare nodes that carry their key in `data-key`. The keyed diff in
+                // `reconcile_children` reads that attribute and reuses the node, so a list
+                // with a wrapper per item would not match what reconcile expects.
                 for (i, item) in items.iter().enumerate() {
-                    let li = document.create_element("li")?;
-                    li.set_attribute("data-key", &list_key(item, i))?;
                     let item_node = render_node(document, item, dispatch)?;
-                    li.append_child(&item_node)?;
-                    el.append_child(&li)?;
+                    if let Some(item_el) = item_node.dyn_ref::<Element>() {
+                        item_el.set_attribute("data-key", &list_key(item, i))?;
+                    }
+                    el.append_child(&item_node)?;
                 }
             }
             el.into()
