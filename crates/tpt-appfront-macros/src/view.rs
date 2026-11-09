@@ -784,12 +784,13 @@ fn gen_node_stmt(
         // Recurse with `parent_static = true` so the inner subtree is built
         // inline (cached wholesale by this outer `static_node` call).
         let inner = gen_node_stmt(node, &inner_parent, true, id)?;
+        let core = crate::core_path();
         return Ok(quote! {
             #parent.with({
                 static #sentinel: u8 = 0;
                 let __appfront_id = (&#sentinel as *const u8) as u64;
-                tpt_appfront_core::static_tree::static_node(__appfront_id, || {
-                    let mut #inner_parent = tpt_appfront_core::ContainerBuilder::new();
+                #core::static_tree::static_node(__appfront_id, || {
+                    let mut #inner_parent = #core::ContainerBuilder::new();
                     #inner
                     #inner_parent
                         .into_only_child()
@@ -1076,12 +1077,13 @@ pub fn expand(input: TokenStream) -> Result<TokenStream, Error> {
         } else {
             quote! { #(#inner)* }
         };
+        let core = crate::core_path();
         return Ok(quote! {
             {
                 static #sentinel: u8 = 0;
                 let __appfront_id = (&#sentinel as *const u8) as u64;
-                let mut __ui = tpt_appfront_core::static_tree::static_node(__appfront_id, || {
-                    tpt_appfront_core::UITree::container(|#root_param| { #body })
+                let mut __ui = #core::static_tree::static_node(__appfront_id, || {
+                    #core::UITree::container(|#root_param| { #body })
                 });
                 #root_stmts
                 __ui

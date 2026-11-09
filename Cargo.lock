@@ -6194,6 +6194,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tpt-appfront"
+version = "0.1.1"
+dependencies = [
+ "tpt-appfront-ai-schema",
+ "tpt-appfront-canvas",
+ "tpt-appfront-core",
+ "tpt-appfront-dom",
+ "tpt-appfront-html",
+ "tpt-appfront-mcp",
+ "tpt-appfront-server",
+ "tpt-appfront-test",
+ "tpt-appfront-tui",
+]
+
+[[package]]
 name = "tpt-appfront-ai-schema"
 version = "0.1.1"
 dependencies = [
@@ -6262,6 +6277,7 @@ dependencies = [
 name = "tpt-appfront-macros"
 version = "0.1.1"
 dependencies = [
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -6294,6 +6310,13 @@ dependencies = [
 
 [[package]]
 name = "tpt-appfront-templates"
+version = "0.1.1"
+dependencies = [
+ "tpt-appfront-core",
+]
+
+[[package]]
+name = "tpt-appfront-test"
 version = "0.1.1"
 dependencies = [
  "tpt-appfront-core",

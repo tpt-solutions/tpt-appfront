@@ -37,6 +37,32 @@ use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type};
 
+/// The path the expansion uses to reach `tpt-appfront-core` items, as the *calling* crate sees it.
+///
+/// Expansions must name a path that exists in the crate being compiled, so this asks
+/// `proc-macro-crate` how that crate depends on core: directly as `tpt-appfront-core` (possibly
+/// renamed), or through the `tpt-appfront` umbrella's `core` re-export. Falls back to
+/// `::tpt_appfront_core` when neither is found, which is the historical behaviour.
+pub(crate) fn core_path() -> TokenStream2 {
+    use proc_macro_crate::{crate_name, FoundCrate};
+
+    let by_name = |found: FoundCrate| match found {
+        FoundCrate::Itself => quote! { crate },
+        FoundCrate::Name(name) => {
+            let id = format_ident!("{}", name);
+            quote! { ::#id }
+        }
+    };
+    if let Ok(found) = crate_name("tpt-appfront-core") {
+        return by_name(found);
+    }
+    if let Ok(found) = crate_name("tpt-appfront") {
+        let umbrella = by_name(found);
+        return quote! { #umbrella::core };
+    }
+    quote! { ::tpt_appfront_core }
+}
+
 mod view;
 
 #[proc_macro_attribute]
@@ -168,10 +194,11 @@ fn expand(input: ItemFn, memo: bool) -> syn::Result<proc_macro2::TokenStream> {
         } else {
             (quote! { () }, quote! { () }, quote! {})
         };
+        let core = core_path();
         quote! {
             static __appfront_memo_sentinel: u8 = 0;
             let __appfront_memo_id = (&__appfront_memo_sentinel as *const u8) as u64;
-            tpt_appfront_core::memoize(
+            #core::memoize(
                 __appfront_memo_id,
                 #key_expr,
                 move |#key_pat| {
