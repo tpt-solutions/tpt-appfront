@@ -789,6 +789,13 @@ fn dev(
     devtools: bool,
     project: &Path,
 ) -> anyhow::Result<()> {
+    // Check the web toolchain before the long-running dev server starts, not after.
+    if web {
+        preflight(project, &["dom"], false)?;
+    }
+    if desktop_webview {
+        preflight(project, &["webview"], false)?;
+    }
     match (desktop, web, tui, desktop_webview) {
         (true, true, _, _)
         | (true, _, true, _)

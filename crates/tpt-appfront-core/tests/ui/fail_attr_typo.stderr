@@ -1,0 +1,5 @@
+error: `<Button>` does not accept a `on_clcik` attribute — did you mean `on_click`?; valid attributes: on_click, class, key
+  --> tests/ui/fail_attr_typo.rs:12:21
+   |
+12 |             <Button on_clcik={Msg::Increment}>"+1"</Button>
+   |                     ^^^^^^^^

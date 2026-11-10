@@ -756,9 +756,23 @@ fn gen_node_stmt(
     for (name, _) in &node.attrs {
         let allowed = allowed_for(&tag);
         if !allowed.contains(&name.to_string().as_str()) {
+            // Suggest the closest valid attribute when the name is a likely typo.
+            let name_str = name.to_string();
+            let hint = allowed
+                .iter()
+                .map(|a| (edit_distance(&name_str, a), *a))
+                .filter(|(d, _)| *d <= 2)
+                .min_by_key(|(d, _)| *d)
+                .map(|(_, a)| format!(" — did you mean `{a}`?"))
+                .unwrap_or_default();
+            let valid = if allowed.is_empty() {
+                "this tag takes no attributes".to_string()
+            } else {
+                format!("valid attributes: {}", allowed.join(", "))
+            };
             return Err(Error::new(
                 name.span(),
-                format!("`<{}>` does not accept a `{name}` attribute", tag),
+                format!("`<{tag}>` does not accept a `{name}` attribute{hint}; {valid}"),
             ));
         }
     }

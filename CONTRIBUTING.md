@@ -33,6 +33,15 @@ cargo clippy -p tpt-appfront-dom -p tpt-appfront-canvas --target wasm32-unknown-
 
 `just ci` runs the same set when [`just`](https://github.com/casey/just) is installed.
 
+## Dependency policy
+
+The CI `deny` job runs `cargo deny check`, which enforces `deny.toml`:
+
+- **No Apache-2.0-only crates.** Apache-2.0 stays in the allow list, so dual-licensed crates pass. Crates whose only license is Apache-2.0 are banned by name. Before adding a dependency, check its license with `cargo info <crate>`.
+- **No exceptions by default.** An exception needs a `wrappers` list naming the only crates allowed to depend on the banned crate, a comment explaining why it can't be removed, and a note in the pull request for review.
+- **Platform-only dependencies stay out of other platforms.** Cargo-deny merges target-specific graphs, so a dependency gated to one platform can still count everywhere. Check the merged graph with `cargo deny check`, not only the host build.
+- **Run the check before opening a pull request:** `cargo deny check`. It needs the advisory database, so it may take a minute the first time.
+
 ## Licence
 
 Issues you file are covered by the repository's dual licence (MIT or Apache-2.0),
