@@ -8,8 +8,8 @@
 //! shared `Signal` state.
 
 use std::sync::Arc;
-use tpt_appfront_core::{create_effect, Signal, UITree};
 
+use tpt_appfront_core::{create_effect, Signal, UITree};
 use tpt_appfront_templates::{
     dashboard_shell, login_form, settings_list, DashboardShellConfig, LoginField, LoginFormConfig,
     SettingsListConfig,
