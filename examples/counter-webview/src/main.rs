@@ -43,6 +43,7 @@ fn main() -> Result<()> {
             }],
         },
         max_commands_per_second: 20,
+        on_ipc_rejection: None,
     };
 
     AppBuilder::new("tpt-counter-webview")

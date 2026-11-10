@@ -20,7 +20,7 @@ use crate::app::{AppBuilder, ArcLogSink, CommandHandler, CommandOutcome};
 use crate::clipboard::{self, Clipboard};
 use crate::dragdrop::{self, DragDropDispatcher};
 use crate::secret::{self, SecretError};
-use crate::shortcut::{self, ShortcutRegistry};
+use crate::shortcut::ShortcutRegistry;
 use crate::{dialog, notify, webrtc, window_state, Acl};
 
 /// A native window and the webview hosted inside it. wry 0.57 does not own the
@@ -43,23 +43,22 @@ impl AppBuilder {
         // loop and IPC closures both borrow it).
         let registry: WindowRegistry = Rc::new(RefCell::new(HashMap::new()));
 
-        let shortcut_registry = if self.shortcuts.is_empty() {
+        // Register the configured global shortcuts. A failure is logged, and the app runs
+        // without them. The registry must stay alive for as long as the loop runs.
+        let mut shortcut_registry = if self.shortcuts.is_empty() {
             None
         } else {
             match ShortcutRegistry::new(&self.shortcuts) {
-                Ok(r) => Some(r),
+                Ok(registry) => Some(registry),
                 Err(e) => {
                     self.log_sink.emit(
                         crate::sidecar::Stream::Stderr,
-                        &format!("shortcut register: {e:?}"),
+                        &format!("{e}; {} shortcut(s) ignored", self.shortcuts.len()),
                     );
                     None
                 }
             }
         };
-        let shortcut_rx = shortcut_registry
-            .as_ref()
-            .map(|_| shortcut::ShortcutRegistry::event_receiver());
 
         let dragdrop_disp = DragDropDispatcher::new();
         let deeplink_disp = self.deeplink_dispatcher.clone();
@@ -165,14 +164,20 @@ impl AppBuilder {
         let deeplink_rx = deeplink_disp.as_ref().map(|d| d.receiver());
 
         event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Wait;
+            // Hotkey presses arrive as window messages, which do not wake a `Wait` loop
+            // on their own. While shortcuts are registered, poll at 20 Hz instead.
+            *control_flow = if shortcut_registry.is_some() {
+                ControlFlow::WaitUntil(
+                    std::time::Instant::now() + std::time::Duration::from_millis(50),
+                )
+            } else {
+                ControlFlow::Wait
+            };
 
             // Pump global shortcuts.
-            if let (Some(rx), Some(reg)) = (&shortcut_rx, &shortcut_registry) {
-                while let Ok(ev) = rx.try_recv() {
-                    if let Some(id) = reg.resolve(ev.id) {
-                        let _ = on_command("shortcut", json!({ "id": id }));
-                    }
+            if let Some(registry) = shortcut_registry.as_mut() {
+                for id in registry.take_pressed() {
+                    let _ = on_command("shortcut", json!({ "id": id }));
                 }
             }
 

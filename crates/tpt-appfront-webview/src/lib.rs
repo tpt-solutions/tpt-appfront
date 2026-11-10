@@ -29,12 +29,10 @@
 //! directly.
 
 use std::borrow::Cow;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use governor::{Quota, RateLimiter};
 use http::header::CONTENT_TYPE;
 use http::{Request, Response};
 
@@ -42,6 +40,7 @@ mod sidecar;
 pub use sidecar::{LogSink, SidecarConfig, SidecarSupervisor, Stream};
 
 mod logging;
+mod rate_limit;
 
 mod app;
 pub use app::{AppBuilder, WindowConfig};
@@ -66,7 +65,7 @@ mod clipboard;
 pub use clipboard::Clipboard;
 
 mod shortcut;
-pub use shortcut::{parse_shortcut, ShortcutError, ShortcutRegistry};
+pub use shortcut::{parse_shortcut, Shortcut, ShortcutError, ShortcutRegistry};
 
 mod deeplink;
 pub use deeplink::{register_scheme, DeepLinkDispatcher, DeepLinkReceiver, DeepLinkSender};
@@ -461,20 +460,15 @@ fn not_found() -> Response<Cow<'static, [u8]>> {
 /// command while keeping the worst-case parse cost bounded.
 pub(crate) const MAX_IPC_MESSAGE_BYTES: usize = 16 * 1024;
 
-/// Direct (unkeyed) in-process rate limiter for the IPC bridge — there's no
-/// per-client concept here, just one hosted page in one local process.
-type IpcRateLimiter = RateLimiter<
-    governor::state::NotKeyed,
-    governor::state::InMemoryState,
-    governor::clock::DefaultClock,
->;
+/// In-process rate limiter for the IPC bridge. There's no per-client concept
+/// here, just one hosted page in one local process, so a single bucket is enough.
+type IpcRateLimiter = rate_limit::TokenBucket;
 
 /// Builds the IPC rate limiter from [`WebviewOptions::max_commands_per_second`],
-/// used as both the steady-state rate and the burst allowance. Falls back to
-/// a rate of 1/s if configured as `0`, since a quota of zero is invalid.
+/// used as both the steady-state rate and the burst allowance. A configured
+/// `0` is treated as `1`.
 fn new_ipc_rate_limiter(max_commands_per_second: u32) -> IpcRateLimiter {
-    let n = NonZeroU32::new(max_commands_per_second).unwrap_or(NonZeroU32::new(1).unwrap());
-    RateLimiter::direct(Quota::per_second(n).allow_burst(n))
+    rate_limit::TokenBucket::per_second(max_commands_per_second)
 }
 
 /// Parses an IPC message, checks the ACL and rate limit, and dispatches

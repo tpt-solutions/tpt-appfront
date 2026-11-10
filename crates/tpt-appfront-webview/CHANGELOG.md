@@ -39,6 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `WebviewOptions::allowed_actions: Vec<String>` is replaced by
   `WebviewOptions::acl: Acl`. Use `WebviewOptions::with_allowed_actions` for the
   old flat list of action names.
+- The IPC rate limiter is a small in-crate token bucket instead of `governor`, whose
+  `nonzero_ext` dependency the license policy bans. Behavior is unchanged.
+- The clipboard is native on Windows only. It uses the Win32 clipboard directly
+  (`CF_UNICODETEXT`, via `windows-sys`). On macOS and Linux, `clipboard.read` and
+  `clipboard.write` return an error. This is a regression on macOS, which had `arboard`
+  before. Pages can use `navigator.clipboard` instead, which WebView2 and WKWebView support.
+- Global shortcuts are registered on Windows with `RegisterHotKey`, against a hidden
+  message-only window. Presses reach the app as `shortcut` actions with `{"id": ...}`, as
+  before. A combination already owned by another app fails at startup and is logged, and
+  the app runs without it. On macOS and Linux, shortcut registration fails with a clear
+  error, and the app runs without shortcuts. The `global-hotkey` crate is not used, because
+  it pulled in `x11rb` and the banned `gethostname`.
+- `parse_shortcut` returns a plain `Shortcut` (modifier flags and a key name), not a
+  `global-hotkey` type.
+- `arboard` and `global-hotkey` are no longer dependencies, so `gethostname` is out of the
+  dependency graph on every target.
+- `Cargo.toml` inherits `version`, `edition`, `license` and `repository` from the workspace.
 
 ### Fixed
 - The crate compiles again. It is ported to the wry 0.57 API (`WebViewBuilder`,
