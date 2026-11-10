@@ -11,7 +11,7 @@
 
 use anyhow::{bail, Context};
 
-use crate::llm::LlmProvider;
+use crate::llm::{http, LlmProvider};
 
 /// Request body for an OpenAI-compatible `chat/completions` endpoint.
 #[derive(serde::Serialize)]
@@ -90,36 +90,42 @@ impl LlmProvider for OpenAiCompatProvider {
             max_tokens: Some(2048),
         };
 
-        let mut builder = ureq::post(&self.endpoint)
-            .set("content-type", "application/json")
-            .set("accept", "application/json");
+        let mut headers: Vec<(&str, String)> = vec![
+            ("content-type", "application/json".to_string()),
+            ("accept", "application/json".to_string()),
+        ];
         if let Some(key) = &self.api_key {
             // Azure OpenAI takes the key in an `api-key` header; everyone else uses a Bearer token.
             // Ollama (and some self-hosted OpenAI-compatible servers) ignore the auth header, so
             // sending it is harmless when a key is present.
-            builder = if self.provider == "azure-openai" {
-                builder.set("api-key", key)
+            if self.provider == "azure-openai" {
+                headers.push(("api-key", key.clone()));
             } else {
-                builder.set("authorization", &format!("Bearer {key}"))
-            };
+                headers.push(("authorization", format!("Bearer {key}")));
+            }
         }
+        let header_refs: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
 
-        let resp = builder.send_json(&req).with_context(|| {
+        let resp = http::post_json(&self.endpoint, &header_refs, &req).with_context(|| {
             format!(
                 "request to the `{}` chat/completions endpoint failed (network or 4xx/5xx)",
                 self.provider
             )
         })?;
 
-        if resp.status() != 200 {
-            let status = resp.status();
-            let body = resp
-                .into_string()
-                .unwrap_or_else(|_| "<no body>".to_string());
-            bail!("`{}` API returned {status}: {body}", self.provider);
+        if resp.status != 200 {
+            let body = if resp.body.is_empty() {
+                "<no body>".to_string()
+            } else {
+                resp.body
+            };
+            bail!("`{}` API returned {}: {body}", self.provider, resp.status);
         }
 
-        let parsed: ChatResponse = resp.into_json().with_context(|| {
+        let parsed: ChatResponse = serde_json::from_str(&resp.body).with_context(|| {
             format!("failed to parse the `{}` API JSON response", self.provider)
         })?;
 

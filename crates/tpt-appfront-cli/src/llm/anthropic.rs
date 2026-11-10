@@ -1,7 +1,7 @@
 //! Anthropic (`claude`) backend for `generate --llm`.
 //!
 //! Implements [`crate::llm::LlmProvider`] over the Anthropic Messages API using
-//! `ureq` (blocking, dependency-light) + `serde_json`. The model id comes from
+//! the system `curl` via [`crate::llm::http`] + `serde_json`. The model id comes from
 //! `--model` (defaulted by the config table); `endpoint` is the table default or
 //! a `--base-url` override. `ANTHROPIC_API_KEY` must be set in the environment;
 //! [`crate::llm::build_provider`] returns a clear error when it isn't, so `--llm`
@@ -9,7 +9,7 @@
 
 use anyhow::{bail, Context};
 
-use crate::llm::LlmProvider;
+use crate::llm::{http, LlmProvider};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -80,23 +80,27 @@ impl LlmProvider for AnthropicProvider {
             }],
         };
 
-        let resp = ureq::post(&self.endpoint)
-            .set("x-api-key", &self.api_key)
-            .set("anthropic-version", ANTHROPIC_VERSION)
-            .set("content-type", "application/json")
-            .send_json(&req)
-            .with_context(|| "request to the Anthropic Messages API failed (network or 4xx/5xx)")?;
+        let resp = http::post_json(
+            &self.endpoint,
+            &[
+                ("x-api-key", self.api_key.as_str()),
+                ("anthropic-version", ANTHROPIC_VERSION),
+                ("content-type", "application/json"),
+            ],
+            &req,
+        )
+        .with_context(|| "request to the Anthropic Messages API failed (network or 4xx/5xx)")?;
 
-        if resp.status() != 200 {
-            let status = resp.status();
-            let body = resp
-                .into_string()
-                .unwrap_or_else(|_| "<no body>".to_string());
-            bail!("Anthropic API returned {status}: {body}");
+        if resp.status != 200 {
+            let body = if resp.body.is_empty() {
+                "<no body>".to_string()
+            } else {
+                resp.body
+            };
+            bail!("Anthropic API returned {}: {body}", resp.status);
         }
 
-        let parsed: MessagesResponse = resp
-            .into_json()
+        let parsed: MessagesResponse = serde_json::from_str(&resp.body)
             .with_context(|| "failed to parse the Anthropic API JSON response")?;
 
         let text = parsed

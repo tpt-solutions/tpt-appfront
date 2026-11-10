@@ -23,6 +23,7 @@
 //!   hand, rather than the tool failing the whole command.
 
 mod anthropic;
+mod http;
 mod openai_compat;
 
 use anyhow::{bail, Context};
@@ -397,36 +398,35 @@ pub fn list_models(provider: &str, base_url: Option<&str>) -> anyhow::Result<Vec
         None => None,
     };
 
-    let mut request = ureq::get(&url).set("accept", "application/json");
+    let mut headers: Vec<(&str, String)> = vec![("accept", "application/json".to_string())];
     match (provider, key.as_deref()) {
         ("anthropic", Some(key)) => {
-            request = request
-                .set("x-api-key", key)
-                .set("anthropic-version", "2023-06-01");
+            headers.push(("x-api-key", key.to_string()));
+            headers.push(("anthropic-version", "2023-06-01".to_string()));
         }
         ("gemini", Some(key)) => {
-            request = request.set("x-goog-api-key", key);
+            headers.push(("x-goog-api-key", key.to_string()));
         }
         (_, Some(key)) => {
-            request = request.set("authorization", &format!("Bearer {key}"));
+            headers.push(("authorization", format!("Bearer {key}")));
         }
         (_, None) => {}
     }
+    let header_refs: Vec<(&str, &str)> = headers
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
 
-    let response = match request.call() {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(code, resp)) => {
-            let body = resp.into_string().unwrap_or_default();
-            bail!("`{provider}` model list returned {code}: {body}");
-        }
-        Err(err) => {
-            return Err(anyhow::Error::new(err).context(format!(
-                "could not reach `{provider}`'s model list at {url}"
-            )));
-        }
-    };
-    let body: serde_json::Value = response
-        .into_json()
+    let response = http::get(&url, &header_refs)
+        .with_context(|| format!("could not reach `{provider}`'s model list at {url}"))?;
+    if !(200..300).contains(&response.status) {
+        bail!(
+            "`{provider}` model list returned {}: {}",
+            response.status,
+            response.body
+        );
+    }
+    let body: serde_json::Value = serde_json::from_str(&response.body)
         .with_context(|| format!("`{provider}` model list was not JSON"))?;
     let models = parse_models(config.list, &body);
     if models.is_empty() {
