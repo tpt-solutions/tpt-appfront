@@ -1,8 +1,8 @@
 //! Global keyboard shortcuts, registered natively and surfaced to the app as
 //! high-level shortcut events.
 //!
-//! Uses [`global_hotkey`] (pairs with tao 0.16, the same windowing stack wry
-//! uses). Shortcuts are registered by string id; when pressed, the manager
+//! Uses [`global_hotkey`] (pumped by the tao 0.37 event loop, the same windowing
+//! stack wry uses). Shortcuts are registered by string id; when pressed, the manager
 //! emits a `shortcut:<id>` IPC-style event that [`crate::run`] forwards to the
 //! `on_command` closure like any other action.
 
@@ -32,7 +32,7 @@ pub fn parse_shortcut(spec: &str) -> Result<HotKey, ShortcutError> {
         let p = part.trim();
         match p.to_ascii_lowercase().as_str() {
             "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
-            "cmd" | "command" | "meta" | "super" => modifiers |= Modifiers::SUPER,
+            "cmd" | "command" | "meta" | "super" => modifiers |= Modifiers::META,
             "alt" | "option" => modifiers |= Modifiers::ALT,
             "shift" => modifiers |= Modifiers::SHIFT,
             _ => key_token = p,

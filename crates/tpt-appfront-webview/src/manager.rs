@@ -1,297 +1,50 @@
-//! Application manager: builds a multi-window webview app, wires the sidecar,
-//! and dispatches IPC actions (app-defined + built-in secret/dialog/notify/
-//! clipboard/media) plus shortcut/deep-link/drag-drop/tray events through a
-//! single `on_command` closure.
-//!
-//! This is the Phase 1 consolidation of the previous single-window [`crate::run`].
+//! Native desktop backend for Windows and macOS: a `tao` event loop hosting
+//! `wry` webviews. Builder types live in [`crate::app`]; the Linux backend is
+//! `linux/` and is not compiled here.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::Result;
 use serde_json::json;
-use wry::application::dpi::LogicalSize;
-use wry::application::event::{Event, WindowEvent};
-use wry::application::event_loop::{ControlFlow, EventLoop};
-use wry::application::window::WindowBuilder;
+use tao::dpi::{LogicalPosition, LogicalSize};
+use tao::event::{Event, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoop};
+use tao::window::{Window, WindowBuilder};
 use wry::http::{Request, Response};
-use wry::webview::{FileDropEvent, WebView, WebViewBuilder};
+use wry::{WebView, WebViewBuilder};
 
+use crate::app::{AppBuilder, ArcLogSink, CommandHandler, CommandOutcome};
 use crate::clipboard::{self, Clipboard};
-use crate::crash::{self, CrashReporter};
-use crate::deeplink::{self, DeepLinkDispatcher};
-use crate::dialog::{self, dialog_capabilities};
+use crate::dialog;
 use crate::dragdrop::{self, DragDropDispatcher};
-use crate::logging::UnifiedLogSink;
-use crate::notify::{self, notify_capability};
+use crate::notify;
 use crate::secret::{self, SecretError};
 use crate::shortcut::{self, ShortcutRegistry};
-use crate::sidecar::{LogSink, SidecarConfig, SidecarSupervisor};
-use crate::webrtc::{self, MediaKind};
-use crate::{single_instance, window_state, Acl, WebviewOptions};
+use crate::webrtc;
+use crate::{window_state, Acl};
 
-/// Configuration for a single window in the app.
-#[derive(Clone)]
-pub struct WindowConfig {
-    /// Stable id used for the window registry and persisted-state file.
-    pub id: String,
-    /// Window title.
-    pub title: String,
-    /// Initial width in logical pixels.
-    pub width: u32,
-    /// Initial height in logical pixels.
-    pub height: u32,
-    /// Directory served over the `app://` protocol for this window.
-    pub dist_dir: PathBuf,
+/// A native window and the webview hosted inside it. wry 0.57 does not own the
+/// window, so the tao `Window` must be kept alive alongside its `WebView`.
+struct ManagedWindow {
+    // Declared before `window` so the webview is dropped first.
+    webview: WebView,
+    window: Window,
 }
 
-impl WindowConfig {
-    /// Builds a window config from a [`WebviewOptions`] (single-window migration
-    /// path).
-    pub fn from_options(id: &str, opts: &WebviewOptions) -> Self {
-        WindowConfig {
-            id: id.to_string(),
-            title: opts.title.clone(),
-            width: opts.width,
-            height: opts.height,
-            dist_dir: opts.dist_dir.clone(),
-        }
-    }
-}
-
-/// What an app command produced.
-///
-/// `NoReply` is the legacy fire-and-forget contract (`AppBuilder::run`):
-/// nothing is ever delivered to the page, even if it passed a `requestId`.
-/// `Reply` carries a JSON payload delivered via
-/// `window.__appfrontResolve(requestId, result)` when the page asked for one
-/// (`AppBuilder::run_with_value_handler`).
-pub enum CommandOutcome {
-    NoReply,
-    Reply(serde_json::Value),
-}
-
-/// Type-erased app command handler as dispatch sees it.
-pub type CommandHandler =
-    dyn Fn(&str, serde_json::Value) -> std::result::Result<CommandOutcome, String>;
-
-/// The application builder. Accumulates windows, sidecar, shortcuts, deep-link
-/// scheme, and lifecycle options, then [`AppBuilder::run`]s the event loop.
-pub struct AppBuilder {
-    app_id: String,
-    windows: Vec<WindowConfig>,
-    acl: Acl,
-    max_commands_per_second: u32,
-    sidecar: Option<SidecarConfig>,
-    shortcuts: Vec<(String, String)>,
-    deeplink_scheme: Option<String>,
-    deeplink_dispatcher: Option<DeepLinkDispatcher>,
-    single_instance: bool,
-    crash_reporter: Option<CrashReporter>,
-    log_sink: ArcLogSink,
-    persisted_state: bool,
-    on_ipc_rejection: Option<std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>>,
-}
-
-type ArcLogSink = std::sync::Arc<dyn LogSink>;
-
+/// Per-window registry, shared between the event loop and IPC closures.
+type WindowRegistry = Rc<RefCell<HashMap<String, ManagedWindow>>>;
 impl AppBuilder {
-    /// Starts building an app identified by `app_id` (used for single-instance
-    /// lock + persisted window state).
-    pub fn new(app_id: &str) -> Self {
-        AppBuilder {
-            app_id: app_id.to_string(),
-            windows: Vec::new(),
-            acl: Acl::default(),
-            max_commands_per_second: 20,
-            sidecar: None,
-            shortcuts: Vec::new(),
-            deeplink_scheme: None,
-            deeplink_dispatcher: None,
-            single_instance: false,
-            crash_reporter: None,
-            log_sink: std::sync::Arc::new(UnifiedLogSink),
-            persisted_state: true,
-            on_ipc_rejection: None,
-        }
-    }
-
-    /// Adds a window.
-    pub fn with_window(mut self, cfg: WindowConfig) -> Self {
-        self.windows.push(cfg);
-        self
-    }
-
-    /// Sets the IPC ACL applied to every window.
-    pub fn with_acl(mut self, acl: Acl) -> Self {
-        self.acl = acl;
-        self
-    }
-
-    /// Sets the IPC rate limit (commands/sec) applied to every window.
-    pub fn with_max_commands_per_second(mut self, n: u32) -> Self {
-        self.max_commands_per_second = n;
-        self
-    }
-
-    /// Attaches a sidecar (e.g. the Go backend) to supervise.
-    pub fn with_sidecar(mut self, cfg: SidecarConfig) -> Self {
-        self.sidecar = Some(cfg);
-        self
-    }
-
-    /// Registers a global shortcut under `id` with spec string `spec`.
-    pub fn with_shortcut(mut self, id: String, spec: String) -> Self {
-        self.shortcuts.push((id, spec));
-        self
-    }
-
-    /// Enables a deep-link scheme (runtime OS registration).
-    pub fn with_deeplink(mut self, scheme: String) -> Self {
-        self.deeplink_scheme = Some(scheme);
-        self.deeplink_dispatcher = Some(DeepLinkDispatcher::new());
-        self
-    }
-
-    /// Enables single-instance enforcement.
-    pub fn with_single_instance(mut self, on: bool) -> Self {
-        self.single_instance = on;
-        self
-    }
-
-    /// Installs a crash reporter (panic hook + sidecar crash surfacing).
-    pub fn with_crash_reporter(mut self, reporter: CrashReporter) -> Self {
-        self.crash_reporter = Some(reporter);
-        self
-    }
-
-    /// Overrides the unified log sink.
-    pub fn with_log_sink(mut self, sink: ArcLogSink) -> Self {
-        self.log_sink = sink;
-        self
-    }
-
-    /// Toggles persisted window state (default on).
-    pub fn with_persisted_state(mut self, on: bool) -> Self {
-        self.persisted_state = on;
-        self
-    }
-
-    /// Sets the host-side rejection hook invoked whenever an IPC message is
-    /// rejected or fails (oversized, malformed, not grantable by the ACL,
-    /// rate-limited, or the app `on_command` errors). Mirrors
-    /// [`crate::WebviewOptions::on_ipc_rejection`]; defaults to `None`.
-    pub fn with_ipc_rejection(
-        mut self,
-        hook: std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>,
-    ) -> Self {
-        self.on_ipc_rejection = Some(hook);
-        self
-    }
-
-    /// Merges standard built-in capabilities (dialog/notify/clipboard/media/
-    /// secret) into the ACL so the built-in actions resolve. Call after
-    /// [`AppBuilder::with_acl`] if you want them alongside custom grants.
-    pub fn with_builtin_capabilities(mut self) -> Self {
-        let mut caps = self.acl.capabilities;
-        caps.extend(dialog_capabilities());
-        caps.push(notify_capability());
-        caps.extend(clipboard::clipboard_capabilities());
-        caps.push(webrtc::media_capability(&[
-            MediaKind::Camera,
-            MediaKind::Microphone,
-            MediaKind::CameraAndMic,
-        ]));
-        self.acl = Acl { capabilities: caps };
-        self
-    }
-
-    /// Runs the app. `on_command` receives every dispatched action: app-defined
-    /// actions plus the synthetic `shortcut:<id>`, `deeplink`, and `filedrop`
-    /// events.
-    /// Runs the event loop with a fire-and-forget command handler: command
-    /// results are never delivered back to the page, even when it passes a
-    /// `requestId`. Use [`AppBuilder::run_with_value_handler`] when the page
-    /// needs command results.
-    pub fn run<F>(self, on_command: F) -> Result<()>
-    where
-        F: Fn(&str, serde_json::Value) -> std::result::Result<(), String> + 'static,
-    {
-        self.run_inner(std::rc::Rc::new(
-            move |action: &str, params: serde_json::Value| {
-                on_command(action, params).map(|_| CommandOutcome::NoReply)
-            },
-        ))
-    }
-
-    /// Runs the event loop with a value-returning command handler: every
-    /// `Ok` payload is delivered to the page via
-    /// `window.__appfrontResolve(requestId, result)` when the IPC message
-    /// carried a `requestId`, and `Err` is logged + surfaced through the
-    /// rejection hook as before. Commands run on the event-loop thread, so
-    /// long-running work belongs on a thread the handler joins with a
-    /// timeout.
-    pub fn run_with_value_handler<F>(self, on_command: F) -> Result<()>
-    where
-        F: Fn(&str, serde_json::Value) -> std::result::Result<serde_json::Value, String> + 'static,
-    {
-        self.run_inner(std::rc::Rc::new(
-            move |action: &str, params: serde_json::Value| {
-                on_command(action, params).map(CommandOutcome::Reply)
-            },
-        ))
-    }
-
-    fn run_inner(self, on_command: std::rc::Rc<CommandHandler>) -> Result<()> {
-        // Single-instance enforcement.
-        if self.single_instance {
-            match single_instance::ensure_single_instance(&self.app_id)? {
-                single_instance::InstanceCheck::Secondary { show_request } => {
-                    // Another instance is primary; nudge it to show and exit.
-                    let _ = single_instance::wait_for_show_request(&show_request);
-                    return Ok(());
-                }
-                single_instance::InstanceCheck::Primary(_guard) => {
-                    // We are primary; `_guard` holds the lock for our lifetime.
-                }
-            }
-        }
-
-        // Crash reporting.
-        if let Some(reporter) = &self.crash_reporter {
-            crash::install_panic_hook(reporter.clone());
-        }
-
-        // Sidecar supervision.
-        let _sidecar: Option<SidecarSupervisor> = match &self.sidecar {
-            Some(cfg) => Some(SidecarSupervisor::spawn(cfg.clone())?),
-            None => None,
-        };
-
-        // Deep-link OS registration.
-        if let (Some(scheme), Some(disp)) = (&self.deeplink_scheme, &self.deeplink_dispatcher) {
-            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("app"));
-            if let Err(e) = deeplink::register_scheme(scheme, &exe) {
-                self.log_sink.emit(
-                    crate::sidecar::Stream::Stderr,
-                    &format!("deeplink register: {e}"),
-                );
-            }
-            // Surface a launch-time deep link from argv (if any).
-            for arg in std::env::args() {
-                if arg.starts_with(&format!("{scheme}://")) {
-                    disp.push(arg);
-                }
-            }
-        }
-
+    /// Runs the native event loop. Called by `AppBuilder::run_inner` after the
+    /// platform-neutral startup work.
+    pub(crate) fn run_native(self, on_command: Rc<CommandHandler>) -> Result<()> {
         let event_loop = EventLoop::new();
 
         // Shared, per-window webview registry (Rc<RefCell<...>> because the
         // loop and IPC closures both borrow it).
-        let registry: Rc<RefCell<HashMap<String, WebView>>> = Rc::new(RefCell::new(HashMap::new()));
+        let registry: WindowRegistry = Rc::new(RefCell::new(HashMap::new()));
 
         let shortcut_registry = if self.shortcuts.is_empty() {
             None
@@ -333,7 +86,7 @@ impl AppBuilder {
             };
             let mut wb = WindowBuilder::new().with_title(&cfg.title);
             if let (Some(x), Some(y)) = (geo.x, geo.y) {
-                wb = wb.with_position(wry::application::dpi::LogicalPosition::new(x, y));
+                wb = wb.with_position(LogicalPosition::new(x, y));
             }
             wb = wb.with_inner_size(LogicalSize::new(
                 if geo.width > 0 { geo.width } else { cfg.width },
@@ -356,30 +109,39 @@ impl AppBuilder {
             let on_reject_c = on_reject.clone();
             let window_id = cfg.id.clone();
 
-            let builder = WebViewBuilder::new(window)?
+            let webview = WebViewBuilder::new()
                 .with_initialization_script(crate::INIT_SCRIPT)
-                .with_custom_protocol("app".to_string(), move |request: &Request<Vec<u8>>| {
-                    serve(&dist_dir, request)
+                .with_custom_protocol("app".to_string(), move |_id, request| {
+                    serve(&dist_dir, &request)
                 })
-                .with_file_drop_handler({
+                .with_drag_drop_handler({
                     let sender = dragdrop_disp.sender();
-                    move |_window, event| match event {
-                        FileDropEvent::Hovered(paths) => {
-                            sender.send(dragdrop::DragDropEvent::Hovered(paths, 0.0, 0.0));
-                            true
+                    move |event| {
+                        match event {
+                            wry::DragDropEvent::Enter { paths, position } => {
+                                sender.send(dragdrop::DragDropEvent::Hovered(
+                                    paths,
+                                    f64::from(position.0),
+                                    f64::from(position.1),
+                                ));
+                            }
+                            wry::DragDropEvent::Drop { paths, position } => {
+                                sender.send(dragdrop::DragDropEvent::Dropped(
+                                    paths,
+                                    f64::from(position.0),
+                                    f64::from(position.1),
+                                ));
+                            }
+                            wry::DragDropEvent::Leave => {
+                                sender.send(dragdrop::DragDropEvent::Cancelled);
+                            }
+                            // `Over` carries no paths; the hover was already reported on `Enter`.
+                            _ => {}
                         }
-                        FileDropEvent::Dropped(paths) => {
-                            sender.send(dragdrop::DragDropEvent::Dropped(paths, 0.0, 0.0));
-                            true
-                        }
-                        FileDropEvent::Cancelled => {
-                            sender.send(dragdrop::DragDropEvent::Cancelled);
-                            true
-                        }
-                        _ => true,
+                        true
                     }
                 })
-                .with_ipc_handler(move |_window, message| {
+                .with_ipc_handler(move |request: Request<String>| {
                     dispatch_ipc(
                         &acl_c,
                         &limiter,
@@ -390,14 +152,16 @@ impl AppBuilder {
                         &registry_c,
                         &window_id,
                         &on_reject_c,
-                        &message,
+                        request.body(),
                     );
                 })
-                .with_url("app://localhost/index.html")?;
+                .with_url("app://localhost/index.html")
+                .build(&window)?;
 
-            let webview = builder.build()?;
             built_windows.push(cfg.id.clone());
-            registry.borrow_mut().insert(cfg.id.clone(), webview);
+            registry
+                .borrow_mut()
+                .insert(cfg.id.clone(), ManagedWindow { webview, window });
         }
 
         let dragdrop_rx = dragdrop_disp.receiver();
@@ -443,8 +207,8 @@ impl AppBuilder {
                 if persisted {
                     for id in &built_windows {
                         let geo = match registry.borrow().get(id) {
-                            Some(wv) => {
-                                let window = wv.window();
+                            Some(mw) => {
+                                let window = &mw.window;
                                 let scale = window.scale_factor();
                                 let pos = window.outer_position().ok();
                                 let size = window.inner_size().to_logical::<u32>(scale);
@@ -480,7 +244,7 @@ fn dispatch_ipc(
     app_id: &str,
     log_sink: &ArcLogSink,
     clipboard: &std::sync::Arc<Clipboard>,
-    registry: &std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, WebView>>>,
+    registry: &WindowRegistry,
     window_id: &str,
     on_reject: &Option<std::sync::Arc<dyn Fn(crate::IpcRejection) + Send + Sync>>,
     message: &str,
@@ -643,7 +407,7 @@ fn dispatch_ipc(
 /// looked up in `registry` and the resolver is invoked through
 /// `evaluate_script`.
 fn reply(
-    registry: &std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, WebView>>>,
+    registry: &WindowRegistry,
     window_id: &str,
     request_id: Option<serde_json::Value>,
     value: serde_json::Value,
@@ -651,16 +415,19 @@ fn reply(
     let Some(req) = request_id else { return };
     let payload = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
     let script = format!("window.__appfrontResolve({req}, {payload});");
-    if let Some(wv) = registry.borrow().get(window_id) {
-        let _ = wv.evaluate_script(&script);
+    if let Some(mw) = registry.borrow().get(window_id) {
+        let _ = mw.webview.evaluate_script(&script);
     }
 }
 
 /// Serves a file from `dist_dir` over the custom `app://` protocol, with
-/// path-traversal protection (see [`crate::serve`]).
-fn serve(
-    dist_dir: &std::path::Path,
-    request: &Request<Vec<u8>>,
-) -> wry::Result<Response<std::borrow::Cow<'static, [u8]>>> {
-    crate::serve(dist_dir, request)
+/// path-traversal protection (see [`crate::serve`]). Internal failures are
+/// answered with a 500, since wry's protocol handler returns a plain response.
+fn serve(dist_dir: &std::path::Path, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    crate::serve(dist_dir, request).unwrap_or_else(|_| {
+        Response::builder()
+            .status(500)
+            .body(Cow::Borrowed(b"500 Internal Server Error" as &[u8]))
+            .unwrap_or_else(|_| Response::new(Cow::Borrowed(b"500" as &[u8])))
+    })
 }
