@@ -22,4 +22,5 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt"] }
 
 [dev-dependencies]
-ureq = "2"
+# Tests only call plain-HTTP 127.0.0.1, so TLS (and with it `ring`) stays out of the tree.
+ureq = { version = "2", default-features = false }
