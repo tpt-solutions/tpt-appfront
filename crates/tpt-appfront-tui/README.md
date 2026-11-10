@@ -1,24 +1,37 @@
 # tpt-appfront-tui
 
-The terminal UI backend for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
+The terminal backend for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
 
-Proves the "one `UITree`, N renderers" thesis one step further: the same
-`UITree<Msg>` that drives a web app, a native window, or an AI agent also drives a
-terminal app — a claim no DOM-rooted framework (Leptos/Dioxus/Yew) can make
-without a rewrite of their AST.
+It maps a `UITree<Msg>` to `ratatui` widgets and reads keyboard input through
+`crossterm`. The same `UITree` that drives a web app or a native window can drive a
+terminal app.
+
+## Public API
+
+- `run(build_ui, on_event) -> anyhow::Result<()>`: takes over the terminal (raw mode
+  and the alternate screen), redraws each frame, and passes each dispatched `Msg` to
+  `on_event`. `build_ui` is `Fn() -> UITree<Msg>`.
+- `run_with(build_ui, on_event, auto_optimize: bool)`: same as `run`, with automatic
+  windowing of large lists.
+- `TuiDriver<Msg>`: keyboard focus and dispatch, separate from the terminal.
+  `TuiDriver::new(&ui)`, `on_key(KeyEvent) -> Vec<Msg>`, `focus_id()`, `inputs()`,
+  `checks()`, `selections()`, `quit()` and `auto_optimize(bool)`.
+- `render(&ui, frame, area, ...)`: draws a `UITree` into a ratatui `Frame`.
+- `render_to_buffer(&ui, width, height) -> Buffer` and `buffer_to_string(&Buffer)`:
+  render off screen for snapshot tests.
 
 ## Features
 
-- **`NodeKind` → `ratatui` widget** mapping (`Container` → layout split,
-  `Text`/`Heading` → paragraph, `Button` → focusable paragraph, `Input` → editable
-  line, `List` → `ratatui` list, `DataGrid` → `ratatui` table).
-- **Keyboard-driven dispatch** — Tab/↑←/↓→ move focus, Enter/Space activate the
-  focused button, Esc quits, typing edits the focused `Input`. Mirrors the DOM/
-  canvas dispatch closure pattern.
-- **Headless-testable** — rendering is pure; `render`/`render_to_buffer`/
-  `buffer_to_string` work against `ratatui`'s `TestBackend`, so keyboard handling
-  (`TuiDriver::on_key`) is unit-testable without a TTY.
-- **`run`** — the real-terminal entry point (crossterm raw mode + alternate screen).
+- **Widget mapping.** `Container` becomes a layout split. `Text` and `Heading` become
+  paragraphs. `Button` becomes a focusable bracketed paragraph. `Input` and `Textarea`
+  become editable text. `Checkbox`, `Select` and `Radio` are focusable and cycle or
+  toggle their value. `List` becomes a ratatui list and `DataGrid` a table.
+- **Keyboard navigation.** Tab, Shift-Tab and the arrow keys move focus, except on
+  `Select` and `Radio`, where the arrows cycle the option. Enter and Space activate
+  or toggle. Esc quits. Typing edits the focused text field.
+- **Headless tests.** `render_to_buffer` and `TuiDriver::on_key` run without a TTY.
+- **Virtual scrolling.** Large `List` and `DataGrid` nodes can be windowed, either
+  with `NodeMeta::virtual_scroll` or automatically with `auto_optimize`.
 
 ## Install
 
@@ -26,24 +39,35 @@ without a rewrite of their AST.
 [dependencies]
 tpt-appfront-core = "0.1"
 tpt-appfront-tui = "0.1"
+anyhow = "1"
 ```
 
 ## Example
 
 ```rust
-use tpt_appfront_core::{Signal, UITree};
+use tpt_appfront_core::UITree;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let count = Signal::new(0i32);
-    let build_ui = move || -> UITree<Msg> {
+#[derive(Clone, Debug)]
+enum Msg {
+    Increment,
+}
+
+fn main() -> anyhow::Result<()> {
+    let build_ui = || -> UITree<Msg> {
         UITree::container(|c| {
             c.heading(1, "Counter");
             c.button("+1").on_click(Msg::Increment);
         })
     };
-    tpt_appfront_tui::run(build_ui, |msg| { /* dispatch */ })
+    tpt_appfront_tui::run(build_ui, |msg| {
+        // Update app state here. Printing would corrupt the terminal UI.
+        let _ = msg;
+    })
 }
 ```
+
+Scaffold a project with `tpt-appfront init --target tui`, or run one with
+`tpt-appfront dev --tui`. See `examples/counter-tui`.
 
 ## License
 

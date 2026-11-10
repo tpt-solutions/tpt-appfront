@@ -2,33 +2,65 @@
 
 The Axum **smart router** for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
 
-A single Axum app serves the *same* `UITree` to four client kinds, detected via
-`User-Agent` / query param (`?client=`):
+One router serves the same `UITree` to four kinds of client, chosen from the
+`User-Agent` header or the `?client=` query parameter:
 
-- **Human browser** → the WASM/HTML shell (`tpt-appfront-dom`)
-- **Crawler** → semantic HTML (`tpt-appfront-html`)
-- **AI agent** → JSON-LD + custom AI Schema (`tpt-appfront-ai-schema`)
-- **Social bot** → OpenGraph tags (`tpt-appfront-html`)
+| Client kind | Detected from | Served by |
+|-------------|---------------|-----------|
+| Human browser | default | WASM shell (`tpt-appfront-dom`), hydration-ready HTML when enabled |
+| Crawler | Googlebot, Bingbot, YandexBot and similar | Semantic HTML (`tpt-appfront-html`) |
+| AI agent | GPTBot, PerplexityBot, Claude and similar, plus `extra_ai_agents` | JSON-LD and AI Schema (`tpt-appfront-ai-schema`) |
+| Social bot | Facebook, Slack, Twitter, Discord and similar | OpenGraph meta tags (`tpt-appfront-html`) |
 
-It also adds PWA/offline support and a bidirectional `POST /command` agent bridge.
+The `?client=` values are `human`/`browser`/`web`, `crawler`/`bot`/`seo`,
+`ai`/`agent`/`aiagent`, and `social`/`socialbot`/`opengraph`.
 
-## Features
+The router also serves `GET /ai-schema.json` and `GET /opengraph`, and exposes
+`POST /command` so an AI agent can send actions to the app.
 
-- **`SmartRouterBuilder`** — configure the static dir, wasm path, title/
-  description, PWA (`pwa(...)`), rate limiting, CSRF, and an `allowed_actions`
-  allowlist for the command endpoint.
-- **`build_router`** — returns the `axum::Router` for standalone `axum::serve`
-  wiring (the e2e tests use this).
-- **`serve`** — `into_make_service_with_connect_info::<SocketAddr>()` so per-peer
-  rate limiting works.
-- **`POST /command`** — `Command { action, params }` validated against the
-  allowlist, body-size-limited (16 KiB), rate-limited per peer-IP, handed to an
-  app-supplied `on_command` closure.
-- **Production hardening** — `TraceLayer`, request `TimeoutLayer`, security
-  headers (`X-Content-Type-Options`, `X-Frame-Options`, CSP), and a configurable
-  `CorsPolicy`. (`CorsLayer` defaults to `Permissive` — tighten before exposing
-  cross-origin.)
-- **PWA** — `service-worker.js` + `manifest.webmanifest` + registration script.
+## Public API
+
+Re-exported from `src/lib.rs`:
+
+- `SmartRouterBuilder<Msg>`: `new(ui)`, then chain `title`, `description`,
+  `static_dir`, `wasm_path`, `enable_hydration`, `signals`, `on_command`,
+  `allowed_actions`, `rate_limit`, `read_rate_limit`, `csrf`, `auth_hook`, `pwa`,
+  `cors`, `extra_ai_agents`, `trust_forwarded_for`; finish with `build()`, which
+  returns a `SmartRouter<Msg>`.
+- `build_router(SmartRouter<Msg>) -> axum::Router`, for serving the router yourself
+  or stacking more middleware. If you use it, serve it with
+  `into_make_service_with_connect_info::<SocketAddr>()` so the per-IP rate limiter
+  can read the peer address.
+- `serve(SmartRouter<Msg>, SocketAddr) -> std::io::Result<()>`, an async helper that
+  does that for you.
+- `Command { action: String, params: HashMap<String, serde_json::Value> }`, the body
+  of `POST /command`.
+- `CommandResponse { ok, message }`, with `CommandResponse::ok(..)` and
+  `CommandResponse::err(..)`.
+- `RateLimitConfig { per_second, burst }` and `CorsPolicy` (`Permissive` or
+  `Origins(Vec<String>)`).
+- `PwaConfig`, which has a `Default` implementation.
+- `detect(ua, query_client)` and `detect_with(ua, query_client, extra_agents)`, which
+  return a `ClientKind`. `ClientKind` has the variants `Human`, `Crawler`, `AiAgent`
+  and `SocialBot`.
+- PWA helpers: `service_worker`, `manifest`, `manifest_link`, `registration_script`
+  and `update_available_script`.
+
+## Command endpoint
+
+`POST /command` takes a JSON `Command`:
+
+- It returns `501` when no `on_command` handler is set.
+- It returns `400` for an empty `action`, and `403` when `allowed_actions` is set and
+  the action is not in it.
+- It returns `401` when `auth_hook` returns `false`.
+- Requests that carry the router's CSRF cookie must also send the matching token
+  header. Requests without the cookie are not checked, so direct API clients still
+  work.
+- Bodies are limited to 16 KiB, and requests are rate-limited per peer IP.
+- The route has no CORS headers, so other sites cannot call it from a browser.
+
+Without `allowed_actions`, every action the handler accepts is allowed.
 
 ## Install
 
@@ -36,26 +68,49 @@ It also adds PWA/offline support and a bidirectional `POST /command` agent bridg
 [dependencies]
 tpt-appfront-core = "0.1"
 tpt-appfront-server = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
+
+This crate has no Cargo feature flags.
 
 ## Example
 
 ```rust
-use tpt_appfront_server::{SmartRouterBuilder, Command, CommandResponse};
+use std::net::SocketAddr;
+use tpt_appfront_server::{serve, Command, CommandResponse, SmartRouterBuilder};
 
-let router = SmartRouterBuilder::new()
-    .title("My App")
-    .wasm_path("/api/app.wasm")
-    .allowed_actions(["increment".to_string()])
-    .on_command(|cmd: Command| -> CommandResponse {
-        // dispatch into your app's Msg / state here
-        CommandResponse::ok()
-    })
-    .build(&ui, &agent_state);
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let ui = build_ui(); // your app's UITree<Msg>
+
+    let router = SmartRouterBuilder::new(ui)
+        .title("My App")
+        .description("A demo app")
+        .wasm_path("/app.wasm")
+        .allowed_actions(["increment"])
+        .on_command(|cmd: Command| match cmd.action.as_str() {
+            "increment" => CommandResponse::ok("incremented"),
+            _ => CommandResponse::err("unknown action"),
+        })
+        .build();
+
+    serve(router, "127.0.0.1:3000".parse::<SocketAddr>().unwrap()).await
+}
 ```
 
-In production, put a TLS terminator / reverse proxy in front — the router itself
-is not a hardened edge.
+`Msg` must be `Clone + Send + Sync + serde::Serialize + 'static` to use `serve` or
+`build_router`.
+
+The `on_command` handler is where you call `tpt_appfront_core::trigger_event` or
+`navigate_to` against your app's state.
+
+## Production notes
+
+The router is not a hardened edge. Put a TLS terminator or reverse proxy in front of
+it. The default CORS policy is `Permissive` for the read routes, so set
+`SmartRouterBuilder::cors(CorsPolicy::Origins(..))` if other origins should not read
+them. Only enable `trust_forwarded_for` behind a proxy that sets those headers, or
+clients can pick their own rate-limit key.
 
 ## License
 

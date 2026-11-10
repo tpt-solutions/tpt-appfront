@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `to_ai_schema_value` returns `Result<Value, serde_json::Error>` instead of
   panicking on malformed input.
+- JSON-LD output covers the `Image` (`ImageObject`), `Media` (`AudioObject` or
+  `VideoObject`), and `Link` (`WebPageElement`) node kinds, and includes `Portal`
+  content.
 
 ### Fixed
 - `serde_json::Map` insertions now use `insert` (was `map["key"] = val`, which

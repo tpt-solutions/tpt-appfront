@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `tpt-appfront-tui` will be documented in this file.
+All notable changes to `tpt-appfront-webview` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -8,10 +8,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `WebviewOptions::allowed_actions` IPC allowlisting and per-second command rate
-  limiting (`max_commands_per_second`) to prevent an open-bridge vulnerability.
-- IPC message size cap (`MAX_IPC_MESSAGE_BYTES`, 16 KiB) enforced before parsing.
-- CLI `--target webview` / `dev --desktop-webview` wiring.
+- `AppBuilder` for multi-window desktop apps, with `with_window`, `with_acl`,
+  `with_max_commands_per_second`, `with_sidecar`, `with_shortcut`, `with_deeplink`,
+  `with_single_instance`, `with_crash_reporter`, `with_log_sink`,
+  `with_persisted_state`, `with_ipc_rejection` and `with_builtin_capabilities`.
+  `run` takes a command handler that returns `Result<(), String>`;
+  `run_with_value_handler` also sends each `Ok` value back to the page through
+  `window.__appfrontResolve`.
+- Capability-based ACL: `Acl`, `Capability` and `ParamSpec`/`ParamKind`. An action
+  is dispatched only when a capability grants it and its parameters match the
+  declared types.
+- `WebviewOptions::on_ipc_rejection` hook, called for oversized, malformed,
+  denied, rate-limited and failed IPC messages.
+- Built-in capabilities: dialogs (`open_dialog`, `save_dialog`), notifications
+  (`notify`), clipboard (`Clipboard`), OS keyring secrets (`get_secret`,
+  `set_secret`, `delete_secret`) and camera/microphone requests gated by the ACL
+  (`media_capability`, `MediaKind`).
+- Sidecar process supervision (`SidecarConfig`, `SidecarSupervisor`), with restart
+  after a crash when `restart_on_crash` is set.
+- Global shortcuts (`ShortcutRegistry`, `parse_shortcut`), deep links
+  (`register_scheme`, `DeepLinkDispatcher`), drag-and-drop events
+  (`DragDropDispatcher`), a single-instance guard (`ensure_single_instance`), window
+  geometry persistence (`WindowGeometry`) and a panic hook (`install_panic_hook`).
+- `tray` feature with a `TrayController` API. The Windows backend is not implemented
+  yet: `TrayController::new` returns an error.
+- IPC message size cap (`MAX_IPC_MESSAGE_BYTES`, 16 KiB), checked before parsing.
+- CLI `--target webview` and `dev --desktop-webview` wiring; `examples/counter-webview`.
+
+### Changed
+- **Breaking:** `WebviewOptions::allowed_actions: Vec<String>` is replaced by
+  `WebviewOptions::acl: Acl`. Use `WebviewOptions::with_allowed_actions` for the
+  old flat list of action names.
+
+### Fixed
+- The crate compiles again. It is ported to the wry 0.57 API (`WebViewBuilder`,
+  `Request<String>` IPC handlers), and `tao` 0.37 is a regular dependency because wry
+  needs a tao window and event loop. The public API is unchanged by the port.
+- The 16 KiB IPC size cap now runs on the production dispatch path. Previously it
+  was only checked in a test-only helper.
+- Sidecar supervisor treats a non-zero exit, a signal or a failed launch as a crash
+  (reported through `SidecarConfig::crash_reporter`). Shutdown stops a running child.
 
 ## [0.1.0]
 

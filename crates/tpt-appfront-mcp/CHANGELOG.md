@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `McpServer::run()` JSON-RPC 2.0 stdio loop (newline-delimited) with built-in
-  `query_state`/`navigate` tools plus one generated tool per interactive node's
-  `AiMeta`.
+- `McpServer::run_stdio()`, a newline-delimited JSON-RPC 2.0 loop over stdin and stdout
+  that handles `initialize`, `tools/list` and `tools/call`.
+- Lines over 16 KiB, and malformed lines, are dropped without a response.
 
 ## [0.1.0]
 

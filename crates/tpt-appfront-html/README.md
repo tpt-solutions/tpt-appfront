@@ -2,20 +2,31 @@
 
 The semantic HTML (SSR/SSG) backend for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
 
-Renders a `UITree<Msg>` to a semantic HTML5 string — used for server-side
-rendering, static site generation, and crawler/SEO responses. Because the same
-`UITree` drives every backend, your server-rendered HTML and your client-rendered
-DOM are guaranteed to match.
+Renders a `UITree<Msg>` to a semantic HTML5 string, for server-side rendering,
+static site generation, and crawler/SEO responses. Because the same `UITree`
+drives every backend, the server-rendered HTML and the client-rendered DOM come
+from the same tree.
 
-## Features
+## API
 
-- **`render`** — a semantic HTML fragment (no `<html>`/`<head>`/`<body>`).
-- **`render_page`** — a full HTML5 page with OpenGraph meta tags (for social bots).
-- **`data-ai-action` / `data-ai-params`** attributes — emitted for interactive
-  nodes so AI crawlers/agents can discover actions.
-- **Pure and backend-agnostic** — `UITree`/`NodeMeta` carry no DOM assumptions,
-  so SSR ignores `VirtualScroll` (renders the full list, which crawlers need) while
-  the DOM/canvas backends window it.
+- **`render(ui: &UITree<Msg>) -> String`**: an HTML fragment, with no
+  `<html>`, `<head>`, or `<body>`.
+- **`render_page(ui: &UITree<Msg>, title: &str, description: &str) -> String`**:
+  a full HTML5 document with OpenGraph `og:title` and `og:description` tags.
+- **`esc_attr(s: &str) -> String`** and **`esc_script_json(json: &str) -> String`**:
+  the escaping helpers the renderer uses, exposed for callers that build markup
+  around the output.
+
+Output details:
+
+- Interactive nodes get `data-ai-action` and `data-ai-params` attributes, so AI
+  crawlers and agents can find actions.
+- Utility classes from `tpt_appfront_core::styling` are emitted as inline `style`
+  attributes.
+- Accessibility attributes (ARIA roles, `aria-label`, `<label for>`) are emitted
+  for form controls and grids.
+- `VirtualScroll` is ignored. The full list is rendered, because crawlers need the
+  complete content. The DOM and canvas backends do the windowing.
 
 ## Install
 
@@ -25,17 +36,24 @@ tpt-appfront-core = "0.1"
 tpt-appfront-html = "0.1"
 ```
 
+This crate has no Cargo features.
+
 ## Example
 
 ```rust
 use tpt_appfront_core::UITree;
 
-let html = tpt_appfront_html::render_page(&ui, "My App", "A TPT AppFront app");
-println!("{html}");
+fn home() -> String {
+    let ui: UITree<()> = UITree::container(|c| {
+        c.heading(1, "Welcome");
+        c.text("Server-rendered content for crawlers.");
+    });
+    tpt_appfront_html::render_page(&ui, "My App", "A TPT AppFront app")
+}
 ```
 
-Usually you'll serve this from `tpt-appfront-server`'s smart router, which picks
-HTML automatically for crawler/social clients. See
+In production, `tpt-appfront-server`'s smart router usually picks this backend
+for crawler and social-bot requests. See
 [docs/quickstart.md](https://github.com/tpt-solutions/tpt-appfront/blob/main/docs/quickstart.md).
 
 ## License

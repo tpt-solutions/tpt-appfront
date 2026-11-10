@@ -2,24 +2,48 @@
 
 The MCP (Model Context Protocol) server for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
 
-Auto-generates one MCP tool per interactive `UITree` node's `AiMeta`
-(`action`/`params`/`description`), wired to `tpt_appfront_core::query_state` /
-`tpt_appfront_core::navigate_to` plus an app-supplied command handler (mirroring
-`tpt-appfront-server`'s `POST /command`). Any AppFront app becomes drivable by
-Claude, or any other MCP client, with zero custom integration work.
+It turns an AppFront app's agent API into MCP tools. It builds one tool per
+interactive node that has an AI action, plus two built-in tools, and sends each call
+to your app. Any MCP client, such as Claude Desktop or an editor integration, can then
+drive the app without custom integration code.
 
-## Features
+## Public API
 
-- **Auto tool generation** — `McpServer::new(ui, agent_state, on_command)` turns
-  each interactive node's `AiMeta` into an MCP tool (`query_state`, `navigate`, plus
-  one per node action).
-- **JSON-RPC 2.0 over stdio** — newline-delimited, the standard transport for
-  local MCP servers (Claude Desktop, editor integrations, `mcp-cli`, …). No async
-  runtime.
-- **`McpCommand`** — the inbound shape for tool calls that don't match a built-in
-  (`action` + `params`), exactly mirroring `tpt_appfront_server::Command`.
-- **`run()`** — a blocking stdio loop: one request per line in, one response per
-  line out.
+Re-exported from `src/lib.rs`:
+
+- `McpServer<Msg>`
+  - `McpServer::new(name, version, build_ui, on_command)`, where `build_ui` is
+    `impl Fn() -> UITree<Msg> + 'static` and `on_command` is
+    `impl Fn(McpCommand) -> McpCommandResult + 'static`.
+  - `run_stdio(&self) -> std::io::Result<()>` runs the transport. It blocks until stdin
+    closes.
+- `McpCommand { action: String, params: HashMap<String, serde_json::Value> }`, the
+  input to `on_command`. `action` is the name of the tool that was called.
+- `McpCommandResult`, with `McpCommandResult::ok(message)` and
+  `McpCommandResult::err(message)`. An error result is returned to the client with
+  `isError: true`.
+
+## Tools
+
+- `query_state`: returns a JSON snapshot of the current UI from
+  `tpt_appfront_core::query_state`.
+- `navigate`: takes a required `route` argument and calls
+  `tpt_appfront_core::navigate_to`.
+- One tool per interactive node whose AI metadata has an action. The tool name is the
+  action, and each parameter from the node's metadata becomes a string argument. Calls
+  to these tools go to `on_command`.
+
+`build_ui` runs again for each `tools/list` and `query_state` call, so the tools
+always reflect the current state.
+
+## Transport
+
+- JSON-RPC 2.0, one message per line, on stdin and stdout. Write logs to stderr,
+  because stdout carries the protocol.
+- `initialize` reports protocol version `2024-11-05`.
+- Lines longer than 16 KiB, and lines that are not valid JSON, are dropped without a
+  response.
+- No async runtime is needed.
 
 ## Install
 
@@ -29,17 +53,28 @@ tpt-appfront-core = "0.1"
 tpt-appfront-mcp = "0.1"
 ```
 
+This crate has no Cargo feature flags.
+
 ## Example
 
 ```rust
-use tpt_appfront_mcp::McpServer;
+use tpt_appfront_mcp::{McpCommandResult, McpServer};
 
-let mut server = McpServer::new(ui, agent_state, |cmd| {
-    // `cmd.action` validated against your node AiMeta actions
-    Ok(serde_json::json!({ "ok": true }))
-});
-server.run(); // blocks on stdin/stdout
+fn main() -> std::io::Result<()> {
+    let server = McpServer::new(
+        "my-app",
+        "0.1.0",
+        || build_ui(), // your app's UITree<Msg>
+        |cmd| {
+            // `cmd.action` matches a node's AI action name
+            McpCommandResult::ok(format!("ran {}", cmd.action))
+        },
+    );
+    server.run_stdio()
+}
 ```
+
+An MCP client launches this binary and talks to it over stdio.
 
 ## License
 

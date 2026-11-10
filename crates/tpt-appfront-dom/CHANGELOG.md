@@ -8,19 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `Textarea`/`Checkbox`/`Select`/`Radio` node kinds now render and reconcile, with
-  `on_input`/`on_toggle` wiring (Phase 17).
-- `MountedRoot::unmount` drops every tracked listener and `EffectHandle`, so route
-  changes / modal closes no longer leak closures.
-- `reactive_text` returns `(Node, EffectHandle)` so the caller owns the lifetime;
-  `requestAnimationFrame` coalescing of text updates into one flush per frame.
-- Streaming hydration (`hydrate`): attaches listeners to server-rendered DOM via
-  `data-appfront-id`, islands-only hydration of interactive subtrees.
-- Accessibility: form controls (`Input`/`Textarea`/`Select`/`Checkbox`/`Radio`) emit a
-  stable `id` (`af-<data_appfront_id>`); `Checkbox`/`Radio` use an explicit `<label for>`
-  association; `Select` surfaces `meta.ai.description` as `aria-label`; `DataGrid` renders
-  `role="grid"` plus `role="row"`/`role="columnheader"`/`role="gridcell"` (reconciliation
-  re-applies the same roles when it recreates rows/headers).
+- `MountedRoot::render` reconciles a mounted tree against a new `UITree` in place.
+  `MountedRoot::unmount` removes every tracked event listener and drops every
+  `EffectHandle` the mount owned, so route changes and modal closes don't leak.
+- `Textarea`, `Checkbox`, `Select` and `Radio` nodes render and reconcile, wired to
+  `on_input` and `on_toggle`.
+- `hydrate` attaches listeners to server-rendered DOM matched by `data-appfront-id`.
+  Only interactive subtrees are hydrated; static content is left as is.
+- Accessibility: form controls get a stable `id` (`af-<data_appfront_id>`).
+  Checkbox and Radio are associated with their text through `<label for>`. `Select`
+  uses `meta.ai.description` as `aria-label`. `DataGrid` emits `role="grid"` with
+  `row`, `columnheader` and `gridcell` roles, and reconciliation reapplies them when
+  it recreates rows or headers.
+- `render_with` and `mount_router_with` take an `auto_optimize` flag. When it is set,
+  large unconfigured lists are windowed automatically.
+
+### Changed
+- **Breaking:** `mount` returns `Result<MountedRoot<Msg>, JsValue>` instead of
+  `Result<(), JsValue>`, so the caller can keep the handle and call `unmount` later.
 
 ## [0.1.0]
 
