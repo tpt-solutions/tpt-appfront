@@ -37,6 +37,21 @@ windows-sys = { version = "0.52", features = [
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb-protocol = { version = "0.13", features = ["std"] }
 
+# Internal window layer, macOS backend (crate::platform::macos). The objc2 family:
+# MIT, or Zlib/Apache-2.0/MIT. AppKit windows and Core Graphics drawing only.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSEvent",
+    "NSGraphicsContext",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+objc2-core-graphics = "0.3"
+objc2-foundation = "0.3"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [

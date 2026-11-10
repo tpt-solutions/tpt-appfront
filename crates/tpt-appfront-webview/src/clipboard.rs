@@ -1,9 +1,9 @@
 //! Clipboard access, surfaced to the hosted page as IPC actions.
 //!
 //! On Windows this uses the Win32 clipboard directly (`windows-sys`), reading and
-//! writing `CF_UNICODETEXT`. Other platforms return an "unavailable" error. The
-//! previous implementation used `arboard`, which pulled in `x11rb` and the banned
-//! `gethostname`, so macOS clipboard support was lost with it.
+//! writing `CF_UNICODETEXT`. On macOS it uses `NSPasteboard` (`objc2-app-kit`),
+//! reading and writing `NSPasteboardTypeString`. Other platforms return an
+//! "unavailable" error.
 //!
 //! The page calls `window.__appfront.post("clipboard.read", {})` or
 //! `window.__appfront.post("clipboard.write", { text })`. Capability-gated by
@@ -13,7 +13,7 @@
 use serde_json::json;
 
 /// Returned by clipboard calls on platforms without a native clipboard backend yet.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 const UNAVAILABLE: &str =
     "native clipboard is not available on this platform yet; use navigator.clipboard in the page";
 
@@ -144,7 +144,37 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+
+    /// Reads the general pasteboard's string, or an empty string when it has none.
+    pub(super) fn read_text() -> Result<String, String> {
+        // SAFETY: `generalPasteboard` and `stringForType` have no preconditions beyond
+        // running on any thread that AppKit allows for the pasteboard, which is the
+        // IPC thread here.
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let text = unsafe { pasteboard.stringForType(NSPasteboardTypeString) };
+        Ok(text.map(|s| s.to_string()).unwrap_or_default())
+    }
+
+    /// Replaces the general pasteboard's contents with `text`.
+    pub(super) fn write_text(text: &str) -> Result<(), String> {
+        let value = NSString::from_str(text);
+        // SAFETY: as in `read_text`. `clearContents` and `setString:forType:` take
+        // valid object references, and `value` outlives both calls.
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        if unsafe { pasteboard.setString_forType(&value, NSPasteboardTypeString) } {
+            Ok(())
+        } else {
+            Err("could not write to the macOS pasteboard".to_string())
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use super::UNAVAILABLE;
 

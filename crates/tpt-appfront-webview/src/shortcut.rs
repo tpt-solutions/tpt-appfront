@@ -371,6 +371,9 @@ mod imp {
 mod imp {
     use super::ShortcutError;
 
+    // The fields are only read by the Windows backend. Registration fails here, so
+    // nothing reads them on this platform.
+    #[allow(dead_code)]
     pub(super) struct Entry {
         pub id: String,
         pub modifiers: u32,
