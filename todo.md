@@ -323,3 +323,67 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 
 ### Deferred ideas
 Design tokens/theming, i18n `t!`, `.tptrec` session record/replay, `view!` formatter/LSP, state-preserving hot reload, static OpenAPI/`llms.txt` export, AI-powered layout optimization ("Layer 5" of the spec: an LLM proposes structural UI changes; dropped from the active plan, see Phase 23a).
+
+## Phase 24 — 2026-11-10 Project Review: Stubs, Parity, Adoption, Licensing
+Source: full-project review (plan: `.claude/plans/review-project-fix-any-zippy-lightning.md`). Staged A → B → C → D → E; each stage ends green on build/test/clippy.
+
+### 24a — Stubs and stale tracking
+- [ ] `doctor`: real `cargo packager --version` probe (currently `ok: on_path("cargo")`, `main.rs` ~1637); add `doctor --fix` (`rustup target add wasm32-unknown-unknown`, `cargo install trunk`); webview system-libs check; `dev`/`build` run the prereq check up front
+- [ ] Canvas: remove the advisory-only `texture_caching` flag from `auto_optimizer.rs`/`app.rs` and document the optimizer as virtual-scroll only
+- [ ] Canvas: paint real `Image` nodes via `egui_extras` loaders (`paint.rs`, `layout.rs`); keep `Media` as a labelled fallback and document it
+- [ ] Canvas: parity test of `canvas_style_for` against `tpt_appfront_core::styling::UTILITIES` (mapped or explicitly allowlisted); map the cheap missing utilities
+- [ ] CLI `optimize`: parse `Cargo.toml` with `toml` instead of `contains("opt-level")`; `--auto` applies the size profile instead of only printing
+- [ ] CLI `generate.rs`: remove stale "`--llm` is future work" comment; confirm `--llm` routing
+- [ ] Webview: implement the Win32 tray backend (`tray.rs`, `Shell_NotifyIconW`, message window, menu, event pump); default no-op action handler (`lib.rs` ~766) returns `Err("no handler")`
+- [ ] `todo.md` hygiene: close stale `[~]` (Phase 3 milestone, DOM a11y), dedupe the umbrella-crate and README/matrix lines, fix stale notes ("uncommitted in working tree", MCP auto-wiring contradiction, styling "not yet consumed", `Image`/`Link` `on_click`)
+- [ ] CI: add a webview compile-only job (all jobs currently `--exclude tpt-appfront-webview`)
+- [ ] Review and commit the uncommitted rustdoc-link fixes in `client_kind.rs`/`router.rs` (check CRLF warnings)
+
+### 24b — Backend parity
+- [ ] Confirm whether canvas/TUI dispatch `on_input`/`on_toggle` (none found in `src/*.rs`); if not, wire them so `FormState` binds on every backend
+- [ ] Canvas `Select`/`Radio` interactive (currently painted text)
+- [ ] Router mounting helper for canvas and TUI (only DOM has `mount_router`)
+- [ ] Backend capability matrix doc
+- [ ] Refresh `docs/ai-schema.md` (Textarea/Checkbox/Select/Radio/Portal/Image/Link/Media, `ai.title`, `/command` + MCP, garbled intro)
+
+### 24c — Adoption tooling
+- [ ] Release prep: exercise `release.yml` dry run, umbrella metadata + per-crate CHANGELOG, webview workspace inheritance, update README/quickstart install lines. **Tag and publish only on explicit go-ahead**
+- [ ] `trybuild` compile-fail tests for `view!`/`#[component]` (`crates/tpt-appfront-macros/tests/ui/`); better errors (nearest tag, valid attrs per tag, custom-component typo heuristic)
+- [ ] Umbrella `full`/`web` feature bundles
+- [ ] mdBook docs site + rustdoc on GitHub Pages; missing guides: routing, forms/`FormState`, `Resource`/`Suspense`, `Store`, styling/`class!`, hydration/islands, MCP, smart-router options, webview IPC/ACL, `view!` reference
+- [ ] `insta`-style `assert_snapshot!` (update flag) and a signal/`Resource` test driver in `tpt-appfront-test`; `assert_accessible` action-params check
+- [ ] `view!` tooling: `tpt-appfront fmt` formats macro bodies; VS Code snippets (then TextMate grammar extension)
+- [ ] `dev`: replace the polling watcher with `notify`; browser dev error overlay
+- [ ] CLI: `add store|route|form|test|template`; `migrate` (wire `ingest` + `docs/migration/*`); cargo-generate template repo; PR-friendly `CONTRIBUTING.md`
+
+### 24d — Innovative additions
+- [ ] `llms.txt` / OpenAPI export from the AI schema
+- [ ] Design tokens/theming and `t!` i18n shared across backends
+- [ ] `.tptrec` Msg-stream record/replay for bug reports and tests
+- [ ] `appfront.toml` project config (spec section 5) consumed by CLI `dev`/`build`
+- [ ] State-preserving hot reload
+
+### 24e — License policy: no Apache-only dependencies
+- [x] Policy decision: keep `Apache-2.0` in `deny.toml` `[licenses].allow` (dual-licensed crates pass) and ban Apache-only crates by name in `[bans].deny`. Removing Apache from the allowlist was tried and rejected the whole canvas stack, the GTK bindings and `ring`/`rustls` (`Apache-2.0 AND ISC`), so it is not viable
+- [x] Listed 19 Apache-only crates in `[bans].deny` (`winit`, `eframe`, `egui-winit`, `accesskit_winit`, the `glutin` family, `self_cell`, `target-lexicon`, and others). `cargo deny check bans` now fails on 17 of them, all in the canvas tree
+- [ ] **Blocked:** `cargo deny check` fails until each banned crate is replaced or its backend is removed. The `deny` CI job is red. Needs a decision on the canvas backend (see Phase 24e note)
+- [x] `ring` removed from the tree. The CLI's `llm` feature now shells out to the system `curl` (`crates/tpt-appfront-cli/src/llm/http.rs`); `ureq`/`rustls` are gone from the CLI. The server's dev-only `ureq` no longer enables TLS (`crates/tpt-appfront-server/Cargo.toml`). `ring` is on the ban list so it cannot return. Verified: CLI and server tests pass, and a live round trip against a local server
+- [ ] Canvas rewrite on **miniquad** (MIT), replacing winit, eframe, egui, egui-winit, egui_glow, epaint, accesskit_winit and the glutin family. Also drops `self_cell` (from `cosmic-text` and `epaint`). Needs a plan: text layout, paint, input and AccessKit are rebuilt, and the `node-graph` example's raw-egui escape hatch goes with it
+- [ ] `target-lexicon`: comes from the Linux GTK build chain (`tao` → `gtk` → `system-deps` → `cfg-expr`) under `tpt-appfront-webview`. Resolved by the internal Linux backend in 24f (design: `docs/linux-webview-backend.md`)
+- [ ] Replace, feature-disable, or report each banned crate; no silent per-crate exceptions
+- [ ] Check the license of every new dependency added in 24a–24d (`toml`, `notify`, `trybuild`, `insta`, `egui_extras`, Win32 bindings) before adding
+- [ ] Document the policy in `deny.toml` and `CONTRIBUTING.md`
+
+### 24f — Linux webview without GTK build-time deps
+Design: `docs/linux-webview-backend.md`. Load GTK3 and WebKitGTK at runtime (`libloading`) instead of building `gtk-rs` through `system-deps`. Removes `gtk-sys`, `system-deps`, `cfg-expr` and `target-lexicon` from the Linux tree. Windows and macOS keep `tao` + `wry`. Reference: `tpt-shell`'s GTK3 module (MIT/Apache-2.0; keep notices and record in `THIRD_PARTY_NOTICES`). No dependency on `tpt-shell` itself.
+
+- [x] Stage 1: `tao`/`wry` gated to `cfg(not(target_os = "linux"))`; `serve()` uses the `http` crate directly. Builder and handler types moved to `app.rs` (platform-neutral); the native loop is `manager.rs`, gated off Linux; `linux/mod.rs` is a stub that returns "not implemented" until stage 3. Seam is `AppBuilder::run_native`, not a trait: a trait would have been guessed before stage 3 shows what Linux needs. Windows: 15 tests pass and clippy is clean, same as baseline. Linux tree: no `gtk`, `tao`, `wry`, `system-deps`, `cfg-expr` or `target-lexicon`. **Not verified locally:** the Linux `cargo check`. `rfd` → `ashpd` → `wayland-sys` needs `pkg-config` on Linux, which this Windows host lacks. The Ubuntu CI job must cover it. Built on the uncommitted `wry` 0.57 / `tao` 0.37 migration already in the working tree
+- [ ] Stage 1 follow-up: `cargo-deny` still reports `target-lexicon` as banned. Its graph merges per-target resolutions, so `tao` (Windows/macOS) brings its Linux GTK edge into the merged graph. Each shipping target checked separately is clean (`cargo tree --target` for Windows, macOS and Linux). A `[graph] targets` list did not fix it. Needs a decision: a documented exception for this, or another way to make `cargo-deny` evaluate per target
+- [ ] Stage 2: `linux/loader.rs` and `linux/sys.rs`. Symbol table (GTK 3, GLib/GObject, WebKitGTK 4.1), each symbol checked against headers before use; `webkit_web_view_evaluate_javascript` with `run_javascript` fallback. Unit tests for missing-library and missing-symbol errors (no display needed)
+- [ ] Stage 3: `linux/window.rs`, `linux/webview.rs`, `linux/main_loop.rs`: window title, size, position, visibility, close request (`delete-event`), `load_uri`, `evaluate_script`, `g_main_context_iteration` loop
+- [ ] Stage 4: `linux/scheme.rs` (`app://` via `webkit_web_context_register_uri_scheme`, calls the shared `serve()`) and `linux/ipc.rs` (script message handler; reuse ACL and rate limit). Initialization script via `WebKitUserScript`
+- [ ] Stage 5: CI job `linux-webview` on `ubuntu-latest`: install `libgtk-3-0`, `libwebkit2gtk-4.1-0`, `xvfb`; `xvfb-run cargo test -p tpt-appfront-webview`; run `examples/counter-webview` under `xvfb-run` and check a clean timed exit
+- [ ] Stage 6: remove the Linux `tao`/`wry` path. Acceptance: `cargo tree -p tpt-appfront-webview --target x86_64-unknown-linux-gnu` has no `gtk`, `gtk-sys`, `tao`, `wry`, `system-deps`, `cfg-expr`, `target-lexicon`; `cargo deny --all-features check bans` passes for the webview
+- [ ] Drag-and-drop and devtools on Linux: not in scope; return `Unsupported` and document in `docs/troubleshooting.md`. Follow-up task after stage 6
+- [ ] Add `THIRD_PARTY_NOTICES` entry for any code copied from `tpt-shell`
+- [ ] Verify the other Linux-only deps (`arboard`, `rfd`, `keyring`, `notify-rust`, `global-hotkey`) pass the license rule on Linux. They have no GTK, but they are not yet checked against the banned list on the Linux target
