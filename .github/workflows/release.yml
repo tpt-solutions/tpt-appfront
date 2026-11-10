@@ -51,6 +51,14 @@ jobs:
           echo "dry run: $DRY_RUN"
           for c in $crates; do
             if [ "$DRY_RUN" = "true" ]; then
+              # `cargo package` resolves the umbrella's optional `tpt-appfront-test` dependency
+              # against crates.io, so the umbrella cannot be packaged until that crate is
+              # published. The real publish below runs in this order, so it is not blocked.
+              # Checked locally: every other crate packages with --no-verify.
+              if [ "$c" = "tpt-appfront" ]; then
+                echo "skip $c in dry run: packages only after tpt-appfront-test is on crates.io"
+                continue
+              fi
               cargo package -p "$c" --no-verify --allow-dirty
             else
               cargo publish -p "$c"

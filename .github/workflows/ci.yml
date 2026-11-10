@@ -154,6 +154,26 @@ jobs:
         # example exits after its frame count, so a hang fails via the timeout.
         run: timeout 180 xvfb-run -a cargo run -p tpt-appfront-canvas --example platform_smoke -- 300
 
+  webview-linux:
+    name: Webview (Linux compile and clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          # wayland-sys (pulled in by rfd's xdg-portal backend) probes libwayland-client
+          # through pkg-config while it builds. GTK3 and WebKitGTK are loaded at runtime on
+          # Linux (docs/linux-webview-backend.md), so they are not needed to compile.
+          sudo apt-get install -y pkg-config libwayland-dev
+      # Compile-only for now: the webview's Linux tests and the window itself need a display.
+      - run: cargo build -p tpt-appfront-webview
+      - run: cargo clippy -p tpt-appfront-webview --all-targets -- -D warnings
+
   canvas-macos:
     name: Canvas (macOS build and tests)
     runs-on: macos-latest

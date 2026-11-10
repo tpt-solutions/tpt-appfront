@@ -70,10 +70,10 @@ deny = [
     { crate = "khronos_api", reason = "Apache-2.0 only (Phase 24e)" },
     { crate = "approx", reason = "Apache-2.0 only (Phase 24e)" },
     { crate = "codespan-reporting", reason = "Apache-2.0 only (Phase 24e)" },
-    { crate = "gethostname", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "gethostname", reason = "Apache-2.0 only (Phase 24e); the webview no longer depends on x11rb" },
     { crate = "nonzero_ext", reason = "Apache-2.0 only (Phase 24e)" },
     { crate = "self_cell", reason = "Apache-2.0 OR GPL-2.0 only; Apache taken (Phase 24e)" },
-    { crate = "sync_wrapper", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "sync_wrapper", reason = "Apache-2.0 only (Phase 24e); removed from the tree when axum and tower were dropped" },
     # Exception (Phase 24f stage 1): only `cfg-expr` may use target-lexicon. It reaches us
     # solely as a build-script dependency of GTK on Linux, which the Linux backend no
     # longer builds. `cargo-deny` merges per-target graphs, so the GTK edge from `tao`
