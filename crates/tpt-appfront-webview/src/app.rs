@@ -70,6 +70,8 @@ pub struct AppBuilder {
     pub(crate) max_commands_per_second: u32,
     pub(crate) sidecar: Option<SidecarConfig>,
     pub(crate) shortcuts: Vec<(String, String)>,
+    #[cfg(feature = "tray")]
+    pub(crate) tray: Option<(String, Vec<crate::tray::TrayMenuItem>)>,
     pub(crate) deeplink_scheme: Option<String>,
     pub(crate) deeplink_dispatcher: Option<DeepLinkDispatcher>,
     pub(crate) single_instance: bool,
@@ -91,6 +93,8 @@ impl AppBuilder {
             max_commands_per_second: 20,
             sidecar: None,
             shortcuts: Vec::new(),
+            #[cfg(feature = "tray")]
+            tray: None,
             deeplink_scheme: None,
             deeplink_dispatcher: None,
             single_instance: false,
@@ -128,6 +132,20 @@ impl AppBuilder {
     /// Registers a global shortcut under `id` with spec string `spec`.
     pub fn with_shortcut(mut self, id: String, spec: String) -> Self {
         self.shortcuts.push((id, spec));
+        self
+    }
+
+    /// Adds a system tray icon with `tooltip` and a context menu of `items`. Requires the `tray`
+    /// feature. Menu presses reach `on_command` as `tray.menu` with `{"id": ...}`, and left clicks
+    /// as `tray.activate`. If the icon cannot be created, the error is logged and the app runs
+    /// without a tray.
+    #[cfg(feature = "tray")]
+    pub fn with_tray(
+        mut self,
+        tooltip: impl Into<String>,
+        items: Vec<crate::tray::TrayMenuItem>,
+    ) -> Self {
+        self.tray = Some((tooltip.into(), items));
         self
     }
 
