@@ -2,6 +2,12 @@
 //! of `docs/linux-webview-backend.md`. Until then, running an app on Linux returns a
 //! clear error instead of building `tao`/`wry`, which is what pulls in `target-lexicon`.
 
+// Stage 2 builds the loader and symbol table; stage 3 is the first caller.
+#[allow(dead_code)]
+mod loader;
+#[allow(dead_code)]
+mod sys;
+
 use std::rc::Rc;
 
 use anyhow::{bail, Result};

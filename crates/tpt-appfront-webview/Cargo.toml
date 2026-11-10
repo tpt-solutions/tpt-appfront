@@ -30,6 +30,10 @@ fs4 = "0.9"
 tao = "0.37"
 wry = "0.57"
 
+# Linux loads GTK3 and WebKitGTK at runtime (docs/linux-webview-backend.md).
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.52", optional = true, features = [

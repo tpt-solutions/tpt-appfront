@@ -6423,6 +6423,7 @@ dependencies = [
  "governor",
  "http",
  "keyring",
+ "libloading",
  "notify-rust",
  "rfd",
  "serde",
