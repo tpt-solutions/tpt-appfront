@@ -147,6 +147,49 @@ impl<'a> Canvas<'a> {
 
     /// Draws a straight line of `thickness` pixels from `(x0, y0)` to
     /// `(x1, y1)`, with round caps.
+    /// Draws `rgba` (`src_w` x `src_h` pixels, RGBA8, row-major) scaled into
+    /// `dst`. Sampling is nearest-neighbour. The image keeps its aspect ratio and is
+    /// centred in `dst`, so the leftover space is letterboxed. Pixels with alpha 0
+    /// leave the background unchanged, and partial alpha blends over it.
+    ///
+    /// Does nothing when `rgba` is shorter than `src_w * src_h * 4`.
+    pub fn draw_rgba_fit(&mut self, dst: Rect, src_w: u32, src_h: u32, rgba: &[u8]) {
+        let needed = src_w as usize * src_h as usize * 4;
+        if dst.is_empty() || src_w == 0 || src_h == 0 || rgba.len() < needed {
+            return;
+        }
+        let (dw, dh) = (i64::from(dst.w), i64::from(dst.h));
+        let (sw, sh) = (i64::from(src_w), i64::from(src_h));
+        // The largest size that fits `dst` at the source aspect ratio.
+        let (fw, fh) = if dw * sh <= dh * sw {
+            (dw, (dw * sh / sw).max(1))
+        } else {
+            ((dh * sw / sh).max(1), dh)
+        };
+        let fx = i64::from(dst.x) + (dw - fw) / 2;
+        let fy = i64::from(dst.y) + (dh - fh) / 2;
+        let visible = Rect::new(fx as i32, fy as i32, fw as i32, fh as i32).intersect(self.clip);
+        if visible.is_empty() {
+            return;
+        }
+        let stride = src_w as usize;
+        for y in visible.y..visible.y + visible.h {
+            let sy = ((i64::from(y) - fy) * sh / fh).min(sh - 1) as usize;
+            let row = y as usize * self.width;
+            for x in visible.x..visible.x + visible.w {
+                let sx = ((i64::from(x) - fx) * sw / fw).min(sw - 1) as usize;
+                let s = (sy * stride + sx) * 4;
+                let alpha = rgba[s + 3];
+                if alpha == 0 {
+                    continue;
+                }
+                let color = rgb(rgba[s], rgba[s + 1], rgba[s + 2]);
+                let idx = row + x as usize;
+                self.pixels[idx] = blend(self.pixels[idx], color, alpha);
+            }
+        }
+    }
+
     pub fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: Rgb) {
         let (dx, dy) = (x1 - x0, y1 - y0);
         let steps = dx.abs().max(dy.abs()).ceil().max(1.0) as usize;
@@ -345,5 +388,65 @@ mod tests {
             .iter()
             .enumerate()
             .all(|(i, &p)| p == WHITE || i % 120 < 10));
+    }
+}
+
+#[cfg(test)]
+mod image_fit_tests {
+    use super::*;
+
+    /// 2x2 source, row-major: TL red, TR green, BL blue, BR white. All opaque.
+    const QUAD: [u8; 16] = [
+        255, 0, 0, 255, 0, 255, 0, 255, //
+        0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+
+    #[test]
+    fn scales_nearest_neighbour_into_a_larger_box() {
+        // 2x2 into 4x4 at scale 2: each source pixel becomes a 2x2 block.
+        let mut buf = vec![0u32; 16];
+        let mut c = Canvas::new(&mut buf, 4, 4);
+        c.draw_rgba_fit(Rect::new(0, 0, 4, 4), 2, 2, &QUAD);
+        let at = |x: usize, y: usize| buf[y * 4 + x];
+        assert_eq!(at(0, 0), 0xff0000);
+        assert_eq!(at(1, 1), 0xff0000);
+        assert_eq!(at(2, 0), 0x00ff00);
+        assert_eq!(at(3, 1), 0x00ff00);
+        assert_eq!(at(0, 2), 0x0000ff);
+        assert_eq!(at(2, 3), 0xffffff);
+    }
+
+    #[test]
+    fn letterboxes_when_the_aspect_ratio_differs() {
+        // 2x2 into a 4x2 box: the image is 2x2 centred, so columns 0 and 3 stay empty.
+        let mut buf = vec![0u32; 8];
+        let mut c = Canvas::new(&mut buf, 4, 2);
+        c.draw_rgba_fit(Rect::new(0, 0, 4, 2), 2, 2, &QUAD);
+        assert_eq!(buf[0], 0);
+        assert_eq!(buf[3], 0);
+        assert_eq!(buf[1], 0xff0000);
+        assert_eq!(buf[2], 0x00ff00);
+        assert_eq!(buf[4 + 1], 0x0000ff);
+        assert_eq!(buf[4 + 2], 0xffffff);
+    }
+
+    #[test]
+    fn transparent_pixels_keep_the_background() {
+        let mut rgba = QUAD;
+        rgba[3] = 0; // the red pixel is fully transparent
+        let mut buf = vec![0x123456u32; 4];
+        let mut c = Canvas::new(&mut buf, 2, 2);
+        c.draw_rgba_fit(Rect::new(0, 0, 2, 2), 2, 2, &rgba);
+        assert_eq!(buf[0], 0x123456, "transparent pixel must not paint");
+        assert_eq!(buf[1], 0x00ff00);
+    }
+
+    #[test]
+    fn short_buffers_and_empty_boxes_draw_nothing() {
+        let mut buf = vec![7u32; 4];
+        let mut c = Canvas::new(&mut buf, 2, 2);
+        c.draw_rgba_fit(Rect::new(0, 0, 2, 2), 2, 2, &QUAD[..8]);
+        c.draw_rgba_fit(Rect::new(0, 0, 0, 0), 2, 2, &QUAD);
+        assert_eq!(buf, vec![7u32; 4]);
     }
 }

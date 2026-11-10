@@ -14,6 +14,12 @@ tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
 taffy = "0.12"
 # Reads glyph outlines for the internal painter (crate::glyphs). MIT/Apache-2.0.
 ttf-parser = "0.25"
+# Image decoders for `NodeKind::Image` (src/image.rs). MIT OR Apache-2.0 (zune-jpeg and zune-core also Zlib).
+png = "0.18"
+zune-jpeg = "0.5.15"
+zune-core = "0.5.1"
+gif = "0.14"
+image-webp = "0.2"
 
 # Internal window layer (crate::platform). Win32 FFI only; MIT/Apache-2.0.
 [target.'cfg(windows)'.dependencies]

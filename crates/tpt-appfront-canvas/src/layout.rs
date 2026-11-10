@@ -219,10 +219,7 @@ pub fn build<'a, Msg>(
                 build_data_grid(tree, measurer, ui, columns, rows)
             }
         }
-        NodeKind::Image { alt, .. } => {
-            let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
-            build_text_leaf(tree, measurer, ui, alt, fs, 0.0, 0.0)
-        }
+        NodeKind::Image { .. } => build_image_box(tree, ui),
         NodeKind::Link { text, .. } => {
             let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
             build_text_leaf(tree, measurer, ui, text, fs, 0.0, 0.0)
@@ -345,6 +342,35 @@ fn build_text_leaf<'a, Msg>(
 /// A zero-width spacer leaf of a fixed pixel height, used to preserve the
 /// scrollable area's total height when a `List` is windowed (so the scrollbar
 /// still matches the full, unvirtualized item count).
+/// Default size of an image box, in px. Decoded images are fitted into it, aspect
+/// ratio kept, so layout never depends on whether an image has loaded.
+pub const IMAGE_BOX_WIDTH: f32 = 240.0;
+pub const IMAGE_BOX_HEIGHT: f32 = 160.0;
+
+/// An image leaf of fixed size. A `w-*` utility sets the width (height is 2:3 of it).
+/// The painter fits the decoded image, or the caption, into this box.
+fn build_image_box<'a, Msg>(tree: &mut TaffyTree<()>, ui: &'a UITree<Msg>) -> RenderNode<'a, Msg> {
+    let (width, height) = match canvas_style_for(&ui.meta.class).width {
+        Some(Width::Px(px)) => (px, px * 2.0 / 3.0),
+        _ => (IMAGE_BOX_WIDTH, IMAGE_BOX_HEIGHT),
+    };
+    let taffy_id = tree
+        .new_leaf(Style {
+            size: Size {
+                width: length(width),
+                height: length(height),
+            },
+            ..Default::default()
+        })
+        .expect("taffy image leaf");
+    RenderNode {
+        taffy_id,
+        ui,
+        children: Vec::new(),
+        grid_cells: None,
+    }
+}
+
 fn build_spacer(tree: &mut TaffyTree<()>, height: f32) -> NodeId {
     tree.new_leaf(Style {
         size: Size {

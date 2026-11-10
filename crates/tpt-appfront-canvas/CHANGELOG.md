@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `w-full` and `w-64` set the width of container nodes. Leaves ignore them.
 
 ### Added
+- `NodeKind::Image` paints the image. PNG, JPEG, GIF and WebP are decoded to RGBA8 with
+  pure-Rust decoders (`png`, `zune-jpeg`, `gif`, `image-webp`, all MIT OR Apache-2.0).
+  Animated GIF and WebP show their first frame. Each `src` loads and decodes once.
+  Failures and missing bytes show the caption, as before.
+- `CanvasApp` builder: `CanvasApp::new(title).size(w, h).image_loader(|src| ...).run(build, dispatch)`
+  (and `run_web` on wasm32). The loader maps a `src` to bytes. The canvas never fetches
+  anything itself.
+- Images are fitted, aspect ratio kept, into a fixed box: 240 x 160 px by default, or the
+  `w-*` width with a 2:3 height. Layout does not depend on whether an image has loaded.
 - Parity tests between `CANVAS_UTILITIES`, the core `UTILITIES` table, and the reviewed list of
   core utilities the canvas does not render. A new core utility fails until it is classified.
 - Virtual scrolling for `List` and `DataGrid` nodes that set `NodeMeta::virtual_scroll`.

@@ -20,6 +20,7 @@ use taffy::TaffyTree;
 use tpt_appfront_core::{KeyEvent, NodeKind, PointerEvent, UITree};
 
 use crate::glyphs::Font;
+use crate::image::{ImageCache, ImageLoader};
 use crate::layout::{self, GridRowKind, RenderNode, CELL_PADDING, TEXT_FONT_SIZE};
 use crate::platform::{Event, MouseButton};
 use crate::raster::{rgb, Canvas, Rect, Rgb};
@@ -82,6 +83,8 @@ pub struct Scene {
     pressed: Option<Path>,
     /// Text typed into a field: `(value the tree had, text shown)`.
     drafts: HashMap<Path, (String, String)>,
+    /// Decoded images, loaded through the host-supplied loader (see `CanvasApp`).
+    images: ImageCache,
 }
 
 impl Default for Scene {
@@ -91,6 +94,13 @@ impl Default for Scene {
 }
 
 impl Scene {
+    /// A scene whose `NodeKind::Image` nodes load their bytes through `loader`.
+    pub(crate) fn with_image_loader(loader: ImageLoader) -> Self {
+        let mut scene = Self::new();
+        scene.images = ImageCache::new(Some(loader));
+        scene
+    }
+
     pub fn new() -> Self {
         Scene {
             font: Font::bundled(),
@@ -99,6 +109,7 @@ impl Scene {
             holder: None,
             pressed: None,
             drafts: HashMap::new(),
+            images: ImageCache::default(),
         }
     }
 
@@ -702,22 +713,34 @@ fn paint_node<Msg: Clone>(
                 fg,
             );
         }
-        NodeKind::Image { src, alt } => {
-            let caption = if alt.is_empty() {
-                src.as_str()
-            } else {
-                alt.as_str()
-            };
-            text_top(
-                canvas,
-                &mut scene.font,
-                bounds.x,
-                bounds.y,
-                caption,
-                size,
-                fg,
-            );
-        }
+        NodeKind::Image { src, alt } => match scene.images.get(src) {
+            Some(img) => {
+                let dst = Rect::new(
+                    bounds.x as i32,
+                    bounds.y as i32,
+                    bounds.w as i32,
+                    bounds.h as i32,
+                );
+                canvas.draw_rgba_fit(dst, img.width, img.height, &img.rgba);
+            }
+            // No loader, the bytes are missing, or decoding failed: show the caption.
+            None => {
+                let caption = if alt.is_empty() {
+                    src.as_str()
+                } else {
+                    alt.as_str()
+                };
+                text_top(
+                    canvas,
+                    &mut scene.font,
+                    bounds.x,
+                    bounds.y,
+                    caption,
+                    size,
+                    fg,
+                );
+            }
+        },
         NodeKind::Link { href, text } => {
             let label = format!("{text} \u{2192} {href}");
             text_top(
