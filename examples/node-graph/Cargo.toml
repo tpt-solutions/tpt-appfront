@@ -5,10 +5,5 @@ edition = "2021"
 publish = false
 
 [dependencies]
-egui = "0.35"
-eframe = { version = "0.35", default-features = false, features = [
-    "default_fonts",
-    "glow",
-    "wayland",
-    "x11",
-] }
+# Only the window layer, painter, and glyphs are used; no UITree layout.
+tpt-appfront-canvas = { path = "../../crates/tpt-appfront-canvas" }
