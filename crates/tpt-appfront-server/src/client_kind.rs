@@ -64,7 +64,7 @@ const SOCIAL_BOTS: &[&str] = &[
 
 /// Detect the client kind from the `User-Agent` header value, with an
 /// extension point for custom AI-agent User-Agent substrings beyond the
-/// hardcoded [`AI_AGENTS`] list. [`detect`] is the zero-extension-point
+/// hardcoded `AI_AGENTS` list. [`detect`] is the zero-extension-point
 /// convenience wrapper.
 pub fn detect_with(
     ua: Option<&str>,

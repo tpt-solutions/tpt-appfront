@@ -130,7 +130,7 @@ pub struct SmartRouter<Msg> {
     /// to reject the request with `401 Unauthorized`. Lets an app plug in
     /// its own session/token check without the router prescribing one.
     pub auth_hook: Option<std::sync::Arc<AuthHook>>,
-    /// Extra User-Agent substrings (in addition to [`client_kind::AI_AGENTS`])
+    /// Extra User-Agent substrings (in addition to `AI_AGENTS`)
     /// that should be detected as AI agents. Set via
     /// [`SmartRouterBuilder::extra_ai_agents`].
     pub extra_ai_agents: Vec<String>,
@@ -296,7 +296,7 @@ impl<Msg> SmartRouterBuilder<Msg> {
     }
 
     /// Extends the AI-agent User-Agent detection with custom substrings, on
-    /// top of the hardcoded [`client_kind::AI_AGENTS`] list. Useful for
+    /// top of the hardcoded `AI_AGENTS` list. Useful for
     /// internal/branded agents whose UA isn't a known public crawler.
     pub fn extra_ai_agents(mut self, agents: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.extra_ai_agents = agents.into_iter().map(Into::into).collect();
