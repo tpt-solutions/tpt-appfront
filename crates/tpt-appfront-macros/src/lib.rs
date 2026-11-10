@@ -63,6 +63,29 @@ pub(crate) fn core_path() -> TokenStream2 {
     quote! { ::tpt_appfront_core }
 }
 
+/// The path the expansion uses to reach `tpt-appfront-templates` items, as the *calling* crate
+/// sees it: directly as `tpt-appfront-templates` (possibly renamed), or through the
+/// `tpt-appfront` umbrella's `templates` re-export. Falls back to `::tpt_appfront_templates`.
+pub(crate) fn templates_path() -> TokenStream2 {
+    use proc_macro_crate::{crate_name, FoundCrate};
+
+    let by_name = |found: FoundCrate| match found {
+        FoundCrate::Itself => quote! { crate },
+        FoundCrate::Name(name) => {
+            let id = format_ident!("{}", name);
+            quote! { ::#id }
+        }
+    };
+    if let Ok(found) = crate_name("tpt-appfront-templates") {
+        return by_name(found);
+    }
+    if let Ok(found) = crate_name("tpt-appfront") {
+        let umbrella = by_name(found);
+        return quote! { #umbrella::templates };
+    }
+    quote! { ::tpt_appfront_templates }
+}
+
 mod view;
 
 #[proc_macro_attribute]

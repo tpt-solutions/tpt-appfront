@@ -722,9 +722,10 @@ fn gen_node_stmt(
     let tag = node.tag.to_string();
 
     // Custom components (unknown capitalized self-closing tags) expand to a
-    // `tpt_appfront_templates` call: `<LoginForm title={..} />` becomes
-    // `parent.with(tpt_appfront_templates::login_form(
-    //     &tpt_appfront_templates::LoginFormConfig { title: (..), .. }))`.
+    // templates call (`tpt_appfront_templates`, or `tpt_appfront::templates`
+    // through the umbrella): `<LoginForm title={..} />` becomes
+    // `parent.with(templates::login_form(
+    //     &templates::LoginFormConfig { title: (..), .. }))`.
     // They are skipped by the static-cache path above and by the attribute
     // validation below (they accept whatever struct fields their `Config` has).
     // A non-self-closing custom tag is a hard error — compose those with
@@ -745,8 +746,9 @@ fn gen_node_stmt(
             .attrs
             .iter()
             .map(|(name, expr)| quote! { #name: (#expr) });
+        let templates = crate::templates_path();
         return Ok(quote! {
-            #parent.with(tpt_appfront_templates::#fn_name(&tpt_appfront_templates::#cfg_ident { #(#fields),* }));
+            #parent.with(#templates::#fn_name(&#templates::#cfg_ident { #(#fields),* }));
         });
     }
 
