@@ -63,8 +63,16 @@ impl ServerGuard {
             });
         });
 
-        // Give the server time to bind.
-        thread::sleep(Duration::from_millis(300));
+        // Wait until the server answers, instead of sleeping for a fixed time. A fixed
+        // sleep was flaky under load, because the accept loop starts a moment after bind.
+        let url = format!("http://127.0.0.1:{port}/");
+        for _ in 0..200 {
+            match ureq::get(&url).call() {
+                // Any HTTP answer, even an error status, means the server is serving.
+                Ok(_) | Err(ureq::Error::Status(..)) => break,
+                Err(_) => thread::sleep(Duration::from_millis(25)),
+            }
+        }
 
         ServerGuard {
             port,

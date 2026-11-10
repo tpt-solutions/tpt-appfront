@@ -78,18 +78,27 @@ fn decode_png(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     let mut reader = decoder.read_info().map_err(corrupt)?;
     let (width, height) = (reader.info().width, reader.info().height);
     check_size(width, height)?;
-    let mut buf = vec![0u8; reader.output_buffer_size().ok_or_else(|| corrupt("no output size"))?];
+    let mut buf = vec![
+        0u8;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| corrupt("no output size"))?
+    ];
     let info = reader.next_frame(&mut buf).map_err(corrupt)?;
     buf.truncate(info.buffer_size());
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => buf
-            .as_chunks::<3>().0.iter()
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect(),
         png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::GrayscaleAlpha => buf
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[0], p[0], p[1]])
             .collect(),
         png::ColorType::Indexed => return Err(corrupt("palette was not expanded")),
@@ -105,7 +114,9 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
     let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
     decoder.decode_headers().map_err(corrupt)?;
-    let (width, height) = decoder.dimensions().ok_or_else(|| corrupt("no dimensions"))?;
+    let (width, height) = decoder
+        .dimensions()
+        .ok_or_else(|| corrupt("no dimensions"))?;
     let (width, height) = (width as u32, height as u32);
     check_size(width, height)?;
     let rgba = decoder.decode().map_err(corrupt)?;
@@ -164,7 +175,9 @@ fn decode_webp(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     let rgba = if decoder.has_alpha() {
         buf
     } else {
-        buf.as_chunks::<3>().0.iter()
+        buf.as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect()
     };
@@ -286,7 +299,10 @@ mod tests {
         let d = decode(SOLID_JPEG).unwrap();
         assert_eq!((d.width, d.height), (16, 16));
         for px in d.rgba.as_chunks::<4>().0.iter() {
-            assert!(close(px[0], 255) && close(px[1], 0) && close(px[2], 0), "{px:?}");
+            assert!(
+                close(px[0], 255) && close(px[1], 0) && close(px[2], 0),
+                "{px:?}"
+            );
             assert_eq!(px[3], 255);
         }
     }
@@ -296,12 +312,18 @@ mod tests {
         let d = decode(LOSSY_WEBP).unwrap();
         assert_eq!((d.width, d.height), (16, 16));
         let px = &d.rgba[0..4];
-        assert!(close(px[0], 255) && close(px[1], 0) && close(px[2], 0), "{px:?}");
+        assert!(
+            close(px[0], 255) && close(px[1], 0) && close(px[2], 0),
+            "{px:?}"
+        );
     }
 
     #[test]
     fn unknown_bytes_are_rejected() {
-        assert_eq!(decode(b"not an image at all"), Err(DecodeError::UnknownFormat));
+        assert_eq!(
+            decode(b"not an image at all"),
+            Err(DecodeError::UnknownFormat)
+        );
         assert_eq!(decode(&[]), Err(DecodeError::UnknownFormat));
     }
 
@@ -339,9 +361,10 @@ mod tests {
 
     #[test]
     fn image_node_paints_decoded_pixels_and_falls_back_to_the_caption() {
+        use tpt_appfront_core::{ContainerBuilder, UITree};
+
         use crate::raster::Canvas;
         use crate::scene::Scene;
-        use tpt_appfront_core::{ContainerBuilder, UITree};
 
         let ui: UITree<()> = UITree::container(|c: &mut ContainerBuilder<()>| {
             c.image("pic.png", "a picture");

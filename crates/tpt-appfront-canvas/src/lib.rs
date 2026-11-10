@@ -85,7 +85,14 @@ impl CanvasApp {
         dispatch: impl Fn(Msg) + 'static,
     ) -> Result<(), platform::PlatformError> {
         let scene = self.scene();
-        run_scene(&self.title, self.width, self.height, scene, build_ui, dispatch)
+        run_scene(
+            &self.title,
+            self.width,
+            self.height,
+            scene,
+            build_ui,
+            dispatch,
+        )
     }
 
     /// Mounts the app onto an existing `<canvas id="...">`, as [`run_web`] does.
