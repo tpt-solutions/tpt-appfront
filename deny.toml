@@ -59,6 +59,36 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Workspace path-deps don't have a version field; exempt them from the wildcard check.
 allow-wildcard-paths = true
+# Policy: no Apache-only dependencies. Apache-2.0 stays in [licenses].allow so
+# dual-licensed crates pass, but crates whose only license is Apache-2.0 are
+# banned by name (Phase 24e). Each ban must be removed by replacing the crate.
+deny = [
+    { crate = "winit", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "eframe", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "egui-winit", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "accesskit_winit", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "glutin", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "glutin_egl_sys", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "glutin_glx_sys", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "glutin_wgl_sys", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "gl_generator", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "khronos_api", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "approx", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "codespan-reporting", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "gethostname", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "nonzero_ext", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "self_cell", reason = "Apache-2.0 OR GPL-2.0 only; Apache taken (Phase 24e)" },
+    { crate = "sync_wrapper", reason = "Apache-2.0 only (Phase 24e)" },
+    # Exception (Phase 24f stage 1): only `cfg-expr` may use target-lexicon. It reaches us
+    # solely as a build-script dependency of GTK on Linux, which the Linux backend no
+    # longer builds. `cargo-deny` merges per-target graphs, so the GTK edge from `tao`
+    # (Windows/macOS) still shows up in the merged graph. Verified absent from each
+    # shipped target with `cargo tree --target`. Remove this entry if `tao` ever reaches Linux.
+    { crate = "target-lexicon", wrappers = ["cfg-expr"], reason = "Apache-2.0 WITH LLVM-exception; build-time only, via cfg-expr (Phase 24f)" },
+    { crate = "unicode-general-category", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "unicode-linebreak", reason = "Apache-2.0 only (Phase 24e)" },
+    { crate = "ring", reason = "Apache-2.0 AND ISC; removed from the tree in Phase 24e (LLM HTTP shells out to curl)" },
+]
 
 [sources]
 unknown-registry = "deny"
