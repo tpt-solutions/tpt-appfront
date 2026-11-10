@@ -5,7 +5,7 @@
 //! | feature     | module                  | what it gives you                          |
 //! |-------------|-------------------------|--------------------------------------------|
 //! | `dom`       | [`dom`]                 | reactive DOM (wasm32 only)                 |
-//! | `canvas`    | [`canvas`]              | egui/taffy canvas (native and wasm32)      |
+//! | `canvas`    | [`canvas`]              | taffy canvas with an internal window layer (native) |
 //! | `tui`       | [`tui`]                 | ratatui terminal UI                        |
 //! | `html`      | [`html`]                | semantic HTML for SSR/SSG                  |
 //! | `ai-schema` | [`ai_schema`]           | JSON-LD and AI-agent schema                |

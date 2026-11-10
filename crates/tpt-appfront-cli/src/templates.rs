@@ -330,7 +330,7 @@ pub fn readme(name: &str, both: bool) -> String {
 
 Scaffolded by `tpt-appfront init`.
 
-- `canvas/` — native desktop app (winit/egui via `tpt-appfront-canvas`). Run with:
+- `canvas/` — native desktop app (taffy layout and the internal window layer via `tpt-appfront-canvas`). Run with:
   ```sh
   cd canvas && cargo run
   ```
