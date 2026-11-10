@@ -2,7 +2,7 @@
 name = "tpt-appfront"
 description = "Umbrella crate for TPT AppFront: one UITree, many backends behind feature flags, with a prelude."
 readme = "README.md"
-keywords = ["ui", "wasm", "egui", "ssr", "tui"]
+keywords = ["ui", "wasm", "canvas", "ssr", "tui"]
 categories = ["gui", "web-programming", "wasm"]
 version.workspace = true
 edition.workspace = true
@@ -32,13 +32,20 @@ tui = ["dep:tpt-appfront-tui"]
 mcp = ["dep:tpt-appfront-mcp"]
 test = ["dep:tpt-appfront-test"]
 templates = ["dep:tpt-appfront-templates"]
+# Bundles. `web` is the browser build: the DOM backend and the pure-Rust renderers, with no
+# native-only dependencies (no server, no TUI). `full` enables every runtime backend and is for
+# native targets; `test` stays separate because it is a test harness.
+web = ["dom", "html", "ai-schema", "templates"]
+full = ["dom", "canvas", "html", "ai-schema", "server", "tui", "mcp", "templates"]
 
 [dev-dependencies]
 # Enables the umbrella features for its own tests, so the README example resolves as written.
 tpt-appfront = { path = ".", features = ["test"] }
 # The cookbook tests (tests/cookbook.rs) exercise these without needing extra features.
-tpt-appfront-test = { path = "../tpt-appfront-test", version = "0.1" }
-tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1" }
+# Path-only on purpose: cargo strips path-only dev-dependencies from the published manifest,
+# and `cargo package` (the release dry run) does not need them on crates.io yet.
+tpt-appfront-test = { path = "../tpt-appfront-test" }
+tpt-appfront-html = { path = "../tpt-appfront-html" }
 
 [[bench]]
 name = "perf"

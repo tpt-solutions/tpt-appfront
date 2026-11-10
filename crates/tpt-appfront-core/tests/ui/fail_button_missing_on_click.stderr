@@ -1,0 +1,5 @@
+error: `<Button>` requires a `on_click` attribute
+  --> tests/ui/fail_button_missing_on_click.rs:12:14
+   |
+12 |             <Button>"+1"</Button>
+   |              ^^^^^^

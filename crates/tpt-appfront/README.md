@@ -18,7 +18,7 @@ use tpt_appfront::prelude::*;
 | Feature | Re-exported as | Backend |
 |---------|----------------|---------|
 | `dom` | `tpt_appfront::dom` | Reactive DOM (`tpt-appfront-dom`, wasm32 only) |
-| `canvas` | `tpt_appfront::canvas` | egui/taffy canvas (`tpt-appfront-canvas`, native and wasm32) |
+| `canvas` | `tpt_appfront::canvas` | taffy layout with a software raster (`tpt-appfront-canvas`, native and wasm32) |
 | `tui` | `tpt_appfront::tui` | ratatui terminal UI (`tpt-appfront-tui`) |
 | `html` | `tpt_appfront::html` | Semantic HTML for SSR and SSG (`tpt-appfront-html`) |
 | `ai-schema` | `tpt_appfront::ai_schema` | JSON-LD and AI agent schema (`tpt-appfront-ai-schema`) |
@@ -28,6 +28,13 @@ use tpt_appfront::prelude::*;
 | `templates` | `tpt_appfront::templates` | Login, dashboard and settings templates (`tpt-appfront-templates`) |
 
 No feature is on by default. The core types are always available.
+
+Two bundles group the features for common targets:
+
+| Bundle | Enables | Use for |
+|--------|---------|---------|
+| `web` | `dom`, `html`, `ai-schema`, `templates` | A browser (wasm32) build. It has no native-only dependencies. |
+| `full` | `dom`, `canvas`, `html`, `ai-schema`, `server`, `tui`, `mcp`, `templates` | Native targets with every runtime backend. `test` is not included. |
 
 The `webview` backend is not included. Its crate is `publish = false`, and a published
 crate cannot depend on an unpublished one. Depend on `tpt-appfront-webview` directly,

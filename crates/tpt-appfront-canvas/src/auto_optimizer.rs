@@ -1,15 +1,18 @@
-//! Runtime frame-time profiler that recommends which heavy optimizations to
-//! enable based on observed frame cost.
+//! Runtime frame-time profiler that recommends whether to window long lists.
 //!
 //! `AutoOptimizer` is deliberately pure and headless-testable: it only ever
 //! sees `f64` milliseconds, so it behaves identically on native and wasm and
 //! needs no renderer internals. A canvas app feeds it the measured per-frame
-//! duration of each frame, and reads back the recommended
-//! `OptimizerState` to decide whether to turn on `virtual_scrolling` /
-//! `texture_caching` (see `todo.md` Phase 11 stretch).
+//! duration of each frame, and reads back the recommended `OptimizerState` to
+//! decide whether to apply `VirtualScroll` to unconfigured lists (see
+//! `CanvasApp::auto_optimize`).
+//!
+//! The optimizer only covers virtual scrolling. An earlier `texture_caching`
+//! flag was removed: the canvas has no texture cache to toggle, so it could
+//! only ever be advisory.
 //!
 //! Toggling uses a smoothed (EMA) frame time plus a hysteresis counter so a
-//! single transient hitch doesn't flap the flags on and off.
+//! single transient hitch doesn't flap the flag on and off.
 
 /// Which expensive optimizations are currently recommended. Cheap to copy;
 /// the canvas app reads this every frame and applies the diff.
@@ -19,9 +22,6 @@ pub struct OptimizerState {
     /// of materializing every row (only worth it when the frame budget is
     /// tight — it adds per-frame slice math).
     pub virtual_scrolling: bool,
-    /// Cache painted widget textures between frames instead of re-rasterizing
-    /// (worth it on slow GPUs; costs video memory).
-    pub texture_caching: bool,
 }
 
 /// What changed on the most recent `record_frame` call, so the app only acts
@@ -31,8 +31,6 @@ pub enum OptimizerChange {
     None,
     EnabledVirtualScrolling,
     DisabledVirtualScrolling,
-    EnabledTextureCaching,
-    DisabledTextureCaching,
 }
 
 impl OptimizerChange {
@@ -62,9 +60,8 @@ pub struct AutoOptimizer {
 
 impl Default for AutoOptimizer {
     fn default() -> Self {
-        // 60fps budget is ~16.67ms. Enable heavy opts once we're sustained
-        // above ~20ms (under ~50fps) and drop them once we're comfortably
-        // under ~12ms.
+        // 60fps budget is ~16.67ms. Enable virtual scrolling once we're sustained
+        // above ~20ms (under ~50fps) and drop it once we're comfortably under ~12ms.
         Self::with_thresholds(20.0, 12.0)
     }
 }
@@ -88,7 +85,6 @@ impl AutoOptimizer {
             fast_streak: 0,
             recommendations: OptimizerState {
                 virtual_scrolling: false,
-                texture_caching: false,
             },
         }
     }
@@ -129,33 +125,11 @@ impl AutoOptimizer {
             return OptimizerChange::None;
         }
 
-        if self.slow_streak >= self.hold_frames {
-            return self.enable_if_off();
-        }
-        if self.fast_streak >= self.hold_frames {
-            return self.disable_if_on();
-        }
-        OptimizerChange::None
-    }
-
-    fn enable_if_off(&mut self) -> OptimizerChange {
-        if !self.recommendations.virtual_scrolling {
+        if self.slow_streak >= self.hold_frames && !self.recommendations.virtual_scrolling {
             self.recommendations.virtual_scrolling = true;
             return OptimizerChange::EnabledVirtualScrolling;
         }
-        if !self.recommendations.texture_caching {
-            self.recommendations.texture_caching = true;
-            return OptimizerChange::EnabledTextureCaching;
-        }
-        OptimizerChange::None
-    }
-
-    fn disable_if_on(&mut self) -> OptimizerChange {
-        if self.recommendations.texture_caching {
-            self.recommendations.texture_caching = false;
-            return OptimizerChange::DisabledTextureCaching;
-        }
-        if self.recommendations.virtual_scrolling {
+        if self.fast_streak >= self.hold_frames && self.recommendations.virtual_scrolling {
             self.recommendations.virtual_scrolling = false;
             return OptimizerChange::DisabledVirtualScrolling;
         }
@@ -172,11 +146,10 @@ mod tests {
         let opt = AutoOptimizer::default();
         assert!(opt.slow_threshold_ms > opt.fast_threshold_ms);
         assert!(!opt.recommendations.virtual_scrolling);
-        assert!(!opt.recommendations.texture_caching);
     }
 
     #[test]
-    fn sustained_slow_frames_enable_optimizations() {
+    fn sustained_slow_frames_enable_virtual_scrolling() {
         let mut opt = AutoOptimizer::with_thresholds(20.0, 12.0);
         // 50ms frames: way over the slow threshold. Need `hold_frames` (30)
         // consecutive to toggle, so the first flip happens after ~30 frames.
@@ -189,7 +162,6 @@ mod tests {
         }
         assert_eq!(first_change, Some(OptimizerChange::EnabledVirtualScrolling));
         assert!(opt.recommendations.virtual_scrolling);
-        assert!(opt.recommendations.texture_caching);
     }
 
     #[test]
@@ -212,29 +184,21 @@ mod tests {
     }
 
     #[test]
-    fn sustained_fast_frames_disable_optimizations() {
+    fn sustained_fast_frames_disable_virtual_scrolling() {
         let mut opt = AutoOptimizer::with_thresholds(20.0, 12.0);
         for _ in 0..60 {
             opt.record_frame(50.0);
         }
         assert!(opt.recommendations.virtual_scrolling);
-        assert!(opt.recommendations.texture_caching);
 
-        // Now run comfortably fast for a long stretch → both get disabled,
-        // texture_caching first (it was enabled last).
-        let mut saw_texture_off = false;
         let mut saw_vscroll_off = false;
         for _ in 0..80 {
-            match opt.record_frame(1.0) {
-                OptimizerChange::DisabledTextureCaching => saw_texture_off = true,
-                OptimizerChange::DisabledVirtualScrolling => saw_vscroll_off = true,
-                _ => {}
+            if opt.record_frame(1.0) == OptimizerChange::DisabledVirtualScrolling {
+                saw_vscroll_off = true;
             }
         }
-        assert!(saw_texture_off);
         assert!(saw_vscroll_off);
         assert!(!opt.recommendations.virtual_scrolling);
-        assert!(!opt.recommendations.texture_caching);
     }
 
     #[test]

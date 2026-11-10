@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- `OptimizerState` no longer has a `texture_caching` field, and `OptimizerChange` no longer has
+  the texture-caching variants. The canvas has no texture cache to toggle, so the flag could
+  only ever be advisory. `AutoOptimizer` now covers virtual scrolling only.
 - Replaced `eframe`/`egui` with an internal, Rust-only window layer (`platform`), a
   software painter (`raster`), and bundled-font glyphs (`glyphs`). The crate no longer
   depends on `eframe`, `egui` or `winit`, which were blocked by the Apache-only ban in
@@ -27,7 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `accesskit` feature. Screen-reader output is not yet replaced.
 - `TextMeasurer::with_font_data` is removed.
 
+### Fixed
+- `p-0` now overrides the container's default padding. Before, zero padding was treated as
+  "no padding utility", so the default stayed.
+- `w-full` and `w-64` set the width of container nodes. Leaves ignore them.
+
 ### Added
+- Parity tests between `CANVAS_UTILITIES`, the core `UTILITIES` table, and the reviewed list of
+  core utilities the canvas does not render. A new core utility fails until it is classified.
 - Virtual scrolling for `List` and `DataGrid` nodes that set `NodeMeta::virtual_scroll`.
   Only the visible rows are laid out, with spacers for the rest.
 - `CanvasApp::auto_optimize(true)`. When the profiler recommends virtual scrolling,

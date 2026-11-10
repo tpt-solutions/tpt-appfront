@@ -91,7 +91,7 @@ Starts the dev loop. Pass exactly one of the mode flags.
 Builds release artifacts and reports the size of the largest one.
 
 - `--target canvas|dom|webview|all` (default `all`, which is canvas, dom and webview).
-- `--auto` (default `true`): prints guidance about size profiles.
+- `--auto` (on by default; there is no off switch yet): builds with a size profile through `CARGO_PROFILE_RELEASE_*` overrides. `Cargo.toml` is not changed.
 - `--bundle`: runs `cargo packager` after building.
 - `--analyze`: a heuristic scan, with no build. It flags `List`/`DataGrid` usages that may need
   `.virtual_scroll(...)` and a release profile missing size flags.

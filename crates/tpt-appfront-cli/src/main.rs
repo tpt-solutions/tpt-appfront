@@ -117,6 +117,11 @@ enum Command {
         /// missing accessible names). Informational only — never fails the run.
         #[arg(long)]
         a11y: bool,
+        /// Install what can be installed from here before checking: the wasm32
+        /// target (`rustup target add`) and `trunk` (`cargo install trunk`, which
+        /// can take several minutes).
+        #[arg(long)]
+        fix: bool,
     },
     /// Build with size optimizations and report the resulting artifact size.
     Optimize {
@@ -260,11 +265,11 @@ fn main() -> anyhow::Result<()> {
             bundle,
         } => build(target, &project, bundle),
         Command::Benchmark { project } => benchmark(&project),
-        Command::Doctor { project, a11y } => {
+        Command::Doctor { project, a11y, fix } => {
             if a11y {
                 doctor_a11y(&project)
             } else {
-                doctor(&project)
+                doctor(&project, fix)
             }
         }
         Command::Optimize {
@@ -1121,9 +1126,25 @@ fn resolve_build_steps(target: &str) -> anyhow::Result<Vec<BuildStep>> {
     Ok(steps)
 }
 
+/// Release-profile overrides applied by `optimize --auto`. They are passed as
+/// `CARGO_PROFILE_RELEASE_*` environment variables, so the project's
+/// `Cargo.toml` is left untouched.
+const SIZE_PROFILE_ENV: &[(&str, &str)] = &[
+    ("CARGO_PROFILE_RELEASE_OPT_LEVEL", "z"),
+    ("CARGO_PROFILE_RELEASE_LTO", "true"),
+    ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
+    ("CARGO_PROFILE_RELEASE_STRIP", "true"),
+];
+
 /// Runs one [`BuildStep`] in `project`. When `strict`, a missing `index.html`
-/// for a `needs_trunk_index` step is an error; otherwise it is skipped.
-fn run_step(project: &Path, step: &BuildStep, strict: bool) -> anyhow::Result<()> {
+/// for a `needs_trunk_index` step is an error; otherwise it is skipped. When
+/// `size_profile`, the [`SIZE_PROFILE_ENV`] overrides are applied to the build.
+fn run_step(
+    project: &Path,
+    step: &BuildStep,
+    strict: bool,
+    size_profile: bool,
+) -> anyhow::Result<()> {
     if step.builds_ui {
         if let Some(ui) = ui_dir(project) {
             run_in(&ui, "trunk", &["build", "--release"], false)
@@ -1144,7 +1165,8 @@ fn run_step(project: &Path, step: &BuildStep, strict: bool) -> anyhow::Result<()
         );
         return Ok(());
     }
-    run_in(project, step.program, step.args, false)?;
+    let env: &[(&str, &str)] = if size_profile { SIZE_PROFILE_ENV } else { &[] };
+    run_in_env(project, step.program, step.args, false, env)?;
     if step.report_size {
         report_release_size(project);
     }
@@ -1163,6 +1185,7 @@ fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result
             return Ok(());
         }
         "all" => {
+            preflight(project, &["dom"], bundle)?;
             println!("== canvas (native) ==");
             run_in(project, "cargo", &["build", "--release"], false)?;
             report_release_size(project);
@@ -1174,8 +1197,9 @@ fn build(target: Option<String>, project: &Path, bundle: bool) -> anyhow::Result
             }
         }
         t => {
+            preflight(project, &[t], bundle)?;
             for step in resolve_build_steps(t)? {
-                run_step(project, &step, true)?;
+                run_step(project, &step, true, false)?;
             }
         }
     }
@@ -1199,14 +1223,13 @@ fn benchmark(project: &Path) -> anyhow::Result<()> {
 /// `todo.md` Phase 11.
 fn optimize(target: &str, project: &Path, auto: bool, bundle: bool) -> anyhow::Result<()> {
     if auto {
-        // The dom/wasm template already ships a size-optimized `[profile.release]`
-        // (opt-level=z, lto, codegen-units=1, strip); native (canvas/webview)
-        // builds use the crate's own `[profile.release]`. We don't silently
-        // claim a size profile the native build doesn't use.
+        // Applied through CARGO_PROFILE_RELEASE_* overrides for every build step
+        // in this run, so both native and wasm builds get the same size profile
+        // without editing the project's Cargo.toml.
         println!(
-            "Building release artifacts and reporting sizes. The dom/wasm template is already \
-             size-optimized (opt-level=z, lto, strip); native (canvas/webview) builds use the \
-             crate's [profile.release] — set opt-level = \"z\" there for minimal size."
+            "--auto: building release artifacts with a size profile \
+             (opt-level=z, lto=true, codegen-units=1, strip=true) via CARGO_PROFILE_RELEASE_* \
+             overrides. Cargo.toml is not modified."
         );
     }
     let targets: Vec<&str> = if target == "all" {
@@ -1216,15 +1239,75 @@ fn optimize(target: &str, project: &Path, auto: bool, bundle: bool) -> anyhow::R
     } else {
         vec![target]
     };
+    preflight(project, &targets, bundle)?;
     for t in targets {
         for step in resolve_build_steps(t)? {
-            run_step(project, &step, false)?;
+            run_step(project, &step, false, auto)?;
         }
     }
     if bundle {
         run_bundler(project)?;
     }
     Ok(())
+}
+
+/// Checks the `[profile.release]` table of a `Cargo.toml` against the size
+/// profile `optimize --auto` uses. The manifest is parsed as TOML, so a key
+/// inside a comment or a string does not count. Returns one finding per
+/// problem; an empty list means the profile is size-oriented.
+fn release_profile_findings(manifest: &str) -> Vec<String> {
+    let doc: toml::Table = match toml::from_str(manifest) {
+        Ok(doc) => doc,
+        Err(e) => return vec![format!("Cargo.toml could not be parsed as TOML: {e}")],
+    };
+    let release = doc
+        .get("profile")
+        .and_then(|p| p.get("release"))
+        .and_then(|r| r.as_table());
+    let Some(release) = release else {
+        return vec!["Cargo.toml has no `[profile.release]` — add one with \
+             opt-level=\"z\", lto=true, codegen-units=1, strip=true for minimal size."
+            .to_string()];
+    };
+
+    let mut findings = Vec::new();
+    // `opt-level` is a string ("z", "s") or an integer (0-3); only the size levels pass.
+    match release.get("opt-level") {
+        Some(toml::Value::String(s)) if s == "s" || s == "z" => {}
+        Some(toml::Value::String(s)) => findings.push(format!(
+            "`[profile.release]` opt-level = \"{s}\"; \"z\" (or \"s\") is recommended for size."
+        )),
+        Some(other) => findings.push(format!(
+            "`[profile.release]` opt-level = {other}; \"z\" (or \"s\") is recommended for size."
+        )),
+        None => findings.push(
+            "`[profile.release]` is missing `opt-level` (\"z\" is recommended for size)."
+                .to_string(),
+        ),
+    }
+    match release.get("lto") {
+        Some(toml::Value::Boolean(false)) | None => findings
+            .push("`[profile.release]` does not enable `lto` (recommended for size).".to_string()),
+        Some(_) => {}
+    }
+    match release.get("codegen-units").and_then(|v| v.as_integer()) {
+        Some(1) => {}
+        Some(n) => findings.push(format!(
+            "`[profile.release]` codegen-units = {n}; 1 is recommended for size."
+        )),
+        None => findings.push(
+            "`[profile.release]` is missing `codegen-units` (1 is recommended for size)."
+                .to_string(),
+        ),
+    }
+    match release.get("strip") {
+        Some(toml::Value::Boolean(false)) | None => findings.push(
+            "`[profile.release]` does not strip symbols (`strip = true` is recommended for size)."
+                .to_string(),
+        ),
+        Some(_) => {}
+    }
+    findings
 }
 
 /// `tpt-appfront optimize --analyze`: a deterministic, no-AST/LLM heuristic
@@ -1239,24 +1322,7 @@ fn optimize_analyze(project: &Path) -> anyhow::Result<()> {
     // 1) Release profile size flags.
     let cargo_toml = project.join("Cargo.toml");
     match fs::read_to_string(&cargo_toml) {
-        Ok(text) => {
-            let size_flags = ["opt-level", "lto", "codegen-units", "strip"];
-            if !text.contains("[profile.release]") {
-                findings.push(
-                    "Cargo.toml has no `[profile.release]` — add one with \
-                     opt-level=\"z\", lto=true, codegen-units=1, strip=true for minimal size."
-                        .to_string(),
-                );
-            } else {
-                for flag in size_flags {
-                    if !text.contains(flag) {
-                        findings.push(format!(
-                            "Cargo.toml `[profile.release]` is missing `{flag}` (recommended for size)."
-                        ));
-                    }
-                }
-            }
-        }
+        Ok(text) => findings.extend(release_profile_findings(&text)),
         Err(_) => findings.push("No Cargo.toml found in the project directory.".to_string()),
     }
 
@@ -1593,10 +1659,169 @@ fn declared_msrv(project: &Path) -> Option<(u64, u64, u64)> {
     parse_semver(line.split('=').nth(1)?)
 }
 
-fn doctor(project: &Path) -> anyhow::Result<()> {
+/// Whether `prog --version` runs, i.e. the tool is on PATH.
+fn tool_on_path(prog: &str) -> bool {
+    Process::new(prog).arg("--version").output().is_ok()
+}
+
+/// Whether `cargo packager` is available (the subcommand, not just `cargo`).
+fn cargo_packager_available() -> bool {
+    Process::new("cargo")
+        .args(["packager", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Whether the `wasm32-unknown-unknown` standard library is installed for the
+/// active toolchain. `rustc --print target-list` lists every supported target
+/// whether or not it is installed, so this looks in the sysroot instead.
+fn wasm32_target_installed() -> bool {
+    let sysroot = Process::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    match sysroot {
+        Some(root) => Path::new(&root)
+            .join("lib")
+            .join("rustlib")
+            .join("wasm32-unknown-unknown")
+            .is_dir(),
+        None => false,
+    }
+}
+
+/// Checks the runtime libraries the webview host needs. The Linux host loads
+/// GTK3 and WebKitGTK at runtime, and Windows needs the WebView2 runtime. macOS
+/// ships WebKit. This is informational only, since it is needed to run the app,
+/// not to build it.
+fn webview_runtime_check() -> Check {
+    #[cfg(target_os = "linux")]
+    {
+        let libs = Process::new("ldconfig")
+            .arg("-p")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        let missing: Vec<&str> = ["libgtk-3.so.0", "libwebkit2gtk-4.1.so.0"]
+            .into_iter()
+            .filter(|lib| !libs.contains(lib))
+            .collect();
+        Check {
+            name: "webview runtime (GTK3, WebKitGTK)",
+            ok: missing.is_empty(),
+            detail: if missing.is_empty() {
+                "found".into()
+            } else {
+                format!(
+                    "missing {} — `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` (needed to run the webview app)",
+                    missing.join(", ")
+                )
+            },
+        }
+    }
+    #[cfg(windows)]
+    {
+        // The Evergreen WebView2 runtime registers its version under this client key.
+        const KEY: &str = r"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+        let found = [
+            "HKLM\\SOFTWARE\\WOW6432Node",
+            "HKLM\\SOFTWARE",
+            "HKCU\\SOFTWARE",
+        ]
+        .iter()
+        .any(|root| {
+            Process::new("reg")
+                .args(["query", &format!("{root}\\{KEY}"), "/v", "pv"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        });
+        Check {
+            name: "webview runtime (WebView2)",
+            ok: found,
+            detail: if found {
+                "found".into()
+            } else {
+                "WebView2 runtime not found — install the Evergreen runtime (needed to run the webview app)".into()
+            },
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        Check {
+            name: "webview runtime",
+            ok: true,
+            detail: "not checked on this platform".into(),
+        }
+    }
+}
+
+/// `doctor --fix`: installs the missing pieces that can be installed from here,
+/// the wasm target and `trunk`. Each step is printed before it runs. A failure is
+/// reported and does not stop the others.
+fn apply_doctor_fixes(project: &Path) {
+    if !wasm32_target_installed() {
+        println!("--fix: rustup target add wasm32-unknown-unknown");
+        if let Err(e) = run_in(
+            project,
+            "rustup",
+            &["target", "add", "wasm32-unknown-unknown"],
+            false,
+        ) {
+            eprintln!("--fix: could not add the wasm32 target: {e}");
+        }
+    }
+    if !tool_on_path("trunk") {
+        println!("--fix: cargo install trunk (this can take several minutes)");
+        if let Err(e) = run_in(project, "cargo", &["install", "trunk"], false) {
+            eprintln!("--fix: could not install trunk: {e}");
+        }
+    }
+}
+
+/// Checks, before a build starts, that the tools the requested targets need are
+/// present. A missing tool fails here instead of after a long `cargo build`.
+/// `targets` uses the same names as `build --target`.
+fn preflight(project: &Path, targets: &[&str], bundle: bool) -> anyhow::Result<()> {
+    let dom_app = project.join("index.html").exists();
+    let webview_ui = ui_dir(project).is_some();
+    let needs_wasm = targets
+        .iter()
+        .any(|t| matches!(*t, "dom" | "wasm") && dom_app)
+        || (targets.contains(&"webview") && webview_ui);
+
+    let mut missing: Vec<String> = Vec::new();
+    if needs_wasm && !wasm32_target_installed() {
+        missing.push(
+            "the wasm32-unknown-unknown target — `rustup target add wasm32-unknown-unknown`".into(),
+        );
+    }
+    if needs_wasm && !tool_on_path("trunk") {
+        missing.push("`trunk` — `cargo install trunk`".into());
+    }
+    if bundle && !cargo_packager_available() {
+        missing.push("`cargo-packager` — `cargo install cargo-packager`".into());
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "missing prerequisites for this build:\n  - {}\nRun `tpt-appfront doctor --fix` to install the ones it can.",
+            missing.join("\n  - ")
+        )
+    }
+}
+
+fn doctor(project: &Path, fix: bool) -> anyhow::Result<()> {
+    if fix {
+        apply_doctor_fixes(project);
+    }
     let mut checks: Vec<Check> = Vec::new();
 
-    let on_path = |prog: &str| Process::new(prog).arg("--version").output().is_ok();
+    let on_path = tool_on_path;
 
     checks.push(Check {
         name: "cargo",
@@ -1615,19 +1840,17 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
         },
     });
 
-    // `wasm32-unknown-unknown` target, queried via `rustc`.
-    let wasm_target = Process::new("rustc")
-        .args(["--print", "target-list"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
-        .unwrap_or(false);
+    // `wasm32-unknown-unknown` target. `rustc --print target-list` lists every
+    // supported target whether or not it is installed, so ask whether the
+    // target's standard library is in the sysroot instead.
+    let wasm_target = wasm32_target_installed();
     checks.push(Check {
         name: "wasm32-unknown-unknown target",
         ok: wasm_target,
         detail: if wasm_target {
             "installed".into()
         } else {
-            "missing — `rustup target add wasm32-unknown-unknown`".into()
+            "missing — `rustup target add wasm32-unknown-unknown` (or `doctor --fix`)".into()
         },
     });
 
@@ -1709,7 +1932,7 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
     // Informational hygiene checks — reported but never fail `doctor`, since a
     // dev may legitimately not have the local pre-commit hook installed or may
     // be mid-edit on an unformatted tree.
-    let mut info: Vec<Check> = vec![packager_check];
+    let mut info: Vec<Check> = vec![packager_check, webview_runtime_check()];
 
     // The wasm test runner must be exactly the wasm-bindgen version in Cargo.lock. Any other version
     // fails with a schema-version error, so compare them here.
@@ -1842,10 +2065,24 @@ fn missing_tool_hint(tool: &str) -> String {
 }
 
 fn run_in(dir: &Path, program: &str, args: &[&str], devtools: bool) -> anyhow::Result<()> {
+    run_in_env(dir, program, args, devtools, &[])
+}
+
+/// [`run_in`] with extra environment variables set on the child process.
+fn run_in_env(
+    dir: &Path,
+    program: &str,
+    args: &[&str],
+    devtools: bool,
+    env: &[(&str, &str)],
+) -> anyhow::Result<()> {
     let mut cmd = Process::new(program);
     cmd.args(args).current_dir(dir);
     if devtools {
         cmd.env("TPT_APPFRONT_DEVTOOLS", "1");
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
     }
     match cmd.status() {
         Ok(status) => {
@@ -2054,6 +2291,71 @@ mod tests {
     fn list_presets_cmd_prints_each_preset_name() {
         // Just ensure it runs without panicking; output goes to stdout.
         list_presets_cmd();
+    }
+
+    #[test]
+    fn preflight_passes_for_native_targets_without_extra_tools() {
+        // canvas needs no wasm target, trunk, or packager, so this holds on any machine.
+        let dir = std::env::temp_dir().join("tpt-appfront-preflight-canvas");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(preflight(&dir, &["canvas"], false).is_ok());
+    }
+
+    #[test]
+    fn release_profile_findings_accepts_size_profile() {
+        let manifest = r#"
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+"#;
+        assert!(release_profile_findings(manifest).is_empty());
+    }
+
+    #[test]
+    fn release_profile_findings_reports_missing_profile() {
+        let findings = release_profile_findings("[package]\nname = \"x\"\n");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].contains("no `[profile.release]`"));
+    }
+
+    #[test]
+    fn release_profile_findings_flags_each_weak_setting() {
+        let manifest = r#"
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+"#;
+        let findings = release_profile_findings(manifest);
+        assert_eq!(findings.len(), 4, "{findings:?}");
+        assert!(findings.iter().any(|f| f.contains("opt-level = 3;")));
+        assert!(findings.iter().any(|f| f.contains("lto")));
+        assert!(findings.iter().any(|f| f.contains("codegen-units = 16")));
+        assert!(findings.iter().any(|f| f.contains("strip")));
+    }
+
+    #[test]
+    fn release_profile_findings_ignores_keys_in_comments() {
+        // The old substring check counted these as present.
+        let manifest = r#"
+[profile.release]
+# opt-level = "z"  lto = true  codegen-units = 1  strip = true
+opt-level = 3
+"#;
+        let findings = release_profile_findings(manifest);
+        assert!(findings.iter().any(|f| f.contains("opt-level = 3;")));
+        assert!(findings
+            .iter()
+            .any(|f| f.contains("missing `codegen-units`")));
+    }
+
+    #[test]
+    fn release_profile_findings_reports_unparseable_manifest() {
+        let findings = release_profile_findings("[profile.release\n");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].contains("could not be parsed"));
     }
 
     #[test]

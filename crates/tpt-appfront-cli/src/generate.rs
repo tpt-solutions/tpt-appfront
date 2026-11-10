@@ -3,9 +3,10 @@
 //! This is deliberately *not* an LLM call: no network access, no API key, no
 //! nondeterminism. It keyword-matches the prompt against a small set of known
 //! UI patterns and emits the corresponding `view!` snippet, falling back to a
-//! minimal skeleton when nothing matches. A real `--llm` mode that calls out
-//! to a model provider is future work (todo.md Phase 11) — this covers the
-//! common-case "give me a starting point" use without needing credentials.
+//! minimal skeleton when nothing matches. This is the default path, and it
+//! covers the common-case "give me a starting point" use without credentials.
+//! The model-backed mode is `--llm`, which lives in `llm/` behind the `llm`
+//! feature and is routed from `main.rs` (`generate_ui`), not from this module.
 
 /// One recognized UI pattern: a set of trigger keywords and the `view!`
 /// snippet to emit when any of them appear in the prompt (case-insensitive).

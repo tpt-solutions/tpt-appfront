@@ -39,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canvas and TUI starters include an accessibility test.
 
 ### Changed
+- `optimize --auto` builds with a size profile (opt-level `z`, LTO, one codegen unit,
+  stripped) through `CARGO_PROFILE_RELEASE_*` overrides. It used to only print advice.
+  `Cargo.toml` is not modified.
+- `optimize --analyze` parses `Cargo.toml` as TOML and checks the values. It used to
+  match substrings, so a key in a comment counted as set.
+- `doctor` checks the wasm32 target from the sysroot. `rustc --print target-list` lists
+  every target, installed or not, so the old check always passed.
+- `doctor --fix` installs the wasm32 target and `trunk`. `doctor` also reports the webview
+  runtime: GTK3 and WebKitGTK on Linux, WebView2 on Windows.
+- `build` and `optimize` check their prerequisites before the long build starts: `trunk` and
+  the wasm32 target for dom and webview, and `cargo-packager` for `--bundle`.
 - Scaffolded projects depend on the `tpt-appfront` umbrella crate with the features they
   need, instead of on individual backend crates.
 - `fmt` uses `cargo +nightly fmt`, because the repo's `rustfmt.toml` relies on unstable

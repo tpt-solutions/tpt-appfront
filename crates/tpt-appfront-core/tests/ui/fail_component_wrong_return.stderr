@@ -1,0 +1,5 @@
+error: #[component] can only be applied to functions returning `UITree<Msg>`
+ --> tests/ui/fail_component_wrong_return.rs:4:17
+  |
+4 | fn not_a_view() -> i32 {
+  |                 ^

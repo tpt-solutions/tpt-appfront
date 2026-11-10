@@ -218,6 +218,20 @@ tpt-appfront doctor
 ```
 
 Run it before `init`/`dev`/`build` if a toolchain error looks environment-related.
+
+To install what can be installed from here (the wasm32 target through `rustup`, and
+`trunk` through `cargo install trunk`, which can take several minutes), run:
+
+```sh
+tpt-appfront doctor --fix
+```
+
+`build` and `optimize` also check their prerequisites before the long build starts. A
+missing `trunk` or wasm32 target for a dom or webview build, or a missing `cargo-packager`
+for `--bundle`, stops the run at once. `dev` does not check yet.
+
+`doctor` also reports the webview's runtime libraries (GTK3 and WebKitGTK on Linux,
+WebView2 on Windows). This is informational: they are needed to run the app, not to build it.
 `doctor` also reports hygiene state: whether `rustfmt`/`cargo fmt` is available,
 whether the local pre-commit hook is installed, and whether the workspace is
 formatted.
@@ -272,9 +286,11 @@ tpt-appfront benchmark --project myproject
 ## Optimize & bundling
 
 `optimize` builds release artifacts and reports the largest one's size in MiB.
-The DOM/wasm template is already size-optimized (`opt-level = "z"`, `lto`,
-`strip`); native (canvas/webview) builds use the crate's own
-`[profile.release]`.
+With `--auto` (the default), every build in the run uses a size profile
+(`opt-level = "z"`, LTO, one codegen unit, stripped), applied through
+`CARGO_PROFILE_RELEASE_*` environment variables. Your `Cargo.toml` is not changed.
+To build with the crate's own `[profile.release]` instead, run `cargo build --release`
+directly.
 
 ```sh
 tpt-appfront optimize --target canvas

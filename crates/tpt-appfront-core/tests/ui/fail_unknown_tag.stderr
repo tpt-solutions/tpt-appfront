@@ -1,0 +1,5 @@
+error: unknown tag `<Contaner>`; v1 supports: Container, Heading, Text, Button, Input, Textarea, Checkbox, Select, Radio, List, DataGrid, Image, Link, Media
+  --> tests/ui/fail_unknown_tag.rs:11:10
+   |
+11 |         <Contaner>
+   |          ^^^^^^^^

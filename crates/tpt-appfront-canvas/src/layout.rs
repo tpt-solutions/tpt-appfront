@@ -268,11 +268,7 @@ fn build_flex_container<'a, Msg>(
     // Honor utility-class padding (e.g. `p-4`) over the hardcoded default when
     // present; otherwise keep the conventional container padding.
     let style = canvas_style_for(&ui.meta.class);
-    let pad = if style.padding.left != 0.0
-        || style.padding.right != 0.0
-        || style.padding.top != 0.0
-        || style.padding.bottom != 0.0
-    {
+    let pad = if style.has_padding {
         style.padding
     } else {
         Edge {
@@ -299,7 +295,10 @@ fn build_flex_container<'a, Msg>(
                     bottom: length(pad.bottom),
                 },
                 size: Size {
-                    width: percent(1.0_f32),
+                    width: match style.width {
+                        Some(Width::Px(px)) => length(px),
+                        Some(Width::Full) | None => percent(1.0_f32),
+                    },
                     height: auto(),
                 },
                 ..Default::default()
@@ -618,11 +617,16 @@ fn build_grid_row(
 /// CSS utility, but at minimum padding / font-size / color classes map to
 /// `taffy` layout and the painter so `class="..."` is not a silent no-op on
 /// canvas (it is for DOM/HTML already). Unrecognized utilities are ignored.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CanvasStyle {
-    /// Per-edge padding in px (replaces `CONTAINER_PADDING` when any padding
-    /// utility is present).
+    /// Width override from `w-full` / `w-64`. Applies to container nodes only;
+    /// leaves keep their measured width.
+    pub width: Option<Width>,
+    /// Per-edge padding in px. Only meaningful when `has_padding` is set.
     pub padding: Edge<f32>,
+    /// True when a padding utility is present, including `p-0`. A flag is needed
+    /// because zero padding is a real value that must replace the container default.
+    pub has_padding: bool,
     /// Extra text pixel size delta applied on top of the base font size
     /// (from `text-xs`/`text-sm`/`text-lg`/`text-2xl`).
     pub font_delta: f32,
@@ -641,6 +645,15 @@ pub struct Edge<T> {
     pub bottom: T,
 }
 
+/// Width override from a `w-*` utility.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Width {
+    /// `w-full`: the container's full available width (the default for containers).
+    Full,
+    /// A fixed width in px (`w-64` is 16rem = 256px).
+    Px(f32),
+}
+
 /// Utility names that [`canvas_style_for`] renders. Keep in sync with its match arms;
 /// the `canvas_utilities_are_recognized_by_core` test checks each one is a real core utility.
 pub const CANVAS_UTILITIES: &[&str] = &[
@@ -651,6 +664,8 @@ pub const CANVAS_UTILITIES: &[&str] = &[
     "p-8",
     "px-4",
     "py-2",
+    "w-full",
+    "w-64",
     "text-xs",
     "text-sm",
     "text-lg",
@@ -660,6 +675,41 @@ pub const CANVAS_UTILITIES: &[&str] = &[
     "bg-blue-500",
     "bg-gray-100",
     "bg-white",
+];
+
+/// Core utilities the canvas does not render. Each one is a reviewed decision:
+/// the `every_core_utility_is_rendered_or_acknowledged` test fails when a core
+/// utility is in neither [`CANVAS_UTILITIES`] nor this list. Move a name to
+/// [`CANVAS_UTILITIES`] once it has a mapping. Runtime reporting derives the
+/// same set from `CANVAS_UTILITIES`, so this list is only read by the parity tests.
+#[cfg(test)]
+const CANVAS_NOT_RENDERED: &[&str] = &[
+    "block",
+    "inline-block",
+    "flex",
+    "grid",
+    "hidden",
+    "flex-row",
+    "flex-col",
+    "items-center",
+    "justify-center",
+    "justify-between",
+    "flex-1",
+    "flex-wrap",
+    "m-0",
+    "mt-4",
+    "mb-2",
+    "mx-auto",
+    "h-full",
+    "max-w-screen-md",
+    "font-bold",
+    "font-normal",
+    "text-center",
+    "uppercase",
+    "border",
+    "rounded",
+    "rounded-lg",
+    "shadow",
 ];
 
 /// Core utility names in `class` that the canvas does not render. Custom
@@ -754,6 +804,8 @@ pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
                 pad.bottom = 0.5;
                 have_padding = true;
             }
+            "w-full" => style.width = Some(Width::Full),
+            "w-64" => style.width = Some(Width::Px(256.0)),
             "text-xs" => style.font_delta = -8.0,
             "text-sm" => style.font_delta = -4.0,
             "text-lg" => style.font_delta = 2.0,
@@ -768,6 +820,7 @@ pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
     }
     if have_padding {
         style.padding = pad;
+        style.has_padding = true;
     }
     style
 }
@@ -1006,6 +1059,69 @@ mod tests {
                 "`{name}` is listed in CANVAS_UTILITIES but is not a core utility"
             );
         }
+    }
+
+    #[test]
+    fn every_canvas_utility_changes_the_style() {
+        // A name listed as rendered must have a match arm in `canvas_style_for`;
+        // otherwise the list claims a mapping that does not exist.
+        for name in CANVAS_UTILITIES {
+            assert_ne!(
+                canvas_style_for(&Some((*name).to_string())),
+                CanvasStyle::default(),
+                "`{name}` is in CANVAS_UTILITIES but `canvas_style_for` does not map it"
+            );
+        }
+    }
+
+    #[test]
+    fn every_core_utility_is_rendered_or_acknowledged() {
+        // Parity with the core utility table: a new core utility must be either
+        // rendered (CANVAS_UTILITIES) or explicitly recorded as not rendered.
+        for (name, _) in tpt_appfront_core::styling::UTILITIES {
+            assert!(
+                CANVAS_UTILITIES.contains(name) || CANVAS_NOT_RENDERED.contains(name),
+                "core utility `{name}` is neither rendered nor listed in CANVAS_NOT_RENDERED"
+            );
+        }
+    }
+
+    #[test]
+    fn not_rendered_list_has_no_stale_entries() {
+        for name in CANVAS_NOT_RENDERED {
+            assert!(
+                !CANVAS_UTILITIES.contains(name),
+                "`{name}` is both rendered and in CANVAS_NOT_RENDERED"
+            );
+            assert!(
+                tpt_appfront_core::styling::UTILITIES
+                    .iter()
+                    .any(|(n, _)| n == name),
+                "`{name}` in CANVAS_NOT_RENDERED is not a core utility"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_padding_is_an_explicit_override() {
+        // `p-0` must be distinguishable from "no padding utility", so that it
+        // replaces the container default instead of being ignored.
+        let zero = canvas_style_for(&Some("p-0".into()));
+        assert!(zero.has_padding);
+        assert_eq!(zero.padding, Edge::default());
+        assert!(!canvas_style_for(&None).has_padding);
+    }
+
+    #[test]
+    fn width_utilities_set_container_width() {
+        assert_eq!(
+            canvas_style_for(&Some("w-64".into())).width,
+            Some(Width::Px(256.0))
+        );
+        assert_eq!(
+            canvas_style_for(&Some("af-u-w-full".into())).width,
+            Some(Width::Full)
+        );
     }
 
     #[test]
