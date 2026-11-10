@@ -10,12 +10,14 @@
 //!   escape hatch used by `examples/node-graph`.
 //! * [`Event`]s are translated into one platform-neutral model.
 //!
-//! Native backends: Windows (Win32 via `windows-sys`) and Linux (X11 via
-//! `x11rb-protocol`, pure Rust), both behind [`run`]. The browser backend
-//! (`web`, wasm32 only) is started by `run_web` in the crate root, because it
-//! paints onto a named `<canvas>` rather than opening a window. macOS is not
-//! implemented yet, and [`run`] returns [`PlatformError::Unsupported`] there.
+//! Native backends: Windows (Win32 via `windows-sys`), Linux (X11 via
+//! `x11rb-protocol`, pure Rust) and macOS (AppKit via `objc2`), all behind
+//! [`run`]. The browser backend (`web`, wasm32 only) is started by `run_web` in
+//! the crate root, because it paints onto a named `<canvas>` rather than opening
+//! a window. On other targets [`run`] returns [`PlatformError::Unsupported`].
 
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod web;
 #[cfg(windows)]
@@ -159,7 +161,11 @@ pub fn run(
     {
         x11::run(title, width, height, on_frame)
     }
-    #[cfg(not(any(windows, all(unix, not(target_os = "macos")))))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::run(title, width, height, on_frame)
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = (title, width, height, on_frame);
         Err(PlatformError::Unsupported)
@@ -180,12 +186,7 @@ pub(crate) fn pixels_to_rgba(pixels: &[u32]) -> Vec<u8> {
 }
 
 /// Number of pixels in a `width` x `height` framebuffer.
-#[cfg(any(
-    windows,
-    all(unix, not(target_os = "macos")),
-    target_arch = "wasm32",
-    test
-))]
+#[cfg(any(windows, unix, target_arch = "wasm32", test))]
 pub(crate) fn pixel_count(width: u32, height: u32) -> usize {
     width as usize * height as usize
 }

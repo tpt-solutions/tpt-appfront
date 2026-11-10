@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- macOS window backend (`platform/macos.rs`): an AppKit window with a custom view that draws
+  the framebuffer through Core Graphics, and the same event model as the Windows and X11
+  backends. Built on `objc2` (MIT or Zlib/Apache-2.0/MIT). Compile-checked for
+  `aarch64-apple-darwin` and `x86_64-apple-darwin` from Windows. Not run on a Mac yet. The
+  framebuffer is in points, so HiDPI output is upscaled until backing-scale support lands.
+
 ### Changed (breaking)
 - `OptimizerState` no longer has a `texture_caching` field, and `OptimizerChange` no longer has
   the texture-caching variants. The canvas has no texture cache to toggle, so the flag could
