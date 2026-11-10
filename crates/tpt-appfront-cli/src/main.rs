@@ -187,7 +187,7 @@ enum Command {
         #[command(subcommand)]
         kind: AddKind,
     },
-    /// Format the workspace and every standalone example with `cargo fmt`.
+    /// Format the workspace and every standalone example with `cargo +nightly fmt`.
     Fmt,
     /// Lint the workspace and every standalone example with
     /// `cargo clippy --all-targets -- -D warnings`.
@@ -1631,16 +1631,24 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
         },
     });
 
-    // `cargo-packager` only needed for --bundle installers.
-    checks.push(Check {
+    // `cargo-packager` only needed for --bundle installers. Probe the subcommand
+    // itself: `cargo` on PATH says nothing about whether `cargo packager` exists.
+    // Informational only (added to `info` below), so a missing packager does not
+    // fail `doctor` for projects that never bundle.
+    let packager_ok = Process::new("cargo")
+        .args(["packager", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let packager_check = Check {
         name: "cargo-packager",
-        ok: on_path("cargo"), // `cargo packager` subcommand; can't easily probe, report version-free
-        detail: if on_path("cargo") {
-            "available via `cargo packager` (install with `cargo install cargo-packager`)".into()
+        ok: packager_ok,
+        detail: if packager_ok {
+            "available via `cargo packager`".into()
         } else {
-            "unavailable".into()
+            "missing — `cargo install cargo-packager` (needed only for `--bundle`)".into()
         },
-    });
+    };
 
     // Install mode: path deps (monorepo checkout) vs version deps (published).
     checks.push(Check {
@@ -1701,7 +1709,7 @@ fn doctor(project: &Path) -> anyhow::Result<()> {
     // Informational hygiene checks — reported but never fail `doctor`, since a
     // dev may legitimately not have the local pre-commit hook installed or may
     // be mid-edit on an unformatted tree.
-    let mut info: Vec<Check> = Vec::new();
+    let mut info: Vec<Check> = vec![packager_check];
 
     // The wasm test runner must be exactly the wasm-bindgen version in Cargo.lock. Any other version
     // fails with a schema-version error, so compare them here.

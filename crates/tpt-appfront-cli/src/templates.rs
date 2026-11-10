@@ -484,7 +484,7 @@ pub fn with_lib_rs(pieces: &[crate::presets::WithPiece], app_title: &str) -> Str
         imports.push_str("    settings_list, SettingsListConfig,\n");
     }
     if has_login {
-        imports.push_str("    login_form, LoginFormConfig,\n");
+        imports.push_str("    login_form, LoginField, LoginFormConfig,\n");
     }
     // The imported symbols above are always used (each selected piece emits a
     // `c.with(piece(&PieceConfig { .. }))` call below), so the trailing comma
@@ -510,7 +510,12 @@ pub fn with_lib_rs(pieces: &[crate::presets::WithPiece], app_title: &str) -> Str
             c.with(login_form(&LoginFormConfig {
                 title: "Sign in".to_string(),
                 username: username_for_ui.get(),
-                on_submit: Box::new(|u, p| Msg::Submit(u, p)),
+                password: password_for_ui.get(),
+                on_input: std::sync::Arc::new(|field: LoginField, v: String| match field {
+                    LoginField::Username => Msg::SetUsername(v),
+                    LoginField::Password => Msg::SetPassword(v),
+                }),
+                on_submit: Msg::Submit,
             }));"#,
         );
     }
@@ -523,6 +528,7 @@ pub fn with_lib_rs(pieces: &[crate::presets::WithPiece], app_title: &str) -> Str
     }
     if has_login {
         content_lets.push_str("\n            let username_for_ui = username_for_ui.clone();");
+        content_lets.push_str("\n            let password_for_ui = password_for_ui.clone();");
     }
 
     let ui_build = if has_dashboard {
@@ -558,7 +564,9 @@ enum Msg {{
     Nav(String),
     Edit(String),
     Delete(String),
-    Submit(String, String),
+    SetUsername(String),
+    SetPassword(String),
+    Submit,
 }}
 
 #[wasm_bindgen(start)]
@@ -579,7 +587,11 @@ pub fn start() -> Result<(), JsValue> {{
 
     let dispatch: std::rc::Rc<dyn Fn(Msg)> = {{
         let rows = rows.clone();
+        let username = username.clone();
+        let password = password.clone();
         std::rc::Rc::new(move |msg| match msg {{
+            Msg::SetUsername(v) => username.set(v),
+            Msg::SetPassword(v) => password.set(v),
             Msg::Nav(page) => {{ let _ = page; }}
             Msg::Edit(id) => {{
                 let v: Vec<(String, String)> =
@@ -591,7 +603,7 @@ pub fn start() -> Result<(), JsValue> {{
                     rows.get().into_iter().filter(|(r, _)| r != &id).collect();
                 rows.set(v);
             }}
-            Msg::Submit(_u, _p) => {{}}
+            Msg::Submit => {{}}
         }})
     }};
 
@@ -600,6 +612,7 @@ pub fn start() -> Result<(), JsValue> {{
 
     let rows_for_ui = rows.clone();
     let username_for_ui = username.clone();
+    let password_for_ui = password.clone();
     let ui: UITree<Msg> = {ui_build};
 
     let handle = tpt_appfront::dom::mount(&root, &ui, dispatch)?;
