@@ -60,6 +60,24 @@ impl AppBuilder {
             }
         };
 
+        // The tray icon, if the app asked for one. Like shortcuts, a failure is logged and the
+        // app runs without it.
+        #[cfg(feature = "tray")]
+        let mut tray = match self.tray.clone() {
+            None => None,
+            Some((tooltip, items)) => match crate::tray::TrayController::new(&tooltip) {
+                Ok(mut controller) => {
+                    controller.set_menu(&items);
+                    Some(controller)
+                }
+                Err(e) => {
+                    self.log_sink
+                        .emit(crate::sidecar::Stream::Stderr, &format!("tray: {e}"));
+                    None
+                }
+            },
+        };
+
         let dragdrop_disp = DragDropDispatcher::new();
         let deeplink_disp = self.deeplink_dispatcher.clone();
 
@@ -164,9 +182,13 @@ impl AppBuilder {
         let deeplink_rx = deeplink_disp.as_ref().map(|d| d.receiver());
 
         event_loop.run(move |event, _, control_flow| {
-            // Hotkey presses arrive as window messages, which do not wake a `Wait` loop
-            // on their own. While shortcuts are registered, poll at 20 Hz instead.
-            *control_flow = if shortcut_registry.is_some() {
+            // Hotkey presses and tray clicks arrive as window messages, which do not wake a
+            // `Wait` loop on their own. While shortcuts or a tray are active, poll at 20 Hz.
+            #[cfg(feature = "tray")]
+            let tray_active = tray.is_some();
+            #[cfg(not(feature = "tray"))]
+            let tray_active = false;
+            *control_flow = if shortcut_registry.is_some() || tray_active {
                 ControlFlow::WaitUntil(
                     std::time::Instant::now() + std::time::Duration::from_millis(50),
                 )
@@ -178,6 +200,19 @@ impl AppBuilder {
             if let Some(registry) = shortcut_registry.as_mut() {
                 for id in registry.take_pressed() {
                     let _ = on_command("shortcut", json!({ "id": id }));
+                }
+            }
+
+            // Pump tray events: menu presses and left clicks.
+            #[cfg(feature = "tray")]
+            if let Some(tray) = tray.as_mut() {
+                while let Some(event) = tray.next_event() {
+                    let _ = match event {
+                        crate::tray::TrayEvent::MenuItem(id) => {
+                            on_command("tray.menu", json!({ "id": id }))
+                        }
+                        crate::tray::TrayEvent::Activate => on_command("tray.activate", json!({})),
+                    };
                 }
             }
 

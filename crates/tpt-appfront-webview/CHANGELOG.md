@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Windows system tray icon (feature `tray`). `AppBuilder::with_tray(tooltip, items)` adds an icon
+  owned by a hidden message-only window (`Shell_NotifyIconW`), with a context menu opened by right
+  click or the context-menu key. Menu presses reach `on_command` as `tray.menu` with
+  `{"id": ...}`, and left clicks as `tray.activate`. Events are queued by the window procedure and
+  drained by the event loop, polling at 20 Hz while a tray exists, the same as shortcuts. The icon
+  is re-added if Explorer restarts. The tray is not implemented on macOS or Linux: `TrayController::new`
+  returns an error there, and the app runs without a tray. `TrayController` and its types are
+  public under `tray`; the old unreleased `tray::win` scaffold is private now.
 - `AppBuilder` for multi-window desktop apps, with `with_window`, `with_acl`,
   `with_max_commands_per_second`, `with_sidecar`, `with_shortcut`, `with_deeplink`,
   `with_single_instance`, `with_crash_reporter`, `with_log_sink`,
