@@ -28,6 +28,11 @@
 //! From custom JS you can also call `window.__appfront.post(action, params)`
 //! directly.
 
+// The Linux event loop is still a stub (`linux/mod.rs`), so the `manager` code that calls
+// the IPC, serve and window-state helpers is compiled out there and they look unused. Allow
+// that on Linux only, until the GTK backend calls them. Other platforms keep the full lint.
+#![cfg_attr(target_os = "linux", allow(dead_code, unused_imports))]
+
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
