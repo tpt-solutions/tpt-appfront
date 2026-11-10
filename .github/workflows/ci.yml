@@ -132,6 +132,42 @@ jobs:
       # network access in CI (the tests are network-free — see llm/mod.rs).
       - run: cargo clippy -p tpt-appfront-cli --all-targets --features llm -- -D warnings
 
+  canvas-x11:
+    name: Canvas on X11 (Linux, virtual display)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth
+      - name: Canvas tests and clippy (Linux)
+        run: |
+          cargo test -p tpt-appfront-canvas
+          cargo clippy -p tpt-appfront-canvas --all-targets -- -D warnings
+      - name: Open a real X11 window and paint frames
+        # xvfb-run starts a virtual X server and sets DISPLAY to it. The smoke
+        # example exits after its frame count, so a hang fails via the timeout.
+        run: timeout 180 xvfb-run -a cargo run -p tpt-appfront-canvas --example platform_smoke -- 300
+
+  canvas-macos:
+    name: Canvas (macOS build and tests)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # There is no macOS window backend yet, so this checks that the crate
+      # builds and its tests pass. `run_native` returns PlatformError::Unsupported.
+      - run: cargo test -p tpt-appfront-canvas
+      - run: cargo clippy -p tpt-appfront-canvas --all-targets -- -D warnings
+
   audit:
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest
