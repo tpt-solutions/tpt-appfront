@@ -34,6 +34,11 @@ libloading = "0.8"
 
 # Windows: the native clipboard (`clipboard.rs`) and the tray (`tray.rs`, behind the
 # `tray` feature) both use these Win32 bindings.
+# macOS: the native clipboard (`clipboard.rs`) uses NSPasteboard. MIT OR Apache-2.0 (objc2).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+objc2-foundation = "0.3"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.52", features = [
