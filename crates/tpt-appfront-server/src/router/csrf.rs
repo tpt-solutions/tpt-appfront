@@ -8,7 +8,7 @@
 //! the cookie — a direct API/agent caller that never loaded a page from this
 //! server (and so never received the cookie) is unaffected.
 
-use axum::http::{HeaderMap, HeaderValue};
+use http::{HeaderMap, HeaderValue};
 
 pub(crate) const COOKIE_NAME: &str = "appfront_csrf";
 pub(crate) const HEADER_NAME: &str = "x-csrf-token";
@@ -37,7 +37,7 @@ pub(crate) fn set_cookie_header(token: &str) -> HeaderValue {
 }
 
 fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    let raw = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    let raw = headers.get(http::header::COOKIE)?.to_str().ok()?;
     raw.split(';').find_map(|kv| {
         let (k, v) = kv.trim().split_once('=')?;
         (k == name).then_some(v)
@@ -65,7 +65,7 @@ mod tests {
         let mut h = HeaderMap::new();
         for (k, v) in pairs {
             h.insert(
-                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
                 HeaderValue::from_str(v).unwrap(),
             );
         }

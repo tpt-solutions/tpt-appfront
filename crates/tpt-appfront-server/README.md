@@ -1,6 +1,6 @@
 # tpt-appfront-server
 
-The Axum **smart router** for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
+The **smart router** for [TPT AppFront](https://github.com/tpt-solutions/tpt-appfront).
 
 One router serves the same `UITree` to four kinds of client, chosen from the
 `User-Agent` header or the `?client=` query parameter:
@@ -27,12 +27,12 @@ Re-exported from `src/lib.rs`:
   `allowed_actions`, `rate_limit`, `read_rate_limit`, `csrf`, `auth_hook`, `pwa`,
   `cors`, `extra_ai_agents`, `trust_forwarded_for`; finish with `build()`, which
   returns a `SmartRouter<Msg>`.
-- `build_router(SmartRouter<Msg>) -> axum::Router`, for serving the router yourself
-  or stacking more middleware. If you use it, serve it with
-  `into_make_service_with_connect_info::<SocketAddr>()` so the per-IP rate limiter
-  can read the peer address.
-- `serve(SmartRouter<Msg>, SocketAddr) -> std::io::Result<()>`, an async helper that
-  does that for you.
+- `build_router(SmartRouter<Msg>) -> Router<Msg>`, a request handler (`Router::handle`) for mounting the router yourself
+  or stacking more middleware. The peer address comes from a `SocketAddr` request
+  extension, which `serve` adds for every connection.
+- `serve(SmartRouter<Msg>, SocketAddr) -> std::io::Result<()>` runs the router on a new
+  listener. `serve_listener(SmartRouter<Msg>, tokio::net::TcpListener)` does the same on a
+  listener you bound yourself.
 - `Command { action: String, params: HashMap<String, serde_json::Value> }`, the body
   of `POST /command`.
 - `CommandResponse { ok, message }`, with `CommandResponse::ok(..)` and

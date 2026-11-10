@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- The HTTP layer is built on hyper instead of axum and tower-http. Both pulled in
+  `sync_wrapper`, which the license policy bans. The public types changed:
+  - `build_router(SmartRouter<Msg>)` returns `tpt_appfront_server::Router<Msg>`, not
+    `axum::Router`. Drive it with `Router::handle(request)`, or serve it with
+    `serve_listener`. The peer address comes from a `SocketAddr` request extension, so
+    `into_make_service_with_connect_info` is no longer needed.
+  - Added `serve_listener(SmartRouter<Msg>, tokio::net::TcpListener)`. `serve` now calls it.
+- Static files (the fallback for unknown paths) are served without HTTP range requests, ETag
+  or `Last-Modified` handling. The MIME table covers the web formats (wasm, js, css, images,
+  fonts, webmanifest).
+- Requests are logged with the `tracing` crate (method, path, status, elapsed time). The
+  library installs no subscriber.
+
 ### Added
 - Per-peer-IP rate limiting on `POST /command` (`tower_governor` with
   `PeerIpKeyExtractor`), configurable through `SmartRouterBuilder::rate_limit` and
@@ -40,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors to the caller instead of panicking.
 - Rate limiting on `POST /command` is per peer IP instead of one shared bucket for the
   whole route.
+- Rate limiting is now an in-crate token bucket instead of `tower_governor`. The
+  `governor` dependency pulled in `nonzero_ext`, which the license policy bans. Behavior
+  is unchanged: 429 with `Retry-After` past the burst, and 500 when no client address is
+  available. One difference: with `trust_forwarded_for` the key is the first
+  `X-Forwarded-For` hop, then `X-Real-Ip`. The `Forwarded` header is no longer read.
 
 ### Fixed
 - The ETag caching helpers were defined but never called. Cached responses now go

@@ -1,8 +1,8 @@
 [package]
 name = "tpt-appfront-server"
-description = "Axum smart router for TPT AppFront: serves the right backend per client type, with PWA support and a POST /command bridge."
+description = "Smart router for TPT AppFront: serves the right backend per client type, with PWA support and a POST /command bridge."
 readme = "README.md"
-keywords = ["axum", "router", "pwa", "server", "ssr"]
+keywords = ["http", "router", "pwa", "server", "ssr"]
 categories = ["web-programming::http-server", "web-programming"]
 version.workspace = true
 edition.workspace = true
@@ -13,13 +13,18 @@ repository.workspace = true
 tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
 tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1" }
 tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema", version = "0.1" }
-axum = { version = "0.7", features = ["macros"] }
-tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.5", features = ["fs", "trace", "timeout", "set-header", "cors"] }
-tower_governor = { version = "0.4" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["net", "rt"] }
+tokio = { workspace = true, features = ["net", "rt", "time", "fs", "macros"] }
+# HTTP layer. Built directly on hyper: axum and tower pulled in `sync_wrapper`, which the
+# license policy bans (deny.toml).
+bytes = "1"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tracing = "0.1"
 
 [dev-dependencies]
 # Tests only call plain-HTTP 127.0.0.1, so TLS (and with it `ring`) stays out of the tree.

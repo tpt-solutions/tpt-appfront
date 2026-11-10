@@ -1,74 +1,30 @@
-//! Axum-based smart router that detects client type and serves the
+//! Smart router that detects client type and serves the
 //! appropriate rendering backend.
 
 mod caching;
 mod command;
-mod cors;
+pub(crate) mod cors;
 mod csrf;
-mod handlers;
+pub(crate) mod handlers;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
-use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderName, HeaderValue};
-use axum::routing::{get, post};
-use axum::Router;
-use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor};
-use tower_governor::GovernorLayer;
-use tower_http::services::ServeDir;
-use tower_http::set_header::SetResponseHeaderLayer;
-use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::TraceLayer;
 use tpt_appfront_core::UITree;
 
 use crate::pwa::PwaConfig;
+use crate::rate_limit::KeyedRateLimiter;
 
 /// An optional auth predicate over incoming request headers, used to gate
 /// protected routes. `Send + Sync` so it can live behind the shared
-/// `SmartRouter<Msg>` across Axum's worker threads.
-type AuthHook = dyn Fn(&axum::http::HeaderMap) -> bool + Send + Sync;
+/// `SmartRouter<Msg>` across the connection tasks.
+type AuthHook = dyn Fn(&http::HeaderMap) -> bool + Send + Sync;
 
 // Re-export the public command/CORS types so the crate's documented API and
 // the inline `mod tests` (which `use super::*`) resolve them unchanged.
 pub use command::{Command, CommandHandler, CommandResponse, RateLimitConfig};
 pub use cors::CorsPolicy;
-
-/// Maximum accepted body size for `POST /command`, applied before the
-/// request reaches the handler — closes the gap noted in Phase 12: no
-/// write route should ship without a body-size limit from day one.
-const COMMAND_BODY_LIMIT_BYTES: usize = 16 * 1024;
-
-/// Rate-limiting key extractor that picks the client IP per
-/// [`SmartRouter::trust_forwarded_for`]. When that flag is set (i.e. the app
-/// runs behind a trusted reverse proxy that sets `X-Forwarded-For` /
-/// `X-Real-Ip` / `Forwarded`), it delegates to [`SmartIpKeyExtractor`] so the
-/// real client IP is used; otherwise it delegates to [`PeerIpKeyExtractor`]
-/// (the peer socket IP). Both extractors share `type Key = IpAddr`, so this
-/// single type lets the chosen strategy be wired in without two divergent
-/// `GovernorLayer` types.
-#[derive(Clone, Copy, Default)]
-struct ProxyAwareKeyExtractor {
-    trust_forwarded_for: bool,
-}
-
-impl tower_governor::key_extractor::KeyExtractor for ProxyAwareKeyExtractor {
-    type Key = std::net::IpAddr;
-
-    fn extract<T>(
-        &self,
-        req: &axum::http::Request<T>,
-    ) -> Result<Self::Key, tower_governor::errors::GovernorError> {
-        if self.trust_forwarded_for {
-            SmartIpKeyExtractor.extract(req)
-        } else {
-            PeerIpKeyExtractor.extract(req)
-        }
-    }
-}
 
 /// Configuration for the smart router.
 pub struct SmartRouter<Msg> {
@@ -135,7 +91,7 @@ pub struct SmartRouter<Msg> {
     /// [`SmartRouterBuilder::extra_ai_agents`].
     pub extra_ai_agents: Vec<String>,
     /// When `true`, per-IP rate limiting uses `X-Forwarded-For` /
-    /// `X-Real-Ip` / `Forwarded` (delegating to `SmartIpKeyExtractor`) instead
+    /// `X-Real-Ip` (the first `X-Forwarded-For` hop, then `X-Real-Ip`) instead
     /// of the raw peer socket IP. Set this only when those headers are
     /// guaranteed to come from a trusted reverse proxy — see
     /// [`SmartRouterBuilder::trust_forwarded_for`].
@@ -218,7 +174,7 @@ impl<Msg> SmartRouterBuilder<Msg> {
     /// app-specific session/token check.
     pub fn auth_hook(
         mut self,
-        hook: impl Fn(&axum::http::HeaderMap) -> bool + Send + Sync + 'static,
+        hook: impl Fn(&http::HeaderMap) -> bool + Send + Sync + 'static,
     ) -> Self {
         self.auth_hook = Some(std::sync::Arc::new(hook));
         self
@@ -304,10 +260,10 @@ impl<Msg> SmartRouterBuilder<Msg> {
     }
 
     /// Controls whether per-IP rate limiting trusts `X-Forwarded-For` /
-    /// `X-Real-Ip` / `Forwarded` (delegating to `SmartIpKeyExtractor`) instead
+    /// `X-Real-Ip` (the first `X-Forwarded-For` hop, then `X-Real-Ip`) instead
     /// of the raw peer socket IP. Only enable behind a trusted reverse proxy
     /// (nginx/Cloudflare), or the client can spoof its rate-limit key. Off by
-    /// default, which keeps the safer `PeerIpKeyExtractor` behavior.
+    /// default, which keys on the peer socket address.
     pub fn trust_forwarded_for(mut self, trust: bool) -> Self {
         self.trust_forwarded_for = trust;
         self
@@ -365,132 +321,95 @@ init().catch(e => console.error('appfront init failed', e));
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// Start the Axum server. Runs until the server errors out.
+/// Starts the server. Runs until the listener fails.
 ///
 /// Returns the bind error (e.g. address in use) or the first fatal serve
 /// error instead of panicking, so callers can report it and exit cleanly.
 ///
-/// Uses [`Router::into_make_service_with_connect_info`] so the per-client
-/// (peer IP) rate limiter on `POST /command` has a real address to key on;
-/// see [`build_router`]'s docs if you're wiring your own `axum::serve` call
-/// instead of using this function.
+/// Serves the router on `addr` until the process exits or the listener fails.
+///
+/// The peer address of every connection is passed to the rate limiter, so
+/// `POST /command` is limited per client IP. Behind a reverse proxy, set
+/// [`SmartRouterBuilder::trust_forwarded_for`] only when the proxy sets the
+/// forwarded headers itself.
 pub async fn serve<Msg>(router: SmartRouter<Msg>, addr: SocketAddr) -> std::io::Result<()>
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
-    let app = build_router(router);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
+    serve_listener(router, listener).await
 }
 
-/// Build the Axum [`Router`] without starting it (useful for testing or
-/// stacking with other middleware).
-///
-/// `POST /command` is rate-limited per peer IP ([`PeerIpKeyExtractor`]),
-/// which requires an `axum::extract::ConnectInfo<SocketAddr>` request
-/// extension to be present. If you serve this router yourself instead of
-/// calling [`serve`], make sure to do so via
-/// `.into_make_service_with_connect_info::<SocketAddr>()` — otherwise every
-/// request to `/command` will fail key extraction.
-pub fn build_router<Msg>(router: SmartRouter<Msg>) -> Router
+/// Serves the router on an already-bound listener. Use this when you need the
+/// bound address (for example, port `0` in tests) or your own listener setup.
+pub async fn serve_listener<Msg>(
+    router: SmartRouter<Msg>,
+    listener: tokio::net::TcpListener,
+) -> std::io::Result<()>
 where
     Msg: Clone + Send + Sync + serde::Serialize + 'static,
 {
-    let serve_dir = ServeDir::new(&router.static_dir);
-    let rate_limit = router.rate_limit;
-    let read_rate_limit = router.read_rate_limit;
-    let cors = router.cors.clone();
+    use std::convert::Infallible;
+
+    use http::Request;
+    use hyper::body::Incoming;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+
+    let app = build_router(router);
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(e) => {
+                // Usually transient (for example, out of file descriptors). Back off
+                // briefly and keep serving, so one bad accept does not stop the server.
+                tracing::warn!(error = %e, "accept failed; retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
+        };
+        let app = app.clone();
+        tokio::spawn(async move {
+            let service = service_fn(move |mut req: Request<Incoming>| {
+                req.extensions_mut().insert(peer);
+                let app = app.clone();
+                async move { Ok::<_, Infallible>(app.handle(req).await) }
+            });
+            if let Err(e) = hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+            {
+                tracing::debug!(error = %e, "connection ended with an error");
+            }
+        });
+    }
+}
+
+/// Builds the request handler without starting a listener. Useful for tests and
+/// for mounting the router inside your own server. Drive it with
+/// [`crate::app::Router::handle`], passing the peer address as a `SocketAddr` request extension.
+pub fn build_router<Msg>(router: SmartRouter<Msg>) -> crate::app::Router<Msg>
+where
+    Msg: Clone + Send + Sync + serde::Serialize + 'static,
+{
+    let command_rate = router.rate_limit;
+    let read_rate = router.read_rate_limit;
+    let trust_forwarded_for = router.trust_forwarded_for;
     let state = std::sync::Arc::new(router);
 
-    // Per-peer-IP bucket rather than one shared bucket for the whole route,
+    // Per-client-IP buckets rather than one shared bucket for the whole route,
     // so a single misbehaving/compromised client is throttled without
-    // affecting other clients. Note the `PeerIpKeyExtractor` caveat: behind a
-    // reverse proxy the peer IP is the proxy's IP unless the proxy forwards
-    // the real client IP and the app switches to `SmartIpKeyExtractor` (which
-    // trusts `X-Forwarded-For`/`X-Real-Ip`/`Forwarded` headers — only safe if
-    // those headers are guaranteed to come from a trusted proxy).
-    let governor_conf = std::sync::Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(rate_limit.per_second)
-            .burst_size(rate_limit.burst)
-            .key_extractor(ProxyAwareKeyExtractor {
-                trust_forwarded_for: state.trust_forwarded_for,
-            })
-            .finish()
-            .expect("valid governor rate-limit config"),
-    );
-
-    // The read routes get their own (much more generous) bucket — see
-    // `SmartRouterBuilder::read_rate_limit`. Previously unthrottled entirely.
-    let read_governor_conf = std::sync::Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(read_rate_limit.per_second)
-            .burst_size(read_rate_limit.burst)
-            .key_extractor(ProxyAwareKeyExtractor {
-                trust_forwarded_for: state.trust_forwarded_for,
-            })
-            .finish()
-            .expect("valid governor rate-limit config"),
-    );
-
-    // Read/asset routes may be fetched cross-origin by browsers and AI
-    // agents; the exact policy is configurable via
-    // `SmartRouterBuilder::cors` (defaults to permissive, unchanged from
-    // prior behavior). The state-changing `POST /command` (built separately
-    // below) is deliberately left without CORS so it can't be driven
-    // cross-site.
-    let read_routes = Router::new()
-        .route("/", get(handlers::root_handler::<Msg>))
-        .route("/ai-schema.json", get(handlers::ai_schema_handler::<Msg>))
-        .route("/opengraph", get(handlers::opengraph_handler::<Msg>))
-        .route(
-            "/service-worker.js",
-            get(handlers::pwa_service_worker::<Msg>),
-        )
-        .route("/manifest.webmanifest", get(handlers::pwa_manifest::<Msg>))
-        .layer(cors::cors_layer(&cors))
-        .layer(GovernorLayer {
-            config: read_governor_conf,
-        });
-
-    // The single write route: body-size-limited and rate-limited, and NOT
-    // CORS-exposed, so a third-party page can't invoke app commands for the
-    // victim (CSRF-style).
-    let command_routes = Router::new().route(
-        "/command",
-        post(handlers::command_handler::<Msg>)
-            .route_layer(DefaultBodyLimit::max(COMMAND_BODY_LIMIT_BYTES))
-            .route_layer(GovernorLayer {
-                config: governor_conf,
-            }),
-    );
-
-    // Baseline security headers applied to every response — explicit rather
-    // than absent. `X-Content-Type-Options` stops MIME-sniffing and
-    // `X-Frame-Options` blocks clickjacking. The strict `Content-Security-Policy`
-    // is set *per document* by `human_shell` (with a fresh nonce) so the app's
-    // own inline WASM bootstrap / PWA registration scripts are allow-listed
-    // while everything else stays same-origin. Apps needing a looser policy
-    // (e.g. third-party fonts) can layer their own `SetResponseHeaderLayer`
-    // on top of `build_router`'s output.
-    read_routes
-        .merge(command_routes)
-        .fallback_service(serve_dir)
-        .with_state(state)
-        .layer(SetResponseHeaderLayer::if_not_present(
-            HeaderName::from_static("x-content-type-options"),
-            HeaderValue::from_static("nosniff"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("DENY"),
-        ))
-        .layer(TimeoutLayer::new(Duration::from_secs(10)))
-        .layer(TraceLayer::new_for_http())
+    // affecting other clients. Behind a reverse proxy the peer IP is the
+    // proxy's IP, so `trust_forwarded_for` switches the key to the forwarded
+    // client address. Only safe if those headers come from a trusted proxy.
+    crate::app::Router {
+        state,
+        read_limiter: std::sync::Arc::new(KeyedRateLimiter::new(read_rate, trust_forwarded_for)),
+        command_limiter: std::sync::Arc::new(KeyedRateLimiter::new(
+            command_rate,
+            trust_forwarded_for,
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -499,11 +418,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use axum::http::HeaderMap;
-    use axum::response::Response;
+    use http::HeaderMap;
+    use http_body_util::{BodyExt, Full};
     use tpt_appfront_core::ContainerBuilder;
 
     use super::*;
+    use crate::app::{Resp as Response, COMMAND_BODY_LIMIT_BYTES};
     use crate::router::handlers::{ai_agent_json, crawler_html, human_shell, social_opengraph};
 
     type Msg = ();
@@ -527,21 +447,23 @@ mod tests {
     }
 
     async fn body_string(resp: Response) -> String {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        let bytes = resp
+            .into_body()
+            .collect()
             .await
-            .expect("response body");
+            .expect("response body")
+            .to_bytes();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
-    /// A `ConnectInfo` extension standing in for the peer address axum would
-    /// normally attach via `into_make_service_with_connect_info` — required
-    /// for `PeerIpKeyExtractor` to find a rate-limit key in `oneshot` tests.
-    fn test_connect_info() -> axum::extract::ConnectInfo<SocketAddr> {
+    /// The peer address, as `serve` would insert it. Needed for the per-IP rate
+    /// limiter to find a key in `handle` tests.
+    fn test_connect_info() -> SocketAddr {
         connect_info_for([127, 0, 0, 1])
     }
 
-    fn connect_info_for(ip: [u8; 4]) -> axum::extract::ConnectInfo<SocketAddr> {
-        axum::extract::ConnectInfo(SocketAddr::from((ip, 0)))
+    fn connect_info_for(ip: [u8; 4]) -> SocketAddr {
+        SocketAddr::from((ip, 0))
     }
 
     #[tokio::test]
@@ -550,7 +472,7 @@ mod tests {
         let resp = human_shell(&state).await;
         let csp = resp
             .headers()
-            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .get(http::header::CONTENT_SECURITY_POLICY)
             .expect("CSP header present")
             .to_str()
             .unwrap();
@@ -663,8 +585,8 @@ mod tests {
 
     #[tokio::test]
     async fn cached_read_route_honors_if_none_match() {
-        use axum::http::header::{ETAG, IF_NONE_MATCH};
-        use axum::http::StatusCode;
+        use http::header::{ETAG, IF_NONE_MATCH};
+        use http::StatusCode;
 
         let state = std::sync::Arc::new(test_router());
         let first = crawler_html(&state, &HeaderMap::new()).await;
@@ -684,9 +606,8 @@ mod tests {
 
     #[tokio::test]
     async fn command_without_handler_returns_501() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let app = build_router(test_router());
         let req = Request::builder()
@@ -694,17 +615,16 @@ mod tests {
             .uri("/command")
             .header("content-type", "application/json")
             .extension(test_connect_info())
-            .body(Body::from(r#"{"action":"greet"}"#))
+            .body(Full::from(r#"{"action":"greet"}"#))
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.handle(req).await;
         assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
     }
 
     #[tokio::test]
     async fn command_rejects_empty_action() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("should not run"))
@@ -715,17 +635,16 @@ mod tests {
             .uri("/command")
             .header("content-type", "application/json")
             .extension(test_connect_info())
-            .body(Body::from(r#"{"action":""}"#))
+            .body(Full::from(r#"{"action":""}"#))
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.handle(req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn command_rejects_action_outside_allowlist() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("should not run"))
@@ -737,17 +656,16 @@ mod tests {
             .uri("/command")
             .header("content-type", "application/json")
             .extension(test_connect_info())
-            .body(Body::from(r#"{"action":"delete_everything"}"#))
+            .body(Full::from(r#"{"action":"delete_everything"}"#))
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.handle(req).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
     async fn command_invokes_handler_and_returns_response() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|cmd| {
@@ -763,14 +681,12 @@ mod tests {
             .uri("/command")
             .header("content-type", "application/json")
             .extension(test_connect_info())
-            .body(Body::from(r#"{"action":"greet","params":{"name":"Ada"}}"#))
+            .body(Full::from(r#"{"action":"greet","params":{"name":"Ada"}}"#))
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.handle(req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["message"], "greeted Ada");
@@ -778,9 +694,8 @@ mod tests {
 
     #[tokio::test]
     async fn command_rejects_oversized_body() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("should not run"))
@@ -796,17 +711,16 @@ mod tests {
             .uri("/command")
             .header("content-type", "application/json")
             .extension(test_connect_info())
-            .body(Body::from(oversized))
+            .body(Full::from(oversized))
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.handle(req).await;
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]
     async fn command_rejects_requests_beyond_the_rate_limit() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("ok"))
@@ -823,26 +737,25 @@ mod tests {
                 .uri("/command")
                 .header("content-type", "application/json")
                 .extension(test_connect_info())
-                .body(Body::from(r#"{"action":"greet"}"#))
+                .body(Full::from(r#"{"action":"greet"}"#))
                 .unwrap()
         };
 
         for _ in 0..3 {
-            let resp = app.clone().oneshot(make_req()).await.unwrap();
+            let resp = app.clone().handle(make_req()).await;
             assert_eq!(resp.status(), StatusCode::OK);
         }
 
         // The burst allowance (3) is now exhausted; the next request should
         // be throttled.
-        let resp = app.clone().oneshot(make_req()).await.unwrap();
+        let resp = app.clone().handle(make_req()).await;
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[tokio::test]
     async fn command_rate_limit_is_per_peer_ip() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .on_command(|_cmd| CommandResponse::ok("ok"))
@@ -859,26 +772,25 @@ mod tests {
                 .uri("/command")
                 .header("content-type", "application/json")
                 .extension(connect_info_for(ip))
-                .body(Body::from(r#"{"action":"greet"}"#))
+                .body(Full::from(r#"{"action":"greet"}"#))
                 .unwrap()
         };
 
         // Client A exhausts its single-request burst allowance.
-        let resp = app.clone().oneshot(make_req([10, 0, 0, 1])).await.unwrap();
+        let resp = app.clone().handle(make_req([10, 0, 0, 1])).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let resp = app.clone().oneshot(make_req([10, 0, 0, 1])).await.unwrap();
+        let resp = app.clone().handle(make_req([10, 0, 0, 1])).await;
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // Client B has its own bucket and is unaffected by A's usage.
-        let resp = app.clone().oneshot(make_req([10, 0, 0, 2])).await.unwrap();
+        let resp = app.clone().handle(make_req([10, 0, 0, 2])).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn pwa_routes_served_and_shell_injects_glue() {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
+        use http_body_util::Full;
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .title("PWA App")
@@ -891,46 +803,43 @@ mod tests {
 
         let sw = app
             .clone()
-            .oneshot(
+            .handle(
                 Request::builder()
                     .uri("/service-worker.js")
                     .extension(test_connect_info())
-                    .body(Body::empty())
+                    .body(Full::default())
                     .unwrap(),
             )
-            .await
-            .unwrap();
+            .await;
         assert_eq!(sw.status(), StatusCode::OK);
         assert_eq!(
-            sw.headers().get(axum::http::header::CONTENT_TYPE).unwrap(),
+            sw.headers().get(http::header::CONTENT_TYPE).unwrap(),
             "application/javascript"
         );
 
         let m = app
             .clone()
-            .oneshot(
+            .handle(
                 Request::builder()
                     .uri("/manifest.webmanifest")
                     .extension(test_connect_info())
-                    .body(Body::empty())
+                    .body(Full::default())
                     .unwrap(),
             )
-            .await
-            .unwrap();
+            .await;
         assert_eq!(m.status(), StatusCode::OK);
 
         // No PWA config -> 404 instead of serving the assets.
         let app2 = build_router(test_router());
         let sw2 = app2
-            .oneshot(
+            .handle(
                 Request::builder()
                     .uri("/service-worker.js")
                     .extension(test_connect_info())
-                    .body(Body::empty())
+                    .body(Full::default())
                     .unwrap(),
             )
-            .await
-            .unwrap();
+            .await;
         assert_eq!(sw2.status(), StatusCode::NOT_FOUND);
     }
 
@@ -954,8 +863,7 @@ mod tests {
     #[tokio::test]
     async fn root_routes_by_ua() {
         let router = test_router();
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
 
         let app = build_router(router);
 
@@ -963,47 +871,46 @@ mod tests {
             .uri("/")
             .header("user-agent", "Mozilla/5.0 Chrome/120")
             .extension(test_connect_info())
-            .body(axum::body::Body::empty())
+            .body(Full::default())
             .unwrap();
-        let resp = app.clone().oneshot(req).await.unwrap();
+        let resp = app.clone().handle(req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let req = Request::builder()
             .uri("/")
             .header("user-agent", "Googlebot/2.1")
             .extension(test_connect_info())
-            .body(axum::body::Body::empty())
+            .body(Full::default())
             .unwrap();
-        let resp = app.clone().oneshot(req).await.unwrap();
+        let resp = app.clone().handle(req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let req = Request::builder()
             .uri("/")
             .header("user-agent", "GPTBot/1.0")
             .extension(test_connect_info())
-            .body(axum::body::Body::empty())
+            .body(Full::default())
             .unwrap();
-        let resp = app.clone().oneshot(req).await.unwrap();
+        let resp = app.clone().handle(req).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn default_cors_is_permissive() {
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
 
         let app = build_router(test_router());
         let req = Request::builder()
             .uri("/")
             .header("origin", "https://evil.example")
             .extension(test_connect_info())
-            .body(axum::body::Body::empty())
+            .body(Full::default())
             .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
+        let resp = app.handle(req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers()
-                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .get(http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .unwrap(),
             "*"
         );
@@ -1011,8 +918,7 @@ mod tests {
 
     #[tokio::test]
     async fn cors_origins_policy_restricts_allowed_origin_header() {
-        use axum::http::{Request, StatusCode};
-        use tower::util::ServiceExt;
+        use http::{Request, StatusCode};
 
         let router = SmartRouterBuilder::new(UITree::<Msg>::container(|_| {}))
             .cors(CorsPolicy::Origins(vec![
@@ -1025,13 +931,13 @@ mod tests {
             .uri("/")
             .header("origin", "https://trusted.example")
             .extension(test_connect_info())
-            .body(axum::body::Body::empty())
+            .body(Full::default())
             .unwrap();
-        let resp = app.clone().oneshot(allowed).await.unwrap();
+        let resp = app.clone().handle(allowed).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
             resp.headers()
-                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .get(http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .unwrap(),
             "https://trusted.example"
         );
@@ -1040,13 +946,13 @@ mod tests {
             .uri("/")
             .header("origin", "https://evil.example")
             .extension(test_connect_info())
-            .body(axum::body::Body::empty())
+            .body(Full::default())
             .unwrap();
-        let resp = app.oneshot(disallowed).await.unwrap();
+        let resp = app.handle(disallowed).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(resp
             .headers()
-            .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .get(http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .is_none());
     }
 }

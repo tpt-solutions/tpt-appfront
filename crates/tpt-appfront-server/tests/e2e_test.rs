@@ -38,7 +38,10 @@ impl ServerGuard {
             .title("E2E Test App")
             .description("E2E test for routing")
             .build();
+        Self::start_router(router)
+    }
 
+    fn start_router(router: tpt_appfront_server::SmartRouter<Msg>) -> Self {
         let (port, listener) = pick_port();
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
@@ -46,24 +49,17 @@ impl ServerGuard {
         let handle = thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
-                let app = tpt_appfront_server::build_router(router);
                 listener.set_nonblocking(true).expect("set_nonblocking");
                 let listener = tokio::net::TcpListener::from_std(listener).expect("tokio listener");
-                // We use axum::serve with graceful shutdown via the atomic flag.
-                // `into_make_service_with_connect_info` is required so the
-                // peer-IP rate limiter on `POST /command` has an address to
-                // key on (see `build_router`'s docs).
-                axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .with_graceful_shutdown(async move {
-                    while !shutdown_clone.load(Ordering::SeqCst) {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                })
-                .await
-                .ok();
+                // `serve_listener` runs until it fails, so stop it through the atomic flag.
+                tokio::select! {
+                    _ = tpt_appfront_server::serve_listener(router, listener) => {}
+                    _ = async move {
+                        while !shutdown_clone.load(Ordering::SeqCst) {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    } => {}
+                }
             });
         });
 
@@ -179,4 +175,39 @@ fn client_query_param_overrides_ua() {
         body.contains("<h1"),
         "crawler override should return HTML even with browser UA"
     );
+}
+
+/// `POST /command` over a real socket: the JSON body reaches the app handler, and the
+/// content-type and body-size rules apply on the wire, not only in the in-process tests.
+#[test]
+fn command_round_trip_over_real_socket() {
+    use tpt_appfront_server::{CommandResponse, SmartRouterBuilder};
+
+    let router = SmartRouterBuilder::new(test_ui())
+        .on_command(|cmd| CommandResponse::ok(format!("ran {}", cmd.action)))
+        .build();
+    let guard = ServerGuard::start_router(router);
+    let url = guard.url("/command");
+
+    let ok = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"action":"greet"}"#)
+        .unwrap();
+    assert_eq!(ok.status(), 200);
+    assert!(ok.into_string().unwrap().contains("ran greet"));
+
+    let wrong_type = ureq::post(&url).send_string(r#"{"action":"greet"}"#);
+    match wrong_type {
+        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 415),
+        other => panic!("expected 415, got {other:?}"),
+    }
+
+    let oversized = format!(r#"{{"action":"{}"}}"#, "a".repeat(20 * 1024));
+    let too_big = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_string(&oversized);
+    match too_big {
+        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 413),
+        other => panic!("expected 413, got {other:?}"),
+    }
 }
