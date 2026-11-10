@@ -3,7 +3,7 @@
 //! [`platform`]). No `egui`, `eframe`, or `winit`, so the crate stays within
 //! the license policy in `deny.toml`.
 //!
-//! Pieces: [`layout`] (taffy), [`scene`] (painting and input), [`raster`]
+//! Pieces: `layout` (taffy), `scene` (painting and input), [`raster`]
 //! (the painter), [`glyphs`] (text from the bundled Noto Sans), and
 //! [`platform`] (windowing). [`platform`] and [`raster`] are public so custom
 //! drawing can drop below the `UITree` model; see `examples/node-graph`.

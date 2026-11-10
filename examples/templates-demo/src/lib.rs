@@ -7,12 +7,12 @@
 //! text, signing in, and navigating the sidebar all dispatch `Msg`s that mutate
 //! shared `Signal` state.
 
-use tpt_appfront_core::{create_effect, Signal, UITree};
 use std::sync::Arc;
+use tpt_appfront_core::{create_effect, Signal, UITree};
 
 use tpt_appfront_templates::{
-    dashboard_shell, login_form, settings_list, DashboardShellConfig, LoginField,
-    LoginFormConfig, SettingsListConfig,
+    dashboard_shell, login_form, settings_list, DashboardShellConfig, LoginField, LoginFormConfig,
+    SettingsListConfig,
 };
 use wasm_bindgen::prelude::*;
 
