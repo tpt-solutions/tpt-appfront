@@ -4,15 +4,15 @@
 //!
 //! | feature     | module                  | what it gives you                          |
 //! |-------------|-------------------------|--------------------------------------------|
-//! | `dom`       | [`dom`]                 | reactive DOM (wasm32 only)                 |
-//! | `canvas`    | [`canvas`]              | taffy canvas with an internal window layer (native) |
-//! | `tui`       | [`tui`]                 | ratatui terminal UI                        |
-//! | `html`      | [`html`]                | semantic HTML for SSR/SSG                  |
-//! | `ai-schema` | [`ai_schema`]           | JSON-LD and AI-agent schema                |
-//! | `server`    | [`server`]              | Axum smart router                          |
-//! | `mcp`       | [`mcp`]                 | MCP server over stdio                      |
-//! | `test`      | [`test`]                | headless test harness and linter           |
-//! | `templates` | [`templates`]           | prebuilt login, dashboard and settings UI  |
+//! | `dom`       | `dom`                   | reactive DOM (wasm32 only)                 |
+//! | `canvas`    | `canvas`                | taffy canvas with an internal window layer (native) |
+//! | `tui`       | `tui`                   | ratatui terminal UI                        |
+//! | `html`      | `html`                  | semantic HTML for SSR/SSG                  |
+//! | `ai-schema` | `ai_schema`             | JSON-LD and AI-agent schema                |
+//! | `server`    | `server`                | Axum smart router                          |
+//! | `mcp`       | `mcp`                   | MCP server over stdio                      |
+//! | `test`      | `test`                  | headless test harness and linter           |
+//! | `templates` | `templates`             | prebuilt login, dashboard and settings UI  |
 //!
 //! The `webview` backend is not included: it is `publish = false`, and a published crate
 //! cannot depend on an unpublished one. Use `tpt-appfront-webview` directly, from a

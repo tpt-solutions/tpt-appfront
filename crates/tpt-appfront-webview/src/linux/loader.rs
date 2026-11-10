@@ -159,8 +159,8 @@ mod tests {
             .expect("the test host library should open");
         // SAFETY: the test symbol takes no arguments and returns an integer. Its
         // return type is only checked as 32-bit, which both declarations share.
-        let f: unsafe extern "C" fn() -> u32 = unsafe { lib.symbol(PRESENT_SYMBOL) }
-            .expect("the symbol should resolve");
+        let f: unsafe extern "C" fn() -> u32 =
+            unsafe { lib.symbol(PRESENT_SYMBOL) }.expect("the symbol should resolve");
         // SAFETY: see above; the library stays alive for the whole test.
         assert_ne!(unsafe { f() }, 0, "process id is never zero");
     }

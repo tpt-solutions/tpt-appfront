@@ -48,10 +48,10 @@ pub use app::{AppBuilder, WindowConfig};
 
 // Native event loop: `tao` + `wry` on Windows and macOS. Linux has its own backend
 // (see `docs/linux-webview-backend.md`); until it lands, `AppBuilder::run` returns an error there.
-#[cfg(not(target_os = "linux"))]
-mod manager;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(not(target_os = "linux"))]
+mod manager;
 
 mod secret;
 pub use secret::{delete_secret, get_secret, set_secret, SecretError};
@@ -402,7 +402,10 @@ where
 }
 
 /// Serves a single file from `dist_dir` over the custom protocol.
-fn serve(dist_dir: &Path, request: &Request<Vec<u8>>) -> http::Result<Response<Cow<'static, [u8]>>> {
+fn serve(
+    dist_dir: &Path,
+    request: &Request<Vec<u8>>,
+) -> http::Result<Response<Cow<'static, [u8]>>> {
     let path = request.uri().path();
     let rel = path.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };

@@ -5,10 +5,11 @@
 //! through a config file piped on stdin, which keeps API keys and request bodies out
 //! of the process argument list.
 
-use anyhow::{bail, Context};
-use serde::Serialize;
 use std::io::Write;
 use std::process::{Command, Stdio};
+
+use anyhow::{bail, Context};
+use serde::Serialize;
 
 /// Per-request ceiling, in seconds. Completions can take a while, so this is generous.
 const MAX_TIME_SECS: &str = "120";

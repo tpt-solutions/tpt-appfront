@@ -155,8 +155,12 @@ impl Api {
                 webkit_web_view_new_with_ucm: webkit
                     .symbol("webkit_web_view_new_with_user_content_manager")?,
                 webkit_web_view_load_uri: webkit.symbol("webkit_web_view_load_uri")?,
-                webkit_web_view_evaluate_javascript: webkit.symbol("webkit_web_view_evaluate_javascript").ok(),
-                webkit_web_view_run_javascript: webkit.symbol("webkit_web_view_run_javascript").ok(),
+                webkit_web_view_evaluate_javascript: webkit
+                    .symbol("webkit_web_view_evaluate_javascript")
+                    .ok(),
+                webkit_web_view_run_javascript: webkit
+                    .symbol("webkit_web_view_run_javascript")
+                    .ok(),
                 webkit_user_script_new: webkit.symbol("webkit_user_script_new")?,
                 webkit_ucm_add_script: webkit.symbol("webkit_user_content_manager_add_script")?,
                 webkit_ucm_register_handler: webkit

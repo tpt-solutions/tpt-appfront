@@ -18,13 +18,10 @@ use wry::{WebView, WebViewBuilder};
 
 use crate::app::{AppBuilder, ArcLogSink, CommandHandler, CommandOutcome};
 use crate::clipboard::{self, Clipboard};
-use crate::dialog;
 use crate::dragdrop::{self, DragDropDispatcher};
-use crate::notify;
 use crate::secret::{self, SecretError};
 use crate::shortcut::{self, ShortcutRegistry};
-use crate::webrtc;
-use crate::{window_state, Acl};
+use crate::{dialog, notify, webrtc, window_state, Acl};
 
 /// A native window and the webview hosted inside it. wry 0.57 does not own the
 /// window, so the tao `Window` must be kept alive alongside its `WebView`.
