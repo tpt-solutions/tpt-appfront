@@ -10,6 +10,8 @@
 //! closures that map template interactions to the app's `Msg` values. This
 //! keeps the templates decoupled from any specific app.
 
+use std::sync::Arc;
+
 use tpt_appfront_core::{ContainerBuilder, UITree};
 
 /// A callback that composes content into an existing `ContainerBuilder`. Used by
@@ -17,39 +19,58 @@ use tpt_appfront_core::{ContainerBuilder, UITree};
 /// (often another template) into a template's content region.
 type ContentBuilder<Msg> = Box<dyn Fn(&mut ContainerBuilder<Msg>)>;
 
+/// Which field of a [`login_form`] changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginField {
+    /// The username input.
+    Username,
+    /// The password input.
+    Password,
+}
+
 /// Configuration for [`login_form`]: a username + password prompt and a
 /// submit action.
+///
+/// The template is stateless, so the app owns the field values. Keep them in
+/// your own state (for example two `Signal`s), pass the current values in
+/// `username` and `password` each time you build the form, and map
+/// `on_input` to messages that update that state.
 pub struct LoginFormConfig<Msg> {
     /// Title shown above the form.
     pub title: String,
-    /// Pre-filled username (usually empty).
+    /// Current username value.
     pub username: String,
-    /// Called with the entered username/password when the user submits.
-    pub on_submit: Box<dyn Fn(String, String) -> Msg>,
+    /// Current password value. The input is rendered with `type="password"`.
+    pub password: String,
+    /// Called with the field and its new value whenever a field changes.
+    pub on_input: Arc<dyn Fn(LoginField, String) -> Msg + Send + Sync>,
+    /// Message sent when the "Sign in" button is clicked. The app reads the
+    /// credentials from the state it kept via `on_input`.
+    pub on_submit: Msg,
 }
 
 /// A two-field login form (username + password) with a submit button. Rendered
-/// as a vertical `Container` of inputs + a `Button`. The fields are not
-/// two-way-bound by the template itself; the app should read their values via
-/// a `Signal` passed into `on_submit` (or bind each `Input` to a `Signal` by
-/// replacing this template's `.on_input` wiring). `on_submit` is called with
-/// the current `username`/`password` field contents on submit.
+/// as a vertical `Container` of inputs + a `Button`. Both inputs report edits
+/// through `on_input`, and the button sends `on_submit`.
 pub fn login_form<Msg: Clone + 'static>(cfg: &LoginFormConfig<Msg>) -> UITree<Msg> {
-    let on_submit = &cfg.on_submit;
+    let on_input = cfg.on_input.clone();
+    let on_input_username = on_input.clone();
     let mut b = ContainerBuilder::new();
     b.container(|c: &mut ContainerBuilder<Msg>| {
         c.heading(1, cfg.title.clone())
             .class("text-2xl font-bold mb-4");
         c.input(cfg.username.clone())
             .class("mb-2 w-full")
-            .attr("placeholder", "Username");
-        c.input(String::new())
+            .attr("placeholder", "Username")
+            .on_input(move |v| on_input_username(LoginField::Username, v));
+        c.input(cfg.password.clone())
             .class("mb-4 w-full")
             .attr("placeholder", "Password")
-            .attr("type", "password");
+            .attr("type", "password")
+            .on_input(move |v| on_input(LoginField::Password, v));
         c.button("Sign in")
             .class("bg-blue-500 text-white px-4 py-2 rounded")
-            .on_click((on_submit)(cfg.username.clone(), String::new()));
+            .on_click(cfg.on_submit.clone());
     })
     .class("flex flex-col max-w-sm mx-auto mt-12");
     b.into_only_child().unwrap()
@@ -150,7 +171,8 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq)]
     enum Msg {
-        Submitted(String, String),
+        Submitted,
+        Field(LoginField, String),
         Nav(String),
         Edit(String),
         Delete(String),
@@ -182,9 +204,41 @@ mod tests {
         let form = login_form(&LoginFormConfig {
             title: "Sign in".into(),
             username: String::new(),
-            on_submit: Box::new(Msg::Submitted),
+            password: String::new(),
+            on_input: Arc::new(|_, _| Msg::Submitted),
+            on_submit: Msg::Submitted,
         });
         assert_eq!(count_buttons(&form), 1);
+    }
+
+    #[test]
+    fn login_form_reports_password_input_and_submits_plain_message() {
+        let form = login_form(&LoginFormConfig {
+            title: "Sign in".into(),
+            username: "ada".into(),
+            password: "hunter2".into(),
+            on_input: Arc::new(Msg::Field),
+            on_submit: Msg::Submitted,
+        });
+        let mut found_password: Option<Msg> = None;
+        fn walk(ui: &UITree<Msg>, out: &mut Option<Msg>) {
+            if let NodeKind::Input { value } = &ui.kind {
+                if value == "hunter2" {
+                    *out = ui.meta.on_input.as_ref().map(|f| f("x".into()));
+                }
+            }
+            if let NodeKind::Container { children } = &ui.kind {
+                for c in children {
+                    walk(c, out);
+                }
+            }
+        }
+        walk(&form, &mut found_password);
+        assert_eq!(
+            found_password,
+            Some(Msg::Field(LoginField::Password, "x".into())),
+            "password input must report its edits as LoginField::Password"
+        );
     }
 
     #[test]

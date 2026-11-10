@@ -620,7 +620,9 @@ fn custom_tag_sugar_expands_to_templates_component_call() {
             <LoginForm
                 title={"Sign in".to_string()}
                 username={String::new()}
-                on_submit={Box::new(|u, p| Msg::Submit(format!("{u}{p}")))}
+                password={String::new()}
+                on_input={std::sync::Arc::new(|_: tpt_appfront_templates::LoginField, v: String| Msg::Submit(v))}
+                on_submit={Msg::Submit(String::new())}
             />
         </Container>
     };

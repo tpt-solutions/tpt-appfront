@@ -8,15 +8,20 @@
 //! shared `Signal` state.
 
 use tpt_appfront_core::{create_effect, Signal, UITree};
+use std::sync::Arc;
+
 use tpt_appfront_templates::{
-    dashboard_shell, login_form, settings_list, DashboardShellConfig, LoginFormConfig,
-    SettingsListConfig,
+    dashboard_shell, login_form, settings_list, DashboardShellConfig, LoginField,
+    LoginFormConfig, SettingsListConfig,
 };
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Clone)]
 enum Msg {
-    Login(String, String),
+    /// A login field changed; the app keeps the value in its own state.
+    LoginInput(LoginField, String),
+    /// Sign in with the credentials held in state.
+    Login,
     Nav(String),
     Edit(String),
     Delete(String),
@@ -37,14 +42,20 @@ pub fn start() -> Result<(), JsValue> {
     ]);
     let logged_in = Signal::new(false);
     let current_page = Signal::new("Overview".to_string());
+    let username = Signal::new(String::new());
+    let password = Signal::new(String::new());
 
     let dispatch: std::rc::Rc<dyn Fn(Msg)> = {
         let rows = rows.clone();
         let logged_in = logged_in.clone();
         let current_page = current_page.clone();
+        let username = username.clone();
+        let password = password.clone();
         std::rc::Rc::new(move |msg| match msg {
-            Msg::Login(user, _pass) => {
-                if !user.is_empty() {
+            Msg::LoginInput(LoginField::Username, v) => username.set(v),
+            Msg::LoginInput(LoginField::Password, v) => password.set(v),
+            Msg::Login => {
+                if !username.get().is_empty() && !password.get().is_empty() {
                     logged_in.set(true);
                 }
             }
@@ -64,8 +75,10 @@ pub fn start() -> Result<(), JsValue> {
 
     let login_ui: UITree<Msg> = login_form(&LoginFormConfig {
         title: "Sign in to AppFront".into(),
-        username: String::new(),
-        on_submit: Box::new(Msg::Login),
+        username: username.get(),
+        password: password.get(),
+        on_input: Arc::new(Msg::LoginInput),
+        on_submit: Msg::Login,
     });
     let gate_handle = tpt_appfront_dom::mount(&gate, &login_ui, dispatch.clone())?;
 
