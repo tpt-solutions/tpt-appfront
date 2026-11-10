@@ -147,8 +147,8 @@ pub fn build<'a, Msg>(
             let taffy_id = tree
                 .new_leaf(Style {
                     size: Size {
-                        // +24 for the checkbox glyph + gap that `egui::Checkbox`
-                        // draws before the label.
+                        // +24 for the checkbox box and the gap drawn by `scene.rs`
+                        // before the label.
                         width: length(w + 24.0),
                         height: length(h.max(INPUT_HEIGHT)),
                     },
@@ -616,7 +616,7 @@ fn build_grid_row(
 /// Styling adapter: a `CanvasStyle` derived from a node's `meta.class`
 /// utility classes (see `tpt_appfront_core::styling`). Canvas can't honor every
 /// CSS utility, but at minimum padding / font-size / color classes map to
-/// `taffy` layout and `egui` paint so `class="..."` is not a silent no-op on
+/// `taffy` layout and the painter so `class="..."` is not a silent no-op on
 /// canvas (it is for DOM/HTML already). Unrecognized utilities are ignored.
 #[derive(Debug, Clone, Default)]
 pub struct CanvasStyle {
@@ -627,9 +627,9 @@ pub struct CanvasStyle {
     /// (from `text-xs`/`text-sm`/`text-lg`/`text-2xl`).
     pub font_delta: f32,
     /// Background color (from `bg-*`), if a utility matched.
-    pub background: Option<egui::Color32>,
+    pub background: Option<u32>,
     /// Foreground/text color (from `text-white`/`text-gray-700`), if matched.
-    pub foreground: Option<egui::Color32>,
+    pub foreground: Option<u32>,
 }
 
 /// Per-edge padding in px, defaults applied when absent.
@@ -758,11 +758,11 @@ pub fn canvas_style_for(class: &Option<String>) -> CanvasStyle {
             "text-sm" => style.font_delta = -4.0,
             "text-lg" => style.font_delta = 2.0,
             "text-2xl" => style.font_delta = 8.0,
-            "text-white" => style.foreground = Some(egui::Color32::WHITE),
-            "text-gray-700" => style.foreground = Some(egui::Color32::from_rgb(0x37, 0x41, 0x51)),
-            "bg-blue-500" => style.background = Some(egui::Color32::from_rgb(0x3b, 0x82, 0xf6)),
-            "bg-gray-100" => style.background = Some(egui::Color32::from_rgb(0xf3, 0xf4, 0xf6)),
-            "bg-white" => style.background = Some(egui::Color32::WHITE),
+            "text-white" => style.foreground = Some(0xFFFFFF),
+            "text-gray-700" => style.foreground = Some(0x374151),
+            "bg-blue-500" => style.background = Some(0x3b82f6),
+            "bg-gray-100" => style.background = Some(0xf3f4f6),
+            "bg-white" => style.background = Some(0xFFFFFF),
             _ => {}
         }
     }
@@ -963,11 +963,8 @@ mod tests {
         let s = canvas_style_for(&Some("p-4 bg-blue-500 text-white".to_string()));
         assert_eq!(s.padding.left, 16.0);
         assert_eq!(s.padding.top, 16.0);
-        assert_eq!(
-            s.background,
-            Some(egui::Color32::from_rgb(0x3b, 0x82, 0xf6))
-        );
-        assert_eq!(s.foreground, Some(egui::Color32::WHITE));
+        assert_eq!(s.background, Some(0x3b82f6));
+        assert_eq!(s.foreground, Some(0xFFFFFF));
 
         // The `af-u-` prefixed form emitted by SSR/DOM is accepted too.
         let s2 = canvas_style_for(&Some("af-u-p-2".to_string()));

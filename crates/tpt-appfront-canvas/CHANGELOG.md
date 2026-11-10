@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Replaced `eframe`/`egui` with an internal, Rust-only window layer (`platform`), a
+  software painter (`raster`), and bundled-font glyphs (`glyphs`). The crate no longer
+  depends on `eframe`, `egui` or `winit`, which were blocked by the Apache-only ban in
+  `deny.toml`.
+- `run_native` returns `Result<(), PlatformError>` instead of `eframe::Result<()>`.
+  It opens an 800 x 600 window. Use `run_window` for another size.
+- Window backends: Windows (Win32) and Linux (X11, via the pure-Rust `x11rb-protocol`).
+  macOS returns `PlatformError::Unsupported` until its backend lands. The X11 and web
+  backends are type-checked but not yet run against a live server or browser.
+- `run_web` mounts onto a `<canvas>` again, using `putImageData` and DOM input events
+  (wasm32). It previously used `eframe`. It returns once the frame loop is scheduled.
+- Text fields are controlled: edits are sent through `on_input` and the value you render
+  is the source of truth. Previously edits were not reported.
+- Text measurement uses the bundled Noto Sans metrics. The `full-text-shaping` feature
+  (`cosmic-text`) is removed, so complex-script shaping is not available yet.
+- Removed `CanvasApp`, `CanvasApp::auto_optimize`, `frame_ms`, `optimizer_state`, and
+  the `accesskit` feature. Screen-reader output is not yet replaced.
+- `TextMeasurer::with_font_data` is removed.
+
 ### Added
 - Virtual scrolling for `List` and `DataGrid` nodes that set `NodeMeta::virtual_scroll`.
   Only the visible rows are laid out, with spacers for the rest.

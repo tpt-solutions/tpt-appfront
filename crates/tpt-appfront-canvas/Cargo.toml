@@ -1,8 +1,8 @@
 [package]
 name = "tpt-appfront-canvas"
-description = "Hardware-accelerated egui/taffy canvas backend for TPT AppFront (glow renderer), native and wasm32."
+description = "Canvas backend for TPT AppFront: taffy layout, a software painter, and an internal Rust-only window layer."
 readme = "README.md"
-keywords = ["egui", "canvas", "gui", "taffy", "wasm"]
+keywords = ["canvas", "gui", "taffy", "software-rendering", "window"]
 categories = ["gui", "rendering", "wasm"]
 version.workspace = true
 edition.workspace = true
@@ -11,39 +11,41 @@ repository.workspace = true
 
 [dependencies]
 tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
-# glow (raw GL/GLES) instead of the default wgpu renderer: layout is CPU-side
-# via taffy, so wgpu's GPU-compute capability isn't in use yet (Phase 11
-# stretch), and glow avoids shader-pipeline compilation at startup, links
-# smaller, and works on software rasterizers (Mesa llvmpipe, RDP, CI, older
-# GPUs) where wgpu adapter enumeration can fail.
-eframe = { version = "0.35", default-features = false, features = [
-    "default_fonts",
-    "glow",
-    "wayland",
-    "x11",
-] }
-egui = "0.35"
 taffy = "0.12"
+# Reads glyph outlines for the internal painter (crate::glyphs). MIT/Apache-2.0.
+ttf-parser = "0.25"
 
-[features]
-# Opt into cosmic-text for real text shaping (CJK/Arabic/ligatures). Off by
-# default: the heuristic width estimator in text.rs covers the common
-# Latin-text case without pulling in a font-shaping stack. On native this
-# gives cosmic-text the system font database; on wasm32 it additionally
-# loads the bundled Noto Sans fallback (see text.rs) so web canvas apps get
-# real shaping instead of the heuristic estimator.
-full-text-shaping = ["dep:cosmic-text"]
-# Expose the canvas to screen readers via AccessKit (egui's built-in
-# accessibility backend). Enables roles + names for the painted widgets so
-# GPU-canvas apps aren't a screen-reader dead-end (the webview shell
-# gets this for free from the OS webview). Off by default to keep
-# the dependency/startup surface minimal.
-accesskit = ["eframe/accesskit"]
+# Internal window layer (crate::platform). Win32 FFI only; MIT/Apache-2.0.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cosmic-text = { version = "0.19", optional = true }
+# Internal window layer, X11 backend (crate::platform::x11). Pure Rust: the
+# protocol and handshake only, no libX11/libxcb. `x11rb` itself is not used
+# because it depends on the banned `gethostname` crate.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb-protocol = { version = "0.13", features = ["std"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-cosmic-text = { version = "0.19", optional = true }
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["console", "Document", "Window", "Element", "HtmlCanvasElement"] }
+web-sys = { version = "0.3", features = [
+    "console",
+    "CanvasRenderingContext2d",
+    "DomRect",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "ImageData",
+    "KeyboardEvent",
+    "MouseEvent",
+    "Window",
+    "WheelEvent",
+] }

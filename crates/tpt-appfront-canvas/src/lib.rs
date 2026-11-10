@@ -1,68 +1,91 @@
-//! Hardware-accelerated canvas backend: `UITree` → `egui` widgets, laid
-//! out with `taffy`, drawn via `wgpu`/`winit` through `eframe` (see
-//! `spec.txt` section 3.2 and `todo.md` Phase 4). Runs unmodified on
-//! desktop (native) and in the browser (WASM canvas).
+//! Canvas backend: `UITree` → taffy layout → software painter, shown in a
+//! native window through the internal, Rust-only window layer (see
+//! [`platform`]). No `egui`, `eframe`, or `winit`, so the crate stays within
+//! the license policy in `deny.toml`.
+//!
+//! Pieces: [`layout`] (taffy), [`scene`] (painting and input), [`raster`]
+//! (the painter), [`glyphs`] (text from the bundled Noto Sans), and
+//! [`platform`] (windowing). [`platform`] and [`raster`] are public so custom
+//! drawing can drop below the `UITree` model; see `examples/node-graph`.
 
-mod app;
 mod auto_optimizer;
+pub mod glyphs;
 mod layout;
-mod paint;
+pub mod platform;
+pub mod raster;
+mod scene;
 mod text;
 
-pub use app::CanvasApp;
 pub use auto_optimizer::AutoOptimizer;
+pub use scene::Scene;
 pub use text::TextMeasurer;
 use tpt_appfront_core::UITree;
 
-/// Opens a native window and runs `build_ui` every frame, dispatching any
-/// clicked `on_click` message through `dispatch`.
-#[cfg(not(target_arch = "wasm32"))]
+/// Opens an 800 x 600 native window and runs `build_ui` every frame,
+/// dispatching any message raised by a click, keypress, or edit through
+/// `dispatch`. See [`run_window`] for a custom size.
+///
+/// Blocks until the window is closed. Only Windows has a window backend so
+/// far; other targets return [`platform::PlatformError::Unsupported`].
 pub fn run_native<Msg: Clone + 'static>(
     title: &str,
     build_ui: impl FnMut() -> UITree<Msg> + 'static,
     dispatch: impl Fn(Msg) + 'static,
-) -> eframe::Result<()> {
-    let app = CanvasApp::new(build_ui, dispatch);
-    eframe::run_native(
-        title,
-        eframe::NativeOptions::default(),
-        Box::new(|_cc| Ok(Box::new(app))),
-    )
+) -> Result<(), platform::PlatformError> {
+    run_window(title, 800, 600, build_ui, dispatch)
 }
 
-/// Mounts the canvas app onto an existing `<canvas id="...">` element in
-/// the page. Must be awaited from a `wasm_bindgen(start)` entry point (see
-/// `examples/counter-canvas`'s wasm target, once wired up).
+/// Like [`run_native`], with a client area of `width` x `height` pixels.
+pub fn run_window<Msg: Clone + 'static>(
+    title: &str,
+    width: u32,
+    height: u32,
+    mut build_ui: impl FnMut() -> UITree<Msg> + 'static,
+    dispatch: impl Fn(Msg) + 'static,
+) -> Result<(), platform::PlatformError> {
+    let mut scene = Scene::new();
+    platform::run(title, width, height, move |frame| {
+        let mut canvas = raster::Canvas::new(
+            &mut *frame.pixels,
+            frame.width as usize,
+            frame.height as usize,
+        );
+        let closing = frame
+            .events
+            .iter()
+            .any(|e| matches!(e, platform::Event::CloseRequested));
+        let ui = build_ui();
+        scene.frame(&mut canvas, &ui, frame.events, &dispatch);
+        if closing {
+            platform::ControlFlow::Exit
+        } else {
+            platform::ControlFlow::Continue
+        }
+    })
+}
+
+/// Mounts the canvas app onto an existing `<canvas id="...">` element and
+/// starts its animation-frame loop. Returns once the loop is scheduled; the
+/// app keeps running for the life of the page.
 ///
-/// Returns an error (rather than panicking) when there is no window or
-/// document, when no element has `canvas_id`, or when that element is not
-/// a `<canvas>`.
+/// Input (mouse, keyboard, wheel) comes from DOM events on the canvas, which
+/// is made focusable. Fails with an error when there is no window or document,
+/// when no element has `canvas_id`, or when that element is not a `<canvas>`.
 #[cfg(target_arch = "wasm32")]
 pub async fn run_web<Msg: Clone + 'static>(
     canvas_id: &str,
-    build_ui: impl FnMut() -> UITree<Msg> + 'static,
+    mut build_ui: impl FnMut() -> UITree<Msg> + 'static,
     dispatch: impl Fn(Msg) + 'static,
 ) -> Result<(), wasm_bindgen::JsValue> {
-    use wasm_bindgen::{JsCast, JsValue};
-
-    let document = web_sys::window()
-        .ok_or_else(|| JsValue::from_str("no window"))?
-        .document()
-        .ok_or_else(|| JsValue::from_str("no document"))?;
-    let element = document
-        .get_element_by_id(canvas_id)
-        .ok_or_else(|| JsValue::from_str(&format!("no element with id `{canvas_id}`")))?;
-    let canvas = element
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .map_err(|_| JsValue::from_str(&format!("element `{canvas_id}` is not a <canvas>")))?;
-
-    let app = CanvasApp::new(build_ui, dispatch);
-
-    eframe::WebRunner::new()
-        .start(
-            canvas,
-            eframe::WebOptions::default(),
-            Box::new(|_cc| Ok(Box::new(app))),
-        )
-        .await
+    let mut scene = Scene::new();
+    platform::web::start(canvas_id, move |frame| {
+        let mut canvas = raster::Canvas::new(
+            &mut *frame.pixels,
+            frame.width as usize,
+            frame.height as usize,
+        );
+        let ui = build_ui();
+        scene.frame(&mut canvas, &ui, frame.events, &dispatch);
+        platform::ControlFlow::Continue
+    })
 }

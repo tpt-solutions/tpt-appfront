@@ -4,7 +4,7 @@
 //! `AutoOptimizer` is deliberately pure and headless-testable: it only ever
 //! sees `f64` milliseconds, so it behaves identically on native and wasm and
 //! needs no renderer internals. A canvas app feeds it the measured per-frame
-//! duration each `eframe::App::update`, and reads back the recommended
+//! duration of each frame, and reads back the recommended
 //! `OptimizerState` to decide whether to turn on `virtual_scrolling` /
 //! `texture_caching` (see `todo.md` Phase 11 stretch).
 //!
