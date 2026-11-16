@@ -11,7 +11,7 @@ repository.workspace = true
 
 [dependencies]
 tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
-taffy = "0.12"
+taffy = "0.15"
 # Reads glyph outlines for the internal painter (crate::glyphs). MIT/Apache-2.0.
 ttf-parser = "0.25"
 # Image decoders for `NodeKind::Image` (src/image.rs). MIT OR Apache-2.0 (zune-jpeg and zune-core also Zlib).
