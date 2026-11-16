@@ -30,7 +30,7 @@ wry = "0.57"
 
 # Linux loads GTK3 and WebKitGTK at runtime (docs/linux-webview-backend.md).
 [target.'cfg(target_os = "linux")'.dependencies]
-libloading = "0.8"
+libloading = "0.9"
 
 # Windows: the native clipboard (`clipboard.rs`) and the tray (`tray.rs`, behind the
 # `tray` feature) both use these Win32 bindings.
