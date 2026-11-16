@@ -35,7 +35,7 @@ windows-sys = { version = "0.52", features = [
 # protocol and handshake only, no libX11/libxcb. `x11rb` itself is not used
 # because it depends on the banned `gethostname` crate.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-x11rb-protocol = { version = "0.13", features = ["std"] }
+x11rb-protocol = { version = "0.14", features = ["std"] }
 
 # Internal window layer, macOS backend (crate::platform::macos). The objc2 family:
 # MIT, or Zlib/Apache-2.0/MIT. AppKit windows and Core Graphics drawing only.
