@@ -4607,7 +4607,7 @@ dependencies = [
  "ttf-parser",
  "wasm-bindgen",
  "web-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "x11rb-protocol",
  "zune-core",
  "zune-jpeg",
@@ -4745,7 +4745,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tao",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "winreg",
  "wry",
 ]

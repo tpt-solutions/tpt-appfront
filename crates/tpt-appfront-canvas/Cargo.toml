@@ -23,7 +23,7 @@ image-webp = "0.2"
 
 # Internal window layer (crate::platform). Win32 FFI only; MIT/Apache-2.0.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
