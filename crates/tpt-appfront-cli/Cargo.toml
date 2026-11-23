@@ -21,7 +21,7 @@ llm = ["dep:serde", "dep:serde_json", "dep:syn"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-scraper = "0.23"
+scraper = "0.29"
 
 # Optional deps, only built when the `llm` feature is enabled.
 serde = { version = "1", features = ["derive"], optional = true }
