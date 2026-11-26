@@ -203,6 +203,14 @@ fn collect<Msg>(
                 text: Some(alt.clone()),
             });
         }
+        NodeKind::Viewport { alt, .. } => {
+            data.push(DataElement {
+                kind: "viewport".to_string(),
+                columns: None,
+                rows: None,
+                text: Some(alt.clone()),
+            });
+        }
         NodeKind::Portal { content, .. } => {
             // Surface the portal's content so AI consumers see its elements.
             collect(content, interactive, data);

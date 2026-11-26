@@ -32,6 +32,7 @@ pub fn role<Msg>(ui: &UITree<Msg>) -> &'static str {
         NodeKind::Image { .. } => "img",
         NodeKind::Link { .. } => "link",
         NodeKind::Media { .. } => "media",
+        NodeKind::Viewport { .. } => "viewport",
     }
 }
 

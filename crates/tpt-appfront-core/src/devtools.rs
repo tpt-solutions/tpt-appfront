@@ -73,6 +73,7 @@ fn node_header<Msg>(ui: &UITree<Msg>) -> String {
                 MediaType::Video => "Video",
             }
         ),
+        NodeKind::Viewport { name, alt } => format!("Viewport \"{name}\" alt=\"{alt}\""),
     }
 }
 

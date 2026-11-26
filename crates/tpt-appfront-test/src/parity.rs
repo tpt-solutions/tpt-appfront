@@ -78,6 +78,7 @@ fn collect_expected<Msg>(ui: &UITree<Msg>, include_options: bool, out: &mut BTre
         | NodeKind::Textarea { .. }
         | NodeKind::DataGrid { .. }
         | NodeKind::Image { .. }
+        | NodeKind::Viewport { .. }
         | NodeKind::Media { .. } => {}
     }
 }

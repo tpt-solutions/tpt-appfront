@@ -185,6 +185,11 @@ fn walk<Msg>(ui: &UITree<Msg>, graph: &mut Vec<Value>) {
             item.insert("description".to_string(), Value::String(alt.clone()));
             graph.push(Value::Object(item));
         }
+        NodeKind::Viewport { alt, .. } => {
+            let mut item = web_page_element(&ui.meta.ai);
+            item.insert("name".to_string(), Value::String(alt.clone()));
+            graph.push(Value::Object(item));
+        }
         NodeKind::Portal { content, .. } => {
             // Portals are rendered into an overlay layer; surface their content
             // in the graph so AI consumers still see the portal's elements.

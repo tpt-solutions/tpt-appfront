@@ -20,6 +20,9 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Document",
     "Window",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "ImageData",
     "Element",
     "DomRect",
     "Node",

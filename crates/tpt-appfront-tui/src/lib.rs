@@ -141,7 +141,8 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
             | NodeKind::DataGrid { .. }
             | NodeKind::Image { .. }
             | NodeKind::Link { .. }
-            | NodeKind::Media { .. } => {}
+            | NodeKind::Media { .. }
+            | NodeKind::Viewport { .. } => {}
         }
     }
     walk(ui, &mut out);
@@ -162,6 +163,7 @@ fn node_text<Msg>(ui: &UITree<Msg>) -> String {
         NodeKind::Image { alt, .. } => alt.clone(),
         NodeKind::Link { text, .. } => text.clone(),
         NodeKind::Media { alt, .. } => alt.clone(),
+        NodeKind::Viewport { alt, .. } => alt.clone(),
         _ => String::new(),
     }
 }
@@ -409,6 +411,14 @@ fn render_node<Msg: Clone>(
             };
             frame.render_widget(
                 Paragraph::new(format!("{kind}: {alt} ({src})")).wrap(Wrap { trim: false }),
+                area,
+            );
+        }
+        // A terminal cannot show pixels, so a viewport is its label.
+        NodeKind::Viewport { name, alt } => {
+            let label = if alt.is_empty() { name } else { alt };
+            frame.render_widget(
+                Paragraph::new(format!("[viewport: {label}]")).wrap(Wrap { trim: false }),
                 area,
             );
         }

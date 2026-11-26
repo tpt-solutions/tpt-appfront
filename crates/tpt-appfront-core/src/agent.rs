@@ -269,6 +269,17 @@ fn walk<Msg>(
                 description: None,
             });
         }
+        NodeKind::Viewport { name, alt } => {
+            data.push(ElementSummary {
+                id,
+                kind: "viewport".into(),
+                label: Some(alt.clone()),
+                value: Some(name.clone()),
+                action: None,
+                params: Vec::new(),
+                description: None,
+            });
+        }
         NodeKind::Portal { content, .. } => {
             // Surface the portal's content so agents observe its elements.
             walk(content, interactive, data);

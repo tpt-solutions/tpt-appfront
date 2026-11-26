@@ -248,6 +248,17 @@ fn render_node<Msg>(buf: &mut String, ui: &UITree<Msg>) {
             attr(buf, "alt", alt);
             buf.push_str(" />");
         }
+        NodeKind::Viewport { name, alt } => {
+            // The host draws the frame into this canvas, found by its binding name.
+            buf.push_str("<canvas");
+            attrs(buf, ui);
+            attr(buf, "data-viewport", name);
+            if !alt.is_empty() {
+                attr(buf, "aria-label", alt);
+            }
+            buf.push('>');
+            close_tag(buf, "canvas");
+        }
         NodeKind::Link { href, text } => {
             buf.push_str("<a");
             attrs(buf, ui);

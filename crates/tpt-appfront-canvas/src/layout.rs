@@ -220,6 +220,7 @@ pub fn build<'a, Msg>(
             }
         }
         NodeKind::Image { .. } => build_image_box(tree, ui),
+        NodeKind::Viewport { .. } => build_viewport_box(tree, ui),
         NodeKind::Link { text, .. } => {
             let fs = (TEXT_FONT_SIZE + canvas_style_for(&ui.meta.class).font_delta).max(8.0);
             build_text_leaf(tree, measurer, ui, text, fs, 0.0, 0.0)
@@ -346,13 +347,33 @@ fn build_text_leaf<'a, Msg>(
 /// ratio kept, so layout never depends on whether an image has loaded.
 pub const IMAGE_BOX_WIDTH: f32 = 240.0;
 pub const IMAGE_BOX_HEIGHT: f32 = 160.0;
+/// Default size of a viewport box (a 3D or other pixel source), in pixels.
+pub const VIEWPORT_BOX_WIDTH: f32 = 480.0;
+pub const VIEWPORT_BOX_HEIGHT: f32 = 320.0;
 
 /// An image leaf of fixed size. A `w-*` utility sets the width (height is 2:3 of it).
 /// The painter fits the decoded image, or the caption, into this box.
 fn build_image_box<'a, Msg>(tree: &mut TaffyTree<()>, ui: &'a UITree<Msg>) -> RenderNode<'a, Msg> {
+    build_box(tree, ui, IMAGE_BOX_WIDTH, IMAGE_BOX_HEIGHT)
+}
+
+/// A viewport box: the same fixed-size leaf as an image, with its own default size.
+fn build_viewport_box<'a, Msg>(
+    tree: &mut TaffyTree<()>,
+    ui: &'a UITree<Msg>,
+) -> RenderNode<'a, Msg> {
+    build_box(tree, ui, VIEWPORT_BOX_WIDTH, VIEWPORT_BOX_HEIGHT)
+}
+
+fn build_box<'a, Msg>(
+    tree: &mut TaffyTree<()>,
+    ui: &'a UITree<Msg>,
+    default_width: f32,
+    default_height: f32,
+) -> RenderNode<'a, Msg> {
     let (width, height) = match canvas_style_for(&ui.meta.class).width {
         Some(Width::Px(px)) => (px, px * 2.0 / 3.0),
-        _ => (IMAGE_BOX_WIDTH, IMAGE_BOX_HEIGHT),
+        _ => (default_width, default_height),
     };
     let taffy_id = tree
         .new_leaf(Style {

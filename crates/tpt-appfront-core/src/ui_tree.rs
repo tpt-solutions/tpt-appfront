@@ -100,6 +100,14 @@ pub enum NodeKind<Msg> {
         alt: String,
         media_type: MediaType,
     },
+    /// A rectangle the host fills with pixels from a 3D scene or other renderer (a
+    /// `<canvas>` in HTML/DOM, a placeholder elsewhere). `name` is the host's binding id
+    /// for the frame source, and `alt` is the accessible label. Pointer input on the
+    /// viewport is for the host to route to the source (for example, to a 3D pick).
+    Viewport {
+        name: String,
+        alt: String,
+    },
 }
 
 /// Distinguishes [`NodeKind::Media`] sources so backends pick the right
@@ -497,7 +505,8 @@ impl<Msg> UITree<Msg> {
                 | NodeKind::Radio { .. }
                 | NodeKind::Image { .. }
                 | NodeKind::Link { .. }
-                | NodeKind::Media { .. } => {}
+                | NodeKind::Media { .. }
+                | NodeKind::Viewport { .. } => {}
             }
         }
         walk(self, &mut 1);
@@ -718,6 +727,19 @@ impl<Msg> ContainerBuilder<Msg> {
             src: src.into(),
             alt: alt.into(),
             media_type,
+        })
+    }
+
+    /// A viewport: a rectangle the host fills with pixels from the frame source named
+    /// `name`. `alt` is the accessible label. See [`NodeKind::Viewport`].
+    pub fn viewport(
+        &mut self,
+        name: impl Into<String>,
+        alt: impl Into<String>,
+    ) -> NodeRef<'_, Msg> {
+        self.push(NodeKind::Viewport {
+            name: name.into(),
+            alt: alt.into(),
         })
     }
 

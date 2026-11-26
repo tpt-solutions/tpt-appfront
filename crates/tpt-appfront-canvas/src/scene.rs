@@ -85,6 +85,16 @@ pub struct Scene {
     drafts: HashMap<Path, (String, String)>,
     /// Decoded images, loaded through the host-supplied loader (see `CanvasApp`).
     images: ImageCache,
+    /// Latest frame per viewport binding name, set by the host with `set_viewport_frame`.
+    viewports: HashMap<String, ViewportFrame>,
+}
+
+/// A pixel frame for a viewport: row-major RGBA8, top row first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewportFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 impl Default for Scene {
@@ -110,7 +120,37 @@ impl Scene {
             pressed: None,
             drafts: HashMap::new(),
             images: ImageCache::default(),
+            viewports: HashMap::new(),
         }
+    }
+
+    /// Sets the frame the viewport bound to `name` shows. `rgba` must be `width * height * 4`
+    /// bytes; a wrong-sized buffer is refused and returns `false`.
+    pub fn set_viewport_frame(
+        &mut self,
+        name: &str,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> bool {
+        let expected = (width as usize) * (height as usize) * 4;
+        if width == 0 || height == 0 || rgba.len() != expected {
+            return false;
+        }
+        self.viewports.insert(
+            name.to_string(),
+            ViewportFrame {
+                width,
+                height,
+                rgba,
+            },
+        );
+        true
+    }
+
+    /// The latest frame bound to the viewport `name`, if the host has set one.
+    pub fn viewport_frame(&self, name: &str) -> Option<&ViewportFrame> {
+        self.viewports.get(name)
     }
 
     /// The path of the focused node, if any.
@@ -713,6 +753,34 @@ fn paint_node<Msg: Clone>(
                 fg,
             );
         }
+        NodeKind::Viewport { name, alt } => match scene.viewports.get(name) {
+            Some(frame) => {
+                let dst = Rect::new(
+                    bounds.x as i32,
+                    bounds.y as i32,
+                    bounds.w as i32,
+                    bounds.h as i32,
+                );
+                canvas.draw_rgba_fit(dst, frame.width, frame.height, &frame.rgba);
+            }
+            // No frame yet: show what the viewport is bound to.
+            None => {
+                let caption = if alt.is_empty() {
+                    format!("viewport: {name}")
+                } else {
+                    format!("viewport: {alt}")
+                };
+                text_top(
+                    canvas,
+                    &mut scene.font,
+                    bounds.x,
+                    bounds.y,
+                    &caption,
+                    size,
+                    fg,
+                );
+            }
+        },
         NodeKind::Image { src, alt } => match scene.images.get(src) {
             Some(img) => {
                 let dst = Rect::new(

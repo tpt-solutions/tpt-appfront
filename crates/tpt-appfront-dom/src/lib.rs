@@ -259,6 +259,7 @@ fn kind_matches_dom<Msg>(node: &Node, ui: &UITree<Msg>) -> bool {
         NodeKind::Image { .. } => tag == "img",
         NodeKind::Link { .. } => tag == "a",
         NodeKind::Media { .. } => tag == "audio" || tag == "video",
+        NodeKind::Viewport { .. } => tag == "canvas",
         NodeKind::Portal { .. } => true,
     }
 }
@@ -331,6 +332,49 @@ fn element_key(el: &Element) -> u64 {
 
 /// Navigates the router and syncs the browser URL via `history.pushState`,
 /// so the address bar and back/forward buttons reflect the new route.
+/// Draws one RGBA8 frame (row-major, top row first, `width * height * 4` bytes) into the
+/// `<canvas>` that a `NodeKind::Viewport` with the binding `name` rendered. Returns
+/// `Ok(false)` if no such canvas is on the page yet, so the host can retry on the next frame.
+///
+/// The name is matched inside a CSS attribute selector, so it must not contain quotes or
+/// backslashes; such names are refused.
+pub fn present_viewport(
+    document: &Document,
+    name: &str,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<bool, wasm_bindgen::JsValue> {
+    use wasm_bindgen::{Clamped, JsValue};
+    use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
+
+    if name.contains('"') || name.contains('\\') {
+        return Err(JsValue::from_str(
+            "viewport name must not contain quotes or backslashes",
+        ));
+    }
+    let expected = (width as usize) * (height as usize) * 4;
+    if width == 0 || height == 0 || rgba.len() != expected {
+        return Err(JsValue::from_str(
+            "viewport frame size does not match its pixel buffer",
+        ));
+    }
+    let selector = format!("canvas[data-viewport=\"{name}\"]");
+    let Some(el) = document.query_selector(&selector)? else {
+        return Ok(false);
+    };
+    let canvas: HtmlCanvasElement = el.dyn_into()?;
+    canvas.set_width(width);
+    canvas.set_height(height);
+    let ctx: CanvasRenderingContext2d = canvas
+        .get_context("2d")?
+        .ok_or_else(|| JsValue::from_str("canvas has no 2d context"))?
+        .dyn_into()?;
+    let image = ImageData::new_with_u8_clamped_array_and_sh(Clamped(rgba), width, height)?;
+    ctx.put_image_data(&image, 0.0, 0.0)?;
+    Ok(true)
+}
+
 pub fn navigate_path<Msg>(router: &Router<Msg>, path: &str) {
     if let Some(window) = web_sys::window() {
         if let Ok(history) = window.history() {
@@ -1468,6 +1512,15 @@ where
             }
             el.into()
         }
+        NodeKind::Viewport { name, alt } => {
+            // The host draws the frame into this canvas: see `present_viewport`.
+            let el = document.create_element("canvas")?;
+            el.set_attribute("data-viewport", name)?;
+            if !alt.is_empty() {
+                el.set_attribute("aria-label", alt)?;
+            }
+            el.into()
+        }
         NodeKind::Portal { target, content } => {
             let el = render_node(document, content, dispatch)?;
             if let Some(el) = el.dyn_ref::<Element>() {
@@ -2245,7 +2298,10 @@ where
         }
         // Image, Link and Media have no child nodes; their own handlers are covered by the
         // `needs_hydration` check above.
-        NodeKind::Image { .. } | NodeKind::Link { .. } | NodeKind::Media { .. } => {}
+        NodeKind::Image { .. }
+        | NodeKind::Link { .. }
+        | NodeKind::Media { .. }
+        | NodeKind::Viewport { .. } => {}
         NodeKind::DataGrid { .. }
         | NodeKind::Heading { .. }
         | NodeKind::Text { .. }
