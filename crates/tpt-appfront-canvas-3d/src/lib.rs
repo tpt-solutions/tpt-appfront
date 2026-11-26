@@ -87,7 +87,8 @@ impl<D: SceneDelegate> Viewport3D<D> {
 
     /// Resolve a pointer press to a hit. Positions outside the viewport are ignored.
     pub fn pointer_down(&self, at: ViewportPoint) -> Option<Hit3D> {
-        let inside = at.x >= 0.0 && at.y >= 0.0 && at.x < self.size.width && at.y < self.size.height;
+        let inside =
+            at.x >= 0.0 && at.y >= 0.0 && at.x < self.size.width && at.y < self.size.height;
         if !inside {
             return None;
         }
@@ -152,8 +153,12 @@ mod tests {
     fn pointer_presses_outside_the_viewport_are_ignored() {
         let vp = Viewport3D::new(Recorder::default(), size(640.0, 480.0));
         assert!(vp.pointer_down(ViewportPoint { x: -1.0, y: 0.0 }).is_none());
-        assert!(vp.pointer_down(ViewportPoint { x: 640.0, y: 10.0 }).is_none());
-        assert!(vp.pointer_down(ViewportPoint { x: 10.0, y: 480.0 }).is_none());
+        assert!(vp
+            .pointer_down(ViewportPoint { x: 640.0, y: 10.0 })
+            .is_none());
+        assert!(vp
+            .pointer_down(ViewportPoint { x: 10.0, y: 480.0 })
+            .is_none());
     }
 
     #[test]
