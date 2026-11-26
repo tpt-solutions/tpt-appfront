@@ -61,7 +61,7 @@ mod imp {
     impl OpenGuard {
         fn open() -> Result<Self, String> {
             // SAFETY: a null owner window is allowed by OpenClipboard.
-            if unsafe { OpenClipboard(0) } == 0 {
+            if unsafe { OpenClipboard(std::ptr::null_mut()) } == 0 {
                 return Err("could not open the clipboard (another app may hold it)".into());
             }
             Ok(OpenGuard)
@@ -84,7 +84,7 @@ mod imp {
         // SAFETY: the clipboard is open. The handle is owned by the clipboard and
         // must not be freed here.
         let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
-        if handle == 0 {
+        if handle.is_null() {
             return Err("clipboard has no text data".into());
         }
         // SAFETY: a CF_UNICODETEXT handle is a global memory block; locking gives a
@@ -135,7 +135,7 @@ mod imp {
         // SAFETY: on success the clipboard takes ownership of `mem`. On failure we
         // still own it and must free it.
         let set = unsafe { SetClipboardData(CF_UNICODETEXT, mem as HANDLE) };
-        if set == 0 {
+        if set.is_null() {
             // SAFETY: the clipboard rejected the block, so it is still ours to free.
             unsafe { GlobalFree(mem) };
             return Err("could not set clipboard data".into());

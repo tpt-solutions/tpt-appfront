@@ -70,7 +70,7 @@ pub(super) fn run(
     // pointers to locals that live until the window is destroyed below.
     unsafe {
         let instance = GetModuleHandleW(null());
-        if instance == 0 {
+        if instance.is_null() {
             return Err(os_error("GetModuleHandleW"));
         }
 
@@ -80,9 +80,9 @@ pub(super) fn run(
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: instance,
-            hIcon: 0,
-            hCursor: 0,
-            hbrBackground: 0,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: std::ptr::null_mut(),
             lpszMenuName: null(),
             lpszClassName: CLASS_NAME.as_ptr(),
         };
@@ -110,12 +110,12 @@ pub(super) fn run(
             CW_USEDEFAULT,
             rect.right - rect.left,
             rect.bottom - rect.top,
-            0,
-            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
             instance,
             &mut state as *mut State as *const c_void,
         );
-        if hwnd == 0 {
+        if hwnd.is_null() {
             return Err(os_error("CreateWindowExW"));
         }
         ShowWindow(hwnd, SW_SHOW);
@@ -180,7 +180,7 @@ unsafe fn frame_loop(
 /// Must be called on the thread that created the window.
 unsafe fn pump_messages() -> bool {
     let mut msg: MSG = std::mem::zeroed();
-    while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {
+    while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
         if msg.message == WM_QUIT {
             return true;
         }
@@ -197,7 +197,7 @@ unsafe fn pump_messages() -> bool {
 /// Must be called on the thread that created the window.
 unsafe fn drain_messages() {
     let mut msg: MSG = std::mem::zeroed();
-    while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {}
+    while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {}
 }
 
 /// # Safety
@@ -241,7 +241,7 @@ unsafe fn present(hwnd: HWND, w: u32, h: u32, pixels: &[u32]) -> Result<(), Plat
         }],
     };
     let hdc = GetDC(hwnd);
-    if hdc == 0 {
+    if hdc.is_null() {
         return Err(os_error("GetDC"));
     }
     StretchDIBits(

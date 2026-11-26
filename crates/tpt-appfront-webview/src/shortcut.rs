@@ -234,7 +234,7 @@ mod imp {
     ) -> LRESULT {
         if msg == WM_HOTKEY {
             if let Ok(mut pressed) = PRESSED.lock() {
-                pressed.push((hwnd, wparam as u32));
+                pressed.push((hwnd as isize, wparam as u32));
             }
             return 0;
         }
@@ -254,9 +254,9 @@ mod imp {
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: hinstance,
-                hIcon: 0,
-                hCursor: 0,
-                hbrBackground: 0,
+                hIcon: std::ptr::null_mut(),
+                hCursor: std::ptr::null_mut(),
+                hbrBackground: std::ptr::null_mut(),
                 lpszMenuName: std::ptr::null(),
                 lpszClassName: CLASS_NAME.as_ptr(),
             };
@@ -286,12 +286,12 @@ mod imp {
                     0,
                     0,
                     HWND_MESSAGE,
-                    0,
+                    std::ptr::null_mut(),
                     GetModuleHandleW(std::ptr::null()),
                     std::ptr::null(),
                 )
             };
-            if hwnd == 0 {
+            if hwnd.is_null() {
                 return Err(ShortcutError::Register(
                     "could not create the shortcut window".into(),
                 ));
@@ -340,7 +340,7 @@ mod imp {
             let Ok(mut pressed) = PRESSED.lock() else {
                 return Vec::new();
             };
-            let mine = self.hwnd;
+            let mine = self.hwnd as isize;
             let mut out = Vec::new();
             pressed.retain(|(owner, id)| {
                 if *owner != mine {
