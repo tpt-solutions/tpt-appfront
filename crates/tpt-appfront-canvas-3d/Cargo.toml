@@ -1,0 +1,14 @@
+[package]
+name = "tpt-appfront-canvas-3d"
+description = "3D viewport contract for TPT AppFront: the SceneDelegate trait that lets an external 3D engine drive a viewport."
+readme = "README.md"
+keywords = ["3d", "viewport", "scene", "appfront"]
+categories = ["gui", "graphics"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No dependencies on purpose: any 3D engine can implement the trait without
+# pulling a renderer or UI stack into its build.
+[dependencies]
