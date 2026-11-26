@@ -39,6 +39,15 @@ pub enum PresentStatus {
     Unsupported,
 }
 
+/// A rendered frame the host can draw: row-major RGBA8, top row first, no row padding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelFrame<'a> {
+    pub width: u32,
+    pub height: u32,
+    /// `width * height * 4` bytes.
+    pub rgba: &'a [u8],
+}
+
 /// The contract a 3D engine implements to live inside an appfront viewport.
 pub trait SceneDelegate {
     /// Advance the scene by `dt` seconds.
@@ -49,6 +58,12 @@ pub trait SceneDelegate {
 
     /// Present a frame sized to `size`.
     fn present(&mut self, size: ViewportSize) -> PresentStatus;
+
+    /// The most recent frame from `present`, for hosts that cannot take GPU output
+    /// directly (a webview canvas, an image export). The default has none.
+    fn pixels(&self) -> Option<PixelFrame<'_>> {
+        None
+    }
 }
 
 /// Hosts a [`SceneDelegate`] and tracks the viewport size.
@@ -77,6 +92,11 @@ impl<D: SceneDelegate> Viewport3D<D> {
 
     pub fn delegate_mut(&mut self) -> &mut D {
         &mut self.delegate
+    }
+
+    /// The delegate's most recent frame, if it produces pixels.
+    pub fn pixels(&self) -> Option<PixelFrame<'_>> {
+        self.delegate.pixels()
     }
 
     /// Advance one frame, then present it.
@@ -159,6 +179,38 @@ mod tests {
         assert!(vp
             .pointer_down(ViewportPoint { x: 10.0, y: 480.0 })
             .is_none());
+    }
+
+    #[test]
+    fn a_delegate_without_pixels_has_no_frame() {
+        let mut vp = Viewport3D::new(Recorder::default(), size(4.0, 4.0));
+        vp.frame(0.0);
+        assert!(vp.pixels().is_none());
+    }
+
+    #[test]
+    fn a_delegate_with_pixels_hands_its_frame_to_the_host() {
+        struct Solid(Vec<u8>, u32, u32);
+        impl SceneDelegate for Solid {
+            fn update(&mut self, _dt: f32) {}
+            fn pick(&self, _s: ViewportSize, _at: ViewportPoint) -> Option<Hit3D> {
+                None
+            }
+            fn present(&mut self, _s: ViewportSize) -> PresentStatus {
+                PresentStatus::Presented
+            }
+            fn pixels(&self) -> Option<PixelFrame<'_>> {
+                Some(PixelFrame {
+                    width: self.1,
+                    height: self.2,
+                    rgba: &self.0,
+                })
+            }
+        }
+        let vp = Viewport3D::new(Solid(vec![1, 2, 3, 4], 1, 1), size(1.0, 1.0));
+        let frame = vp.pixels().expect("a frame");
+        assert_eq!((frame.width, frame.height), (1, 1));
+        assert_eq!(frame.rgba, &[1, 2, 3, 4]);
     }
 
     #[test]
