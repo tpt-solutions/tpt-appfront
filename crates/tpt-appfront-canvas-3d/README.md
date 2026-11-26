@@ -4,7 +4,8 @@ The 3D viewport contract for [TPT AppFront](https://github.com/tpt-solutions/tpt
 
 A 3D engine implements `SceneDelegate` and is hosted by a `Viewport3D`. The host
 forwards frames and pointer input. The delegate answers picks and says whether it
-can present pixels.
+can present pixels. A delegate that renders on the GPU can also hand its last frame to the
+host through `pixels()`, as RGBA8, so a webview canvas or an image export can show it.
 
 This crate has no dependencies. It defines the contract only. Rendering is up to
 the delegate, so the engine behind it can use any GPU API.
