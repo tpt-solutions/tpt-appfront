@@ -66,6 +66,22 @@ which mode is active.
   **Fix:** re-run `tpt-appfront init` from the checkout so it emits path deps, or
   edit the `Cargo.toml` to point at your local `crates/`.
 
+## Webview on Linux: runtime requirements and limits
+
+The Linux backend loads GTK 3 and WebKitGTK 4.1 at runtime, so building the app needs no GTK
+development packages. Running it does:
+
+- Install `libgtk-3-0` and `libwebkit2gtk-4.1-0`. If either is missing, the app exits with an
+  error that names the package.
+- A display is required. Set `DISPLAY`, or run under `xvfb-run` for headless use.
+- Only one window per app. A second `WindowConfig` is an error at startup.
+- Drag and drop and devtools are not available on Linux. Apps that need them should check the
+  platform first. Drag-and-drop events are never delivered there.
+- Window position and persisted geometry are not restored on Linux.
+
+The Linux backend is verified in CI (`linux-webview`) under `xvfb`. Behaviour on a real desktop
+session has not been checked yet; see `docs/linux-webview-backend.md`.
+
 ## Webview (`--desktop-webview`) build fails to find a `ui/` app
 
 `dev --desktop-webview` / `build --target webview` require a `tpt-appfront-dom`
