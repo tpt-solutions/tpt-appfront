@@ -94,18 +94,24 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install headless browser + wasm-bindgen-test-runner
+      - name: Install wasm-bindgen-test-runner
         run: |
           set -e
-          sudo apt-get update
-          sudo apt-get install -y chromium
           # Pin the runner to the wasm-bindgen version the project resolves to. The runner must
           # match it exactly, or wasm-bindgen-test-runner fails with a schema-version error.
           WB=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 2p | cut -d'"' -f2)
           cargo install wasm-bindgen-cli --version "$WB" --locked
+      - name: Check preinstalled headless Chrome
+        # The ubuntu-latest image ships Google Chrome and a matching chromedriver. Ubuntu's
+        # `chromium` apt package is only a snap stub, so installing it via apt is unreliable
+        # (snap store fetches fail with transient HTTP errors), so we use the preinstalled one.
+        run: |
+          set -e
+          google-chrome --version
+          chromedriver --version
       - name: Build & run tpt-appfront-dom browser tests
         env:
-          WASM_BINDGEN_TEST_RUNNER_CHROME: /usr/bin/chromium
+          WASM_BINDGEN_TEST_RUNNER_CHROME: /usr/bin/google-chrome
         run: |
           set -eo pipefail
           # Run every test binary this build produced: the unit tests and each file in tests/.
