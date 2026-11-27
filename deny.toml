@@ -3,28 +3,9 @@ all-features = true
 
 [advisories]
 ignore = [
-    # GTK3 bindings (tpt-appfront-webview → wry 0.24 → tao → gtk): all are
-    # unmaintained but no safe upgrade path exists while wry 0.24 requires them.
-    "RUSTSEC-2024-0411", # gdkwayland-sys
-    "RUSTSEC-2024-0412", # gdk
-    "RUSTSEC-2024-0413", # atk
-    "RUSTSEC-2024-0414", # gdkx11-sys
-    "RUSTSEC-2024-0415", # gtk
-    "RUSTSEC-2024-0418", # gdk-sys
-    "RUSTSEC-2024-0419", # gtk3-macros
-    "RUSTSEC-2024-0420", # gtk-sys
-    "RUSTSEC-2024-0416", # atk-sys
-    "RUSTSEC-2024-0429", # glib unsound VariantStrIter — not used by our code
     # Other transitive deps with no available upgrade
-    "RUSTSEC-2024-0370", # proc-macro-error (used by glib-macros / gtk3-macros)
-    "RUSTSEC-2024-0384", # instant (used by older governor/tokio compat layer)
-    "RUSTSEC-2025-0057", # fxhash (transitive; no upstream fix)
-    "RUSTSEC-2026-0097", # rand 0.7 unsound — not exposed to our call sites
+    "RUSTSEC-2024-0370", # proc-macro-error
     "RUSTSEC-2026-0192", # ttf-parser (cosmic-text dep; no upstream upgrade yet)
-    # quick-xml DoS (wayland-scanner build dep only — parses trusted Wayland
-    # protocol .xml files, never untrusted network input)
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
     # zbus 5 / zvariant 5 unmaintained (Linux accessibility + desktop portal
     # stack via accesskit_unix, ashpd, rfd). No newer zbus release drops them yet.
     "RUSTSEC-2026-0370", # zvariant
@@ -74,12 +55,6 @@ deny = [
     { crate = "nonzero_ext", reason = "Apache-2.0 only (Phase 24e)" },
     { crate = "self_cell", reason = "Apache-2.0 OR GPL-2.0 only; Apache taken (Phase 24e)" },
     { crate = "sync_wrapper", reason = "Apache-2.0 only (Phase 24e); removed from the tree when axum and tower were dropped" },
-    # Exception (Phase 24f stage 1): only `cfg-expr` may use target-lexicon. It reaches us
-    # solely as a build-script dependency of GTK on Linux, which the Linux backend no
-    # longer builds. `cargo-deny` merges per-target graphs, so the GTK edge from `tao`
-    # (Windows/macOS) still shows up in the merged graph. Verified absent from each
-    # shipped target with `cargo tree --target`. Remove this entry if `tao` ever reaches Linux.
-    { crate = "target-lexicon", wrappers = ["cfg-expr"], reason = "Apache-2.0 WITH LLVM-exception; build-time only, via cfg-expr (Phase 24f)" },
     { crate = "unicode-general-category", reason = "Apache-2.0 only (Phase 24e)" },
     { crate = "unicode-linebreak", reason = "Apache-2.0 only (Phase 24e)" },
     { crate = "ring", reason = "Apache-2.0 AND ISC; removed from the tree in Phase 24e (LLM HTTP shells out to curl)" },
@@ -88,3 +63,5 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# tpt-window (window and event loop for tpt-appfront-webview, replacing tao). MIT OR Apache-2.0.
+allow-git = ["https://github.com/tpt-solutions/tpt-window"]
