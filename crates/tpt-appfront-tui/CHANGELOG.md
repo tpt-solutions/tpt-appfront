@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The interactive node list is rebuilt from each frame's tree (`TuiDriver::refresh`, called by
+  `run`). Controls that appear after startup, and controls after a route change, are reachable
+  by keyboard, and key presses dispatch from the tree on screen. Focus stays on the same node ID
+  when it still exists.
+- Typing into an `Input` or `Textarea` continues from the field's own value, as on canvas and DOM.
+  It used to start from an empty buffer.
+- Space types a space in `Input` and `Textarea`. It used to activate the focused control.
+- Enter adds a line in a `Textarea`.
+### Added
+- `on_input` and `on_toggle` are dispatched. Typing, Backspace, Enter in a textarea, Enter and
+  Space on a checkbox, and arrows on `Select`/`Radio` each report through the bound message.
+
 ### Added
 - Keyboard dispatch through `TuiDriver::on_key`. Tab and Shift-Tab move focus. Up,
   Down, Left and Right move focus, except on `Select` and `Radio`, where they cycle

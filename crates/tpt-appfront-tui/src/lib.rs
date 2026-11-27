@@ -27,6 +27,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
 use tpt_appfront_core::ui_tree::MediaType;
+use tpt_appfront_core::ui_tree::{OnInput, OnToggle};
 use tpt_appfront_core::{
     apply_auto_virtual_scroll, KeyEvent as UiKeyEvent, NodeKind, OnKeyDown, UITree, VirtualScroll,
 };
@@ -57,6 +58,12 @@ pub struct InteractiveNode<Msg> {
     pub on_blur: Option<Msg>,
     /// `NodeMeta::on_keydown`, called with each key while this node has focus.
     pub on_keydown: Option<OnKeyDown<Msg>>,
+    /// `NodeMeta::on_input`: two-way binding for `Input`, `Textarea`, `Select`
+    /// and `Radio`. Dispatched with the full new value after each edit or change.
+    pub on_input: Option<OnInput<Msg>>,
+    /// `NodeMeta::on_toggle`: two-way binding for `Checkbox`. Dispatched with the
+    /// new state after each toggle.
+    pub on_toggle: Option<OnToggle<Msg>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +87,8 @@ impl<Msg: std::fmt::Debug> std::fmt::Debug for InteractiveNode<Msg> {
             .field("on_focus", &self.on_focus)
             .field("on_blur", &self.on_blur)
             .field("on_keydown", &self.on_keydown.as_ref().map(|_| "<fn>"))
+            .field("on_input", &self.on_input.as_ref().map(|_| "<fn>"))
+            .field("on_toggle", &self.on_toggle.as_ref().map(|_| "<fn>"))
             .finish()
     }
 }
@@ -99,13 +108,21 @@ fn collect_interactive<Msg: Clone>(ui: &UITree<Msg>) -> Vec<InteractiveNode<Msg>
                 on_focus: ui.meta.on_focus.clone(),
                 on_blur: ui.meta.on_blur.clone(),
                 on_keydown: ui.meta.on_keydown.clone(),
+                on_input: ui.meta.on_input.clone(),
+                on_toggle: ui.meta.on_toggle.clone(),
             };
         match &ui.kind {
             NodeKind::Button { .. } => out.push(node(InteractiveKind::Button, Vec::new(), None)),
-            NodeKind::Input { .. } => out.push(node(InteractiveKind::Input, Vec::new(), None)),
-            NodeKind::Textarea { .. } => {
-                out.push(node(InteractiveKind::Textarea, Vec::new(), None))
-            }
+            NodeKind::Input { value } => out.push(node(
+                InteractiveKind::Input,
+                Vec::new(),
+                Some(value.clone()),
+            )),
+            NodeKind::Textarea { value } => out.push(node(
+                InteractiveKind::Textarea,
+                Vec::new(),
+                Some(value.clone()),
+            )),
             NodeKind::Checkbox { checked, .. } => out.push(node(
                 InteractiveKind::Checkbox,
                 Vec::new(),
@@ -459,6 +476,22 @@ impl<Msg: Clone> TuiDriver<Msg> {
         }
     }
 
+    /// Re-collects the focusable nodes from `ui`, the tree about to be rendered, and assigns its
+    /// IDs in place. Call once per frame: a route change, or a control that appears or
+    /// disappears, must be reachable by keyboard and dispatch from the current tree. Focus stays
+    /// on the same node ID when that node still exists; otherwise it moves to the nearest index.
+    ///
+    /// Note: IDs are positional, so interaction state (`inputs`, `checks`, `selections`) follows
+    /// the position, not the node's `key`, until those maps are keyed by `key`.
+    pub fn refresh(&mut self, ui: &mut UITree<Msg>) {
+        ui.assign_ids();
+        let focused = self.focus_id();
+        self.interactive = collect_interactive(ui);
+        self.focus = focused
+            .and_then(|id| self.interactive.iter().position(|n| n.id == id))
+            .unwrap_or_else(|| self.focus.min(self.interactive.len().saturating_sub(1)));
+    }
+
     /// Enables automatic application of the frame-profiler's `virtual_scrolling`
     /// recommendation: when enabled, large unconfigured `List`/`DataGrid` nodes
     /// get windowed automatically on every render — the same auto-tune treatment
@@ -507,10 +540,33 @@ impl<Msg: Clone> TuiDriver<Msg> {
 
     /// The currently focused node's `(value, label)` options, if it's a
     /// `Select`/`Radio`; `None` otherwise.
-    fn cycle_option(&mut self, delta: i32) {
+    /// Whether the focused node is an `Input` or `Textarea`.
+    fn is_text_focused(&self) -> bool {
+        matches!(
+            self.interactive[self.focus].kind,
+            InteractiveKind::Input | InteractiveKind::Textarea
+        )
+    }
+
+    /// Applies `change` to the focused `Input`/`Textarea`'s live text and returns its `on_input`
+    /// message. The buffer starts from the field's own value. Other kinds are left alone.
+    fn edit_focused(&mut self, change: impl FnOnce(&mut String)) -> Option<Msg> {
+        if !self.is_text_focused() {
+            return None;
+        }
+        let node = &self.interactive[self.focus];
+        let buf = self
+            .inputs
+            .entry(node.id)
+            .or_insert_with(|| node.initial_value.clone().unwrap_or_default());
+        change(buf);
+        node.on_input.as_ref().map(|f| f(buf.clone()))
+    }
+
+    fn cycle_option(&mut self, delta: i32) -> Option<Msg> {
         let node = &self.interactive[self.focus];
         if node.options.is_empty() {
-            return;
+            return None;
         }
         let id = node.id;
         let current = self
@@ -527,7 +583,9 @@ impl<Msg: Clone> TuiDriver<Msg> {
         let len = node.options.len() as i32;
         let next = ((idx + delta) % len + len) % len;
         let value = node.options[next as usize].0.clone();
+        let msg = node.on_input.as_ref().map(|f| f(value.clone()));
         self.selections.insert(id, value);
+        msg
     }
 
     /// Moves focus by `delta` interactive nodes, wrapping at the ends. Dispatches the old node's
@@ -579,10 +637,16 @@ impl<Msg: Clone> TuiDriver<Msg> {
             KeyCode::Esc => self.quit = true,
             KeyCode::Tab => self.step_focus(1, &mut out),
             KeyCode::BackTab => self.step_focus(-1, &mut out),
-            KeyCode::Down | KeyCode::Right if is_cyclable => self.cycle_option(1),
-            KeyCode::Up | KeyCode::Left if is_cyclable => self.cycle_option(-1),
+            KeyCode::Down | KeyCode::Right if is_cyclable => out.extend(self.cycle_option(1)),
+            KeyCode::Up | KeyCode::Left if is_cyclable => out.extend(self.cycle_option(-1)),
             KeyCode::Down | KeyCode::Right => self.step_focus(1, &mut out),
             KeyCode::Up | KeyCode::Left => self.step_focus(-1, &mut out),
+            KeyCode::Char(c) if self.is_text_focused() => {
+                out.extend(self.edit_focused(|buf| buf.push(c)));
+            }
+            KeyCode::Enter if self.interactive[self.focus].kind == InteractiveKind::Textarea => {
+                out.extend(self.edit_focused(|buf| buf.push('\n')));
+            }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let kind = self.interactive[self.focus].kind;
                 match kind {
@@ -600,8 +664,17 @@ impl<Msg: Clone> TuiDriver<Msg> {
                             })
                             .unwrap_or(false);
                         self.checks.insert(id, !current);
+                        if let Some(msg) = self.interactive[self.focus]
+                            .on_toggle
+                            .as_ref()
+                            .map(|f| f(!current))
+                        {
+                            out.push(msg);
+                        }
                     }
-                    InteractiveKind::Select | InteractiveKind::Radio => self.cycle_option(1),
+                    InteractiveKind::Select | InteractiveKind::Radio => {
+                        out.extend(self.cycle_option(1));
+                    }
                     _ => {
                         if let Some(msg) = self.interactive[self.focus].on_click.clone() {
                             out.push(msg);
@@ -609,25 +682,10 @@ impl<Msg: Clone> TuiDriver<Msg> {
                     }
                 }
             }
-            KeyCode::Char(c) => {
-                let node = &self.interactive[self.focus];
-                if matches!(
-                    node.kind,
-                    InteractiveKind::Input | InteractiveKind::Textarea
-                ) {
-                    self.inputs.entry(node.id).or_default().push(c);
-                }
-            }
             KeyCode::Backspace => {
-                let node = &self.interactive[self.focus];
-                if matches!(
-                    node.kind,
-                    InteractiveKind::Input | InteractiveKind::Textarea
-                ) {
-                    if let Some(buf) = self.inputs.get_mut(&node.id) {
-                        buf.pop();
-                    }
-                }
+                out.extend(self.edit_focused(|buf| {
+                    buf.pop();
+                }));
             }
             _ => {}
         }
@@ -698,12 +756,14 @@ pub fn run_with<Msg: Clone + 'static>(
     let mut driver = TuiDriver::new(&build_ui()).auto_optimize(auto_optimize);
 
     loop {
+        let mut ui = build_ui();
+        if auto_optimize {
+            let height = terminal.size().context("terminal size")?.height;
+            apply_auto_virtual_scroll(&mut ui, height as f32);
+        }
+        driver.refresh(&mut ui);
         terminal
             .draw(|frame| {
-                let mut ui = build_ui();
-                if auto_optimize {
-                    apply_auto_virtual_scroll(&mut ui, frame.area().height as f32);
-                }
                 render(
                     &ui,
                     frame,
@@ -799,6 +859,8 @@ mod tests {
         Focus(&'static str),
         Blur(&'static str),
         Key(String),
+        Input(String),
+        Toggled(bool),
     }
 
     fn sample_ui() -> UITree<Msg> {
@@ -914,14 +976,21 @@ mod tests {
         driver.on_key(a);
         driver.on_key(b);
         let id = driver.interactive[1].id;
-        assert_eq!(driver.inputs().get(&id).map(String::as_str), Some("ab"));
+        // Typing continues from the field's own value ("type here"), as on canvas and DOM.
+        assert_eq!(
+            driver.inputs().get(&id).map(String::as_str),
+            Some("type hereab")
+        );
 
         let bs = KeyEvent::new(
             KeyCode::Backspace,
             ratatui::crossterm::event::KeyModifiers::NONE,
         );
         driver.on_key(bs);
-        assert_eq!(driver.inputs().get(&id).map(String::as_str), Some("a"));
+        assert_eq!(
+            driver.inputs().get(&id).map(String::as_str),
+            Some("type herea")
+        );
     }
 
     #[test]
@@ -1026,6 +1095,101 @@ mod tests {
         assert!(
             s.contains("row 4"),
             "small list should render all rows: {s}"
+        );
+    }
+
+    #[test]
+    fn typing_dispatches_on_input_and_continues_from_the_existing_value() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.input("ab").on_input(Msg::Input);
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Char('c'))),
+            vec![Msg::Input("abc".into())]
+        );
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Backspace)),
+            vec![Msg::Input("ab".into())]
+        );
+    }
+
+    #[test]
+    fn refresh_makes_new_controls_reachable_and_keeps_focus_on_the_same_node() {
+        let one: UITree<Msg> = UITree::container(|c| {
+            c.button("A").on_click(Msg::Increment);
+        });
+        let mut driver = TuiDriver::new(&one);
+        let before = driver.focus_id();
+
+        let mut two: UITree<Msg> = UITree::container(|c| {
+            c.button("A").on_click(Msg::Increment);
+            c.button("B").on_click(Msg::Key("b".into()));
+        });
+        driver.refresh(&mut two);
+        assert_eq!(driver.len(), 2);
+        assert_eq!(driver.focus_id(), before);
+
+        assert_eq!(driver.on_key(key_of(KeyCode::Tab)), Vec::<Msg>::new());
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Enter)),
+            vec![Msg::Key("b".into())]
+        );
+    }
+
+    #[test]
+    fn space_types_a_space_and_enter_adds_a_line_in_a_textarea() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.input("a").on_input(Msg::Input);
+            c.textarea("").on_input(Msg::Input);
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Char(' '))),
+            vec![Msg::Input("a ".into())]
+        );
+        driver.on_key(key_of(KeyCode::Tab));
+        driver.on_key(key_of(KeyCode::Char('x')));
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Enter)),
+            vec![Msg::Input("x\n".into())]
+        );
+    }
+
+    #[test]
+    fn enter_toggles_a_checkbox_and_dispatches_on_toggle() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.checkbox("Agree", false).on_toggle(Msg::Toggled);
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Enter)),
+            vec![Msg::Toggled(true)]
+        );
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Enter)),
+            vec![Msg::Toggled(false)]
+        );
+    }
+
+    #[test]
+    fn arrows_cycle_a_select_and_dispatch_its_new_value() {
+        let ui: UITree<Msg> = UITree::container(|c| {
+            c.select([("a", "A"), ("b", "B"), ("c", "C")], "a")
+                .on_input(Msg::Input);
+        });
+        let mut driver = TuiDriver::new(&ui);
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Right)),
+            vec![Msg::Input("b".into())]
+        );
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Left)),
+            vec![Msg::Input("a".into())]
+        );
+        assert_eq!(
+            driver.on_key(key_of(KeyCode::Left)),
+            vec![Msg::Input("c".into())]
         );
     }
 
