@@ -45,11 +45,13 @@ impl<Msg: Clone + 'static> Suspense<Msg> {
         }
     }
 
-    /// Adds a resource the boundary waits on. The boundary only reads the
-    /// resource's `Ready` discriminant, captured here as a plain `Signal<bool>`
-    /// so a boundary can gate on heterogeneous resource value types without any
-    /// casting. The signal is live: when the resource settles (or a backend
-    /// re-builds the tree), the gate re-evaluates.
+    /// Adds a resource the boundary waits on. The boundary reads only the
+    /// resource's `Ready` discriminant, stored as a plain `Signal<bool>` so
+    /// resources with different value types can be tracked together.
+    ///
+    /// The flag is read once, when `track` is called. It does not follow the
+    /// resource afterwards. Build a new boundary in each render so it sees the
+    /// current state.
     pub fn track<T: Clone + 'static>(mut self, resource: &Resource<T>) -> Self {
         let ready = resource.is_ready();
         self.ready_flags.push(Signal::new(ready));
