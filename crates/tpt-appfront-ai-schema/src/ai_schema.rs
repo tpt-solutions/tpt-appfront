@@ -320,3 +320,154 @@ mod tests {
         assert_eq!(value["interactive"][0]["type"], "button");
     }
 }
+
+/// Renders the AI schema as an `llms.txt`-style Markdown page: the title, the page's
+/// content, and every interactive element with its action and params. Meant for an
+/// `/llms.txt` route, so an agent can read the page without running it.
+pub fn to_llms_txt<Msg>(ui: &UITree<Msg>) -> String {
+    let schema = to_ai_schema(ui);
+    let mut out = String::new();
+    let title = if schema.title.is_empty() {
+        "Untitled page"
+    } else {
+        schema.title.as_str()
+    };
+    out.push_str(&format!("# {title}\n\n"));
+    out.push_str(&format!(
+        "> Machine-readable summary (AI schema {}).\n\n",
+        schema.schema_version
+    ));
+
+    if !schema.data.is_empty() {
+        out.push_str("## Content\n\n");
+        for d in &schema.data {
+            match (&d.columns, &d.rows, &d.text) {
+                (Some(columns), Some(rows), _) => {
+                    out.push_str(&format!(
+                        "- {} ({} rows): columns {}\n",
+                        d.kind,
+                        rows.len(),
+                        columns.join(", ")
+                    ));
+                }
+                (_, _, Some(text)) => out.push_str(&format!("- {}: {}\n", d.kind, text)),
+                _ => out.push_str(&format!("- {}\n", d.kind)),
+            }
+        }
+        out.push('\n');
+    }
+
+    if !schema.interactive.is_empty() {
+        out.push_str("## Interactive elements\n\n");
+        for el in &schema.interactive {
+            let name = el.label.as_deref().or(el.value.as_deref()).unwrap_or("");
+            let action = el
+                .action
+                .as_deref()
+                .map(|a| format!(", action `{a}`"))
+                .unwrap_or_default();
+            let params = if el.params.is_empty() {
+                String::new()
+            } else {
+                let names: Vec<&str> = el.params.keys().map(String::as_str).collect();
+                format!(", params {}", names.join(", "))
+            };
+            out.push_str(&format!("- {} \"{}\"{}{}\n", el.kind, name, action, params));
+        }
+    }
+    out
+}
+
+/// Describes the page's actions as an OpenAPI 3.1 document for the smart router's
+/// `POST /command` endpoint. The `action` field is an enum of the actions this page
+/// exposes, so a generated client can only call what the page offers.
+pub fn to_openapi<Msg>(ui: &UITree<Msg>) -> Value {
+    let schema = to_ai_schema(ui);
+    let mut actions: Vec<String> = Vec::new();
+    for el in &schema.interactive {
+        if let Some(a) = &el.action {
+            if !actions.contains(a) {
+                actions.push(a.clone());
+            }
+        }
+    }
+    let title = if schema.title.is_empty() {
+        "TPT AppFront page"
+    } else {
+        schema.title.as_str()
+    };
+    serde_json::json!({
+        "openapi": "3.1.0",
+        "info": {
+            "title": title,
+            "version": schema.schema_version,
+            "description": "Actions exposed by this page's AI schema."
+        },
+        "paths": {
+            "/command": {
+                "post": {
+                    "summary": "Run one of the page's actions",
+                    "operationId": "runCommand",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["action"],
+                                    "properties": {
+                                        "action": { "type": "string", "enum": actions },
+                                        "params": { "type": "object", "additionalProperties": true }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "The action ran." },
+                        "403": { "description": "The action is not allowed." },
+                        "429": { "description": "Rate limit exceeded." }
+                    }
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use tpt_appfront_core::ContainerBuilder;
+
+    fn page() -> UITree<()> {
+        UITree::container(|c: &mut ContainerBuilder<()>| {
+            c.heading(1, "Orders");
+            c.button("Export").on_click(()).ai_action("export_data");
+            c.input("").ai_action("set_filter");
+        })
+    }
+
+    #[test]
+    fn llms_txt_lists_content_and_actions() {
+        let text = to_llms_txt(&page());
+        assert!(text.starts_with("# Orders\n"), "{text}");
+        assert!(text.contains("- heading: Orders"), "{text}");
+        assert!(
+            text.contains("- button \"Export\", action `export_data`"),
+            "{text}"
+        );
+        assert!(text.contains("- input \"\", action `set_filter`"), "{text}");
+    }
+
+    #[test]
+    fn openapi_enumerates_only_this_pages_actions() {
+        let doc = to_openapi(&page());
+        assert_eq!(doc["openapi"], "3.1.0");
+        let action = &doc["paths"]["/command"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["properties"]["action"];
+        assert_eq!(
+            action["enum"],
+            serde_json::json!(["export_data", "set_filter"])
+        );
+    }
+}

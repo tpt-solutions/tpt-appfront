@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `to_llms_txt`: an `llms.txt`-style Markdown summary of a page (content and interactive
+  elements with their actions and params).
+- `to_openapi`: an OpenAPI 3.1 document for `POST /command`, with the `action` field enumerated
+  from the page's actions.
+
+### Added
 - `to_ai_schema_value` returns `Result<Value, serde_json::Error>` instead of
   panicking on malformed input.
 - JSON-LD output covers the `Image` (`ImageObject`), `Media` (`AudioObject` or
