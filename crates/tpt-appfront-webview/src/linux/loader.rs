@@ -76,7 +76,7 @@ impl SharedLibrary {
         for candidate in candidates {
             // SAFETY: opening a library runs its initializers. These are the system
             // GTK/GLib/WebKitGTK libraries the backend is meant to use.
-            if let Ok(lib) = unsafe { Library::new(candidate) } {
+            if let Ok(lib) = unsafe { Library::new(*candidate) } {
                 return Ok(SharedLibrary { name, lib });
             }
         }

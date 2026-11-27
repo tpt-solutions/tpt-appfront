@@ -1,6 +1,6 @@
 # Linux webview backend: design
 
-Status: proposed (Phase 24e follow-up). Replaces the `tao` + `wry` Linux path in `tpt-appfront-webview` so that the Linux build no longer compiles `gtk-sys`, `system-deps`, `cfg-expr` or `target-lexicon`.
+Status: implemented (stages 1 to 6). Stages 3 to 5 have not run on a real display yet; the `linux-webview` CI job is the first run. (Phase 24e follow-up). Replaces the `tao` + `wry` Linux path in `tpt-appfront-webview` so that the Linux build no longer compiles `gtk-sys`, `system-deps`, `cfg-expr` or `target-lexicon`.
 
 ## Problem
 
