@@ -26,8 +26,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::{Frame, Terminal};
-use tpt_appfront_core::ui_tree::MediaType;
-use tpt_appfront_core::ui_tree::{OnInput, OnToggle};
+use tpt_appfront_core::ui_tree::{MediaType, OnInput, OnToggle};
 use tpt_appfront_core::{
     apply_auto_virtual_scroll, KeyEvent as UiKeyEvent, NodeKind, OnKeyDown, UITree, VirtualScroll,
 };

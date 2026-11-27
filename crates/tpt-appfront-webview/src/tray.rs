@@ -94,11 +94,10 @@ mod win {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
         GetCursorPos, LoadIconW, PostMessageW, RegisterClassW, RegisterWindowMessageW,
-        SetForegroundWindow, TrackPopupMenu, HWND_MESSAGE, IDI_APPLICATION, MF_GRAYED,
-        MF_SEPARATOR, MF_STRING, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONUP,
-        WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+        SetForegroundWindow, TrackPopupMenu, HICON, HMENU, HWND_MESSAGE, IDI_APPLICATION,
+        MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU,
+        WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{HICON, HMENU};
 
     use super::{TrayBackend, TrayEvent, TrayMenuItem};
 

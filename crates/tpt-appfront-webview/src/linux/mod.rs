@@ -25,11 +25,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 
-use crate::app::{AppBuilder, CommandHandler};
-use crate::clipboard::Clipboard;
-
 use self::ipc::{IpcEnv, WindowIpc};
 use self::sys::Api;
+use crate::app::{AppBuilder, CommandHandler};
+use crate::clipboard::Clipboard;
 
 /// Connects `callback` to `signal` on `instance`. `callback` must have the C signature the
 /// signal expects, and `data` must stay valid for as long as the signal can fire.
@@ -60,9 +59,7 @@ impl AppBuilder {
         };
 
         // One `Api` per process. It is leaked so the callbacks can hold `&'static` references.
-        let api: &'static Api = Box::leak(Box::new(
-            Api::load().map_err(|e| anyhow!("{e}"))?,
-        ));
+        let api: &'static Api = Box::leak(Box::new(Api::load().map_err(|e| anyhow!("{e}"))?));
 
         // SAFETY: called once, before any widget is created.
         if unsafe { (api.gtk_init_check)(ptr::null_mut(), ptr::null_mut()) } == 0 {
@@ -84,18 +81,11 @@ impl AppBuilder {
 
         let title = CString::new(config.title.as_str()).unwrap_or_default();
         let open_windows: &'static Cell<usize> = Box::leak(Box::new(Cell::new(1)));
-        let window = window::create(
-            api,
-            &title,
-            config.width,
-            config.height,
-            open_windows,
-        )?;
+        let window = window::create(api, &title, config.width, config.height, open_windows)?;
 
         // SAFETY: GTK is initialised; the user-content manager is a fresh GObject.
         let ucm = unsafe { (api.webkit_user_content_manager_new)() };
-        let ipc_ctx: &'static WindowIpc =
-            Box::leak(Box::new(WindowIpc::new(api, env)));
+        let ipc_ctx: &'static WindowIpc = Box::leak(Box::new(WindowIpc::new(api, env)));
         ipc::connect(api, ucm, ipc_ctx);
 
         let init_script = format!("{}{}", ipc::SHIM, crate::INIT_SCRIPT);

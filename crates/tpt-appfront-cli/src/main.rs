@@ -1019,8 +1019,12 @@ fn dev_watch(roots: Vec<PathBuf>, spawn: impl Fn() -> anyhow::Result<Child>) -> 
         }
         let manifest = root.join("Cargo.toml");
         if manifest.is_file() {
-            notify::Watcher::watch(&mut notifier, &manifest, notify::RecursiveMode::NonRecursive)
-                .with_context(|| format!("watch {}", manifest.display()))?;
+            notify::Watcher::watch(
+                &mut notifier,
+                &manifest,
+                notify::RecursiveMode::NonRecursive,
+            )
+            .with_context(|| format!("watch {}", manifest.display()))?;
         }
     }
 

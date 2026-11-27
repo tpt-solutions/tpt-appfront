@@ -91,9 +91,7 @@ pub(crate) fn dispatch_ipc(
                     reason: format!("{e:?}"),
                 });
             }
-            reply(eval, request_id,
-                json!({ "error": format!("{e:?}") }),
-            );
+            reply(eval, request_id, json!({ "error": format!("{e:?}") }));
             return;
         }
     };
@@ -106,9 +104,7 @@ pub(crate) fn dispatch_ipc(
         if let Some(h) = on_reject {
             h(crate::IpcRejection::RateLimited { action });
         }
-        reply(eval, request_id,
-            json!({ "error": "rate limited" }),
-        );
+        reply(eval, request_id, json!({ "error": "rate limited" }));
         return;
     }
 
@@ -116,12 +112,10 @@ pub(crate) fn dispatch_ipc(
     if let Some(r) = secret::handle_secret_action(app_id, acl, &action, &validated) {
         match r {
             Ok(v) => reply(eval, request_id, v),
-            Err(SecretError::NotPermitted) => reply(eval, request_id,
-                json!({ "error": "not permitted" }),
-            ),
-            Err(e) => reply(eval, request_id,
-                json!({ "error": e.to_string() }),
-            ),
+            Err(SecretError::NotPermitted) => {
+                reply(eval, request_id, json!({ "error": "not permitted" }))
+            }
+            Err(e) => reply(eval, request_id, json!({ "error": e.to_string() })),
         }
         return;
     }
@@ -174,4 +168,3 @@ fn reply(eval: &dyn Fn(&str), request_id: Option<serde_json::Value>, value: serd
     let payload = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
     eval(&format!("window.__appfrontResolve({req}, {payload});"));
 }
-

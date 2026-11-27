@@ -436,8 +436,9 @@ pub fn to_openapi<Msg>(ui: &UITree<Msg>) -> Value {
 
 #[cfg(test)]
 mod export_tests {
-    use super::*;
     use tpt_appfront_core::ContainerBuilder;
+
+    use super::*;
 
     fn page() -> UITree<()> {
         UITree::container(|c: &mut ContainerBuilder<()>| {

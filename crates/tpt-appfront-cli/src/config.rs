@@ -64,8 +64,8 @@ impl ProjectConfig {
                 ..Self::default()
             });
         }
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         Self::parse(&text).with_context(|| format!("in {}", path.display()))
     }
 
@@ -83,7 +83,9 @@ impl ProjectConfig {
                     let t = section_table(section, value)?;
                     for (key, v) in t {
                         match key.as_str() {
-                            "target" => cfg.dev_target = Some(DevTarget::parse(string(section, key, v)?)?),
+                            "target" => {
+                                cfg.dev_target = Some(DevTarget::parse(string(section, key, v)?)?)
+                            }
                             "devtools" => cfg.dev_devtools = boolean(section, key, v)?,
                             "reload" => cfg.dev_reload = boolean(section, key, v)?,
                             other => bail!("appfront.toml: unknown key [dev] {other}"),
@@ -94,7 +96,9 @@ impl ProjectConfig {
                     let t = section_table(section, value)?;
                     for (key, v) in t {
                         match key.as_str() {
-                            "target" => cfg.build_target = Some(string(section, key, v)?.to_string()),
+                            "target" => {
+                                cfg.build_target = Some(string(section, key, v)?.to_string())
+                            }
                             "bundle" => cfg.build_bundle = boolean(section, key, v)?,
                             other => bail!("appfront.toml: unknown key [build] {other}"),
                         }
@@ -164,7 +168,10 @@ bundle = true
     #[test]
     fn an_unknown_key_is_an_error_not_a_silent_default() {
         let err = ProjectConfig::parse("[dev]\ntarget_typo = \"web\"\n").unwrap_err();
-        assert!(format!("{err:#}").contains("unknown key [dev] target_typo"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("unknown key [dev] target_typo"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -177,7 +184,10 @@ bundle = true
     fn an_invalid_dev_target_names_the_allowed_values() {
         let err = ProjectConfig::parse("[dev]\ntarget = \"phone\"\n").unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("phone") && msg.contains("desktop-webview"), "{msg}");
+        assert!(
+            msg.contains("phone") && msg.contains("desktop-webview"),
+            "{msg}"
+        );
     }
 
     #[test]

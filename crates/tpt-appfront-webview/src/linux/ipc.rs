@@ -7,13 +7,12 @@ use std::ffi::{c_void, CStr};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::sys::Api;
+use super::webview;
 use crate::app::{ArcLogSink, CommandHandler};
 use crate::clipboard::Clipboard;
 use crate::ipc_dispatch::dispatch_ipc;
 use crate::{Acl, IpcRateLimiter, IpcRejection};
-
-use super::sys::Api;
-use super::webview;
 
 /// The name the page posts to, and the handler registered on the manager.
 const HANDLER: &CStr = c"appfront";
@@ -65,7 +64,8 @@ pub(super) fn connect(api: &'static Api, ucm: *mut c_void, ctx: &'static WindowI
             api,
             ucm,
             c"script-message-received::appfront",
-            on_message as unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) as *const c_void,
+            on_message as unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)
+                as *const c_void,
             ctx as *const WindowIpc as *mut c_void,
         );
     }

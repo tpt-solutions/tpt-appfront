@@ -6,7 +6,8 @@ use std::ffi::{c_void, CStr, CString};
 use std::path::PathBuf;
 use std::ptr;
 
-use http::{header::CONTENT_TYPE, Request, Response};
+use http::header::CONTENT_TYPE;
+use http::{Request, Response};
 
 use super::sys::Api;
 
