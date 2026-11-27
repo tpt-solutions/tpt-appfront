@@ -281,7 +281,7 @@ No `todo!()`/FIXME in library code; gaps below are real backend holes, user-reac
 
 ### 23d — `tpt-appfront-test` crate
 - [x] Headless harness in new crate `crates/tpt-appfront-test` (core-only deps): `Harness` with `find_by_text/role/key`, `click`, `type_into`, `press_key`, `assert_msg_emitted`, `drain_msgs`; `snapshot()` returns the devtools text tree (10 unit tests)
-- [ ] Snapshot serialization with an optional `insta` feature. `Harness::snapshot()` exists; the `insta` integration is not done
+- [x] Snapshot serialization with an optional `insta` feature. *(2026-11-28: closed as superseded. The team chose an in-house `assert_snapshot!` with no new dependency, in `crates/tpt-appfront-test/src/snapshot.rs`. There is no `insta` feature.)*
 - [x] `lint_tree` exposed as `tpt_appfront_test::assert_accessible`. The canvas and TUI starters include a test that calls it. The CLI does not expose it, by decision (it cannot load an app's tree). Still open: the action *params* check
 
 ### 23e — Cross-backend parity checker
@@ -356,7 +356,7 @@ Source: full-project review (plan: `.claude/plans/review-project-fix-any-zippy-l
 - [~] `trybuild` compile-fail tests for `view!`/`#[component]`: done 2026-11-11 in `crates/tpt-appfront-core/tests/ui/` (one pass case, three fail cases: unknown tag, missing `on_click`, wrong return type). They live in core because core re-exports the macros. Snapshots depend on rustc wording, so a toolchain upgrade may need `TRYBUILD=overwrite`. Still open: better errors (valid attrs per tag, custom-component typo heuristic); the nearest-tag typo hint already exists
 - [x] Umbrella `full`/`web` feature bundles (2026-11-11: `web` is checked for wasm32 and native, `full` for native)
 - [ ] mdBook docs site + rustdoc on GitHub Pages; missing guides: routing, forms/`FormState`, `Resource`/`Suspense`, `Store`, styling/`class!`, hydration/islands, MCP, smart-router options, webview IPC/ACL, `view!` reference
-- [~] `insta`-style `assert_snapshot!` (update flag) and a signal/`Resource` test driver in `tpt-appfront-test`; `assert_accessible` action-params check. *(2026-11-28: `assert_snapshot!` done with `TPT_UPDATE_SNAPSHOTS=1` in `crates/tpt-appfront-test/src/snapshot.rs`. Still open: the signal/`Resource` driver and the action-params check)*
+- [x] `insta`-style `assert_snapshot!` (update flag), a signal/`Resource` test driver, and `assert_accessible` action-params check in `tpt-appfront-test`. *(2026-11-28: `assert_snapshot!` in `snapshot.rs`, `ResourceDriver` in `resource.rs`, and the `action-without-params` lint rule. The signal-level driver is not separate: `ResourceDriver` covers loads, and signals are exercised by core's own tests)*
 - [ ] `view!` tooling: `tpt-appfront fmt` formats macro bodies; VS Code snippets (then TextMate grammar extension)
 - [~] `dev`: replace the polling watcher with `notify`; browser dev error overlay *(2026-11-28: the watcher now uses `notify` to wake the loop, and content hashes still decide what counts as a change (`crates/tpt-appfront-cli/src/main.rs`). The browser dev error overlay is still open)*
 - [ ] CLI: `add store|route|form|test|template`; `migrate` (wire `ingest` + `docs/migration/*`); cargo-generate template repo; PR-friendly `CONTRIBUTING.md`
