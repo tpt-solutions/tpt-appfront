@@ -17,7 +17,8 @@
 use std::error::Error;
 use std::fmt;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::Value;
 
 /// The `format` field of the header.
@@ -97,7 +98,10 @@ impl<Msg: Serialize + DeserializeOwned + Clone> Recording<Msg> {
 
     /// Decodes `.tptrec` text. Blank lines are ignored.
     pub fn from_tptrec(text: &str) -> Result<Self, RecordError> {
-        let mut lines = text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty());
+        let mut lines = text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim().is_empty());
         let (_, header) = lines.next().ok_or(RecordError::Empty)?;
         check_header(header)?;
 
@@ -114,10 +118,7 @@ impl<Msg: Serialize + DeserializeOwned + Clone> Recording<Msg> {
 
     /// Runs the recording through `update` from `initial` and returns the final state.
     pub fn replay<S>(&self, initial: S, update: impl Fn(S, Msg) -> S) -> S {
-        self.msgs
-            .iter()
-            .cloned()
-            .fold(initial, update)
+        self.msgs.iter().cloned().fold(initial, update)
     }
 }
 
@@ -153,14 +154,19 @@ mod tests {
         let mut r = Recording::new();
         r.push(Msg::Increment);
         r.push(Msg::Add { by: 5 });
-        r.push(Msg::Name { value: "Ada".into() });
+        r.push(Msg::Name {
+            value: "Ada".into(),
+        });
         r
     }
 
     #[test]
     fn a_recording_round_trips_through_text() {
         let text = sample().to_tptrec().unwrap();
-        assert!(text.starts_with("{\"format\":\"tptrec\",\"version\":1}\n"), "{text}");
+        assert!(
+            text.starts_with("{\"format\":\"tptrec\",\"version\":1}\n"),
+            "{text}"
+        );
         assert_eq!(Recording::<Msg>::from_tptrec(&text).unwrap(), sample());
     }
 
@@ -176,15 +182,18 @@ mod tests {
 
     #[test]
     fn an_empty_or_headerless_text_is_rejected() {
-        assert_eq!(Recording::<Msg>::from_tptrec("\n  \n"), Err(RecordError::Empty));
+        assert_eq!(
+            Recording::<Msg>::from_tptrec("\n  \n"),
+            Err(RecordError::Empty)
+        );
         let err = Recording::<Msg>::from_tptrec("{\"kind\":\"increment\"}\n").unwrap_err();
         assert!(matches!(err, RecordError::BadHeader(_)), "{err:?}");
     }
 
     #[test]
     fn a_newer_version_is_refused_rather_than_misread() {
-        let err = Recording::<Msg>::from_tptrec("{\"format\":\"tptrec\",\"version\":2}\n")
-            .unwrap_err();
+        let err =
+            Recording::<Msg>::from_tptrec("{\"format\":\"tptrec\",\"version\":2}\n").unwrap_err();
         assert_eq!(err, RecordError::UnsupportedVersion(2));
     }
 
