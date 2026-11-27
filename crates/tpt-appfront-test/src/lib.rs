@@ -5,6 +5,7 @@
 //! accessibility and AI-affordance problems (unlabeled inputs, nameless buttons, skipped heading
 //! levels, duplicate keys, missing image alt text and undocumented AI actions).
 
+pub mod resource;
 pub mod snapshot;
 
 use std::collections::HashSet;
@@ -221,6 +222,8 @@ pub struct LintIssue {
 /// - `missing-alt`: an image with empty alt text.
 /// - `action-without-description`: an AI action with no description, so agents cannot tell what
 ///   it does.
+/// - `action-without-params`: an input, textarea, select, radio or checkbox with an AI action but
+///   no declared parameter, so an agent has no name to send its value under.
 pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
     let mut issues = Vec::new();
     let mut seen_keys: HashSet<&str> = HashSet::new();
@@ -308,6 +311,20 @@ pub fn lint_tree<Msg>(root: &UITree<Msg>) -> Vec<LintIssue> {
                 push(
                     "action-without-description",
                     format!("AI action `{action}` has no description"),
+                );
+            }
+            let takes_value = matches!(
+                node.kind,
+                NodeKind::Input { .. }
+                    | NodeKind::Textarea { .. }
+                    | NodeKind::Select { .. }
+                    | NodeKind::Radio { .. }
+                    | NodeKind::Checkbox { .. }
+            );
+            if takes_value && node.meta.ai.params.is_empty() {
+                push(
+                    "action-without-params",
+                    format!("AI action `{action}` takes a value but declares no parameter"),
                 );
             }
         }
@@ -476,6 +493,40 @@ mod tests {
             c.input("");
         });
         assert_accessible(&tree);
+    }
+
+    #[test]
+    fn a_value_control_with_an_action_needs_a_declared_param() {
+        let bare: UITree<Msg> = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.input("")
+                .attr("aria-label", "Email")
+                .ai_action("set_email")
+                .ai_description("Sets the email");
+        });
+        let issues = lint_tree(&bare);
+        assert!(
+            issues.iter().any(|i| i.rule == "action-without-params"),
+            "{issues:?}"
+        );
+
+        let declared: UITree<Msg> = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.input("")
+                .attr("aria-label", "Email")
+                .ai_action("set_email")
+                .ai_description("Sets the email")
+                .ai_param("value", "the new address");
+        });
+        assert!(lint_tree(&declared).is_empty());
+    }
+
+    #[test]
+    fn a_button_action_does_not_need_params() {
+        let tree: UITree<Msg> = UITree::container(|c: &mut ContainerBuilder<Msg>| {
+            c.button("Save")
+                .ai_action("save")
+                .ai_description("Saves the form");
+        });
+        assert!(lint_tree(&tree).is_empty());
     }
 
     #[test]

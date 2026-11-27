@@ -53,8 +53,7 @@ pub fn snapshot_path(dir: &Path, name: &str) -> PathBuf {
 
 fn write_snapshot(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .unwrap_or_else(|e| panic!("create {}: {e}", parent.display()));
+        fs::create_dir_all(parent).unwrap_or_else(|e| panic!("create {}: {e}", parent.display()));
     }
     fs::write(path, content).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
@@ -82,11 +81,8 @@ mod tests {
 
     /// A fresh directory under the system temp dir, unique per test.
     fn scratch(test: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "tpt-snapshot-{}-{}",
-            test,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tpt-snapshot-{}-{}", test, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
     }
@@ -95,8 +91,14 @@ mod tests {
     fn a_new_snapshot_is_written_and_the_assertion_fails_once() {
         let dir = scratch("new");
         let result = std::panic::catch_unwind(|| assert_snapshot_in(&dir, "first", "hello\n"));
-        assert!(result.is_err(), "first run must fail so the file is reviewed");
-        assert_eq!(fs::read_to_string(snapshot_path(&dir, "first")).unwrap(), "hello\n");
+        assert!(
+            result.is_err(),
+            "first run must fail so the file is reviewed"
+        );
+        assert_eq!(
+            fs::read_to_string(snapshot_path(&dir, "first")).unwrap(),
+            "hello\n"
+        );
         // The second run matches and passes.
         assert_snapshot_in(&dir, "first", "hello\n");
         let _ = fs::remove_dir_all(&dir);
@@ -109,10 +111,7 @@ mod tests {
         fs::write(snapshot_path(&dir, "c"), "old\n").unwrap();
         let err = std::panic::catch_unwind(|| assert_snapshot_in(&dir, "c", "new\n"))
             .expect_err("a changed output must fail");
-        let msg = err
-            .downcast_ref::<String>()
-            .cloned()
-            .unwrap_or_default();
+        let msg = err.downcast_ref::<String>().cloned().unwrap_or_default();
         assert!(msg.contains("old") && msg.contains("new"), "{msg}");
         let _ = fs::remove_dir_all(&dir);
     }
