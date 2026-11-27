@@ -364,7 +364,7 @@ Source: full-project review (plan: `.claude/plans/review-project-fix-any-zippy-l
 ### 24d — Innovative additions
 - [x] `llms.txt` / OpenAPI export from the AI schema *(Done: `to_llms_txt` and `to_openapi` in `tpt-appfront-ai-schema`)*
 - [ ] Design tokens/theming and `t!` i18n shared across backends
-- [ ] `.tptrec` Msg-stream record/replay for bug reports and tests
+- [x] `.tptrec` Msg-stream record/replay for bug reports and tests. *(2026-11-28: `Recording` in `crates/tpt-appfront-test/src/record.rs`, behind the `record` feature. JSON Lines with a versioned header. Replay folds the messages through the app's own update function. Not yet wired into the `Harness` or the browser, so recording a live session is still manual)*
 - [x] `appfront.toml` project config (spec section 5) consumed by CLI `dev`/`build`. *(2026-11-28: `[dev]` target, devtools and reload, `[build]` target and bundle; flags win; unknown keys are errors. Documented in `docs/quickstart.md`. The spec gives no schema, so this is the minimal one)*
 - [ ] State-preserving hot reload
 
