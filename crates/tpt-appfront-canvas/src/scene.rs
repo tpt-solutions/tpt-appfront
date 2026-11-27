@@ -342,6 +342,17 @@ impl Scene {
             (NodeKind::Textarea { .. }, None, "Enter") => {
                 self.edit(hit, dispatch, |v| format!("{v}\n"));
             }
+            (
+                NodeKind::Select { .. } | NodeKind::Radio { .. },
+                None,
+                "Enter" | "ArrowDown" | "ArrowRight",
+            )
+            | (NodeKind::Select { .. } | NodeKind::Radio { .. }, Some(' '), _) => {
+                self.cycle_choice(hit, 1, dispatch);
+            }
+            (NodeKind::Select { .. } | NodeKind::Radio { .. }, None, "ArrowUp" | "ArrowLeft") => {
+                self.cycle_choice(hit, -1, dispatch);
+            }
             _ => {}
         }
     }
@@ -399,7 +410,29 @@ impl Scene {
         self.set_focus(Some(path), hits, dispatch);
     }
 
-    /// Activates a node: a checkbox toggles, then `on_click` fires.
+    /// Moves a `Select`/`Radio` selection by `delta` options (wrapping) and reports the new
+    /// value through `on_input`. The tree owns the value, so nothing is stored here.
+    fn cycle_choice<Msg: Clone>(&self, hit: &Hit<'_, Msg>, delta: isize, dispatch: &dyn Fn(Msg)) {
+        let (options, selected) = match &hit.ui.kind {
+            NodeKind::Select { options, selected }
+            | NodeKind::Radio {
+                options, selected, ..
+            } => (options, selected),
+            _ => return,
+        };
+        if options.is_empty() {
+            return;
+        }
+        let idx = options.iter().position(|(v, _)| v == selected).unwrap_or(0) as isize;
+        let len = options.len() as isize;
+        let next = (idx + delta).rem_euclid(len) as usize;
+        if let Some(on_input) = &hit.ui.meta.on_input {
+            dispatch(on_input(options[next].0.clone()));
+        }
+    }
+
+    /// Activates a node: a checkbox toggles, a select or radio advances to its next option,
+    /// then `on_click` fires.
     fn click<Msg: Clone>(&self, path: &Path, hits: &[Hit<'_, Msg>], dispatch: &dyn Fn(Msg)) {
         let Some(hit) = find(hits, path) else {
             return;
@@ -408,6 +441,12 @@ impl Scene {
             if let Some(on_toggle) = &hit.ui.meta.on_toggle {
                 dispatch(on_toggle(!*checked));
             }
+        }
+        if matches!(
+            hit.ui.kind,
+            NodeKind::Select { .. } | NodeKind::Radio { .. }
+        ) {
+            self.cycle_choice(hit, 1, dispatch);
         }
         if let Some(msg) = hit.ui.meta.on_click.clone() {
             dispatch(msg);
@@ -458,6 +497,7 @@ fn is_focusable<Msg>(ui: &UITree<Msg>) -> bool {
             | NodeKind::Textarea { .. }
             | NodeKind::Checkbox { .. }
             | NodeKind::Select { .. }
+            | NodeKind::Radio { .. }
     ) || ui.meta.on_focus.is_some()
         || ui.meta.on_keydown.is_some()
 }
@@ -1076,6 +1116,29 @@ mod tests {
         let ui = b.into_only_child().unwrap();
         let (msgs, _) = frame(&mut scene, &ui, &[Event::Text('d')]);
         assert_eq!(msgs, vec![Msg::Typed("abcd".into())]);
+    }
+
+    #[test]
+    fn select_and_radio_step_through_options_by_click_and_arrows() {
+        let mut b = ContainerBuilder::new();
+        b.select([("a", "A"), ("b", "B"), ("c", "C")], "a")
+            .on_input(Msg::Typed);
+        let ui = b.into_only_child().unwrap();
+        let mut scene = Scene::new();
+        frame(&mut scene, &ui, &[down(4, 4), up(4, 4)]); // click: a -> b
+        let (msgs, _) = frame(&mut scene, &ui, &[key(0x28)]); // ArrowDown: a -> b
+        assert_eq!(msgs, vec![Msg::Typed("b".into())]);
+        let (msgs, _) = frame(&mut scene, &ui, &[key(0x26)]); // ArrowUp: a -> c (wraps)
+        assert_eq!(msgs, vec![Msg::Typed("c".into())]);
+
+        let mut b = ContainerBuilder::new();
+        b.radio_group("g", [("x", "X"), ("y", "Y")], "y")
+            .on_input(Msg::Typed);
+        let ui = b.into_only_child().unwrap();
+        let mut scene = Scene::new();
+        frame(&mut scene, &ui, &[key(0x09)]); // Tab focuses the radio group
+        let (msgs, _) = frame(&mut scene, &ui, &[key(0x0D)]); // Enter: y -> x (wraps)
+        assert_eq!(msgs, vec![Msg::Typed("x".into())]);
     }
 
     #[test]

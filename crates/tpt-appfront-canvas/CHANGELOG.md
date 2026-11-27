@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Select` and `Radio` are interactive. A click, Enter, Space, or an arrow key steps through the
+  options and reports the new value through `on_input`. `Radio` is keyboard-focusable.
+
+### Added
 - macOS window backend (`platform/macos.rs`): an AppKit window with a custom view that draws
   the framebuffer through Core Graphics, and the same event model as the Windows and X11
   backends. Built on `objc2` (MIT or Zlib/Apache-2.0/MIT). Compile-checked for
