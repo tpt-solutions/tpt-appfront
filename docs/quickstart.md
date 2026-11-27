@@ -339,6 +339,24 @@ It also supports `{if ...}`/`{for ...}` control flow and component-tag
 composition (`{ my_component(props) }`). Statically-known subtrees are hoisted
 into a build-once cache automatically.
 
+## Project defaults: `appfront.toml`
+
+Put an optional `appfront.toml` in the project directory to set defaults for `dev` and `build`:
+
+```toml
+[dev]
+target = "desktop"   # desktop | web | tui | desktop-webview
+devtools = false     # same as --devtools
+reload = true        # false is the same as --no-reload
+
+[build]
+target = "canvas"    # the value --target takes
+bundle = false       # same as --bundle
+```
+
+Flags always win. A target flag on the command line replaces `[dev] target`. Unknown keys,
+unknown sections and wrong types are errors, so a typo cannot silently change the build.
+
 ## Troubleshooting
 
 See [troubleshooting.md](https://github.com/tpt-solutions/tpt-appfront/blob/main/docs/troubleshooting.md)

@@ -5,6 +5,8 @@ mod llm;
 mod presets;
 mod templates;
 
+mod config;
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -251,20 +253,41 @@ fn main() -> anyhow::Result<()> {
             no_reload,
             devtools,
             project,
-        } => dev(
-            desktop,
-            web,
-            tui,
-            desktop_webview,
-            no_reload,
-            devtools,
-            &project,
-        ),
+        } => {
+            // appfront.toml supplies the target only when no target flag was given.
+            let cfg = config::ProjectConfig::load(&project)?;
+            let chosen = desktop || web || tui || desktop_webview;
+            let (desktop, web, tui, desktop_webview) = match (chosen, cfg.dev_target) {
+                (false, Some(t)) => (
+                    t == config::DevTarget::Desktop,
+                    t == config::DevTarget::Web,
+                    t == config::DevTarget::Tui,
+                    t == config::DevTarget::DesktopWebview,
+                ),
+                _ => (desktop, web, tui, desktop_webview),
+            };
+            dev(
+                desktop,
+                web,
+                tui,
+                desktop_webview,
+                no_reload || !cfg.dev_reload,
+                devtools || cfg.dev_devtools,
+                &project,
+            )
+        }
         Command::Build {
             target,
             project,
             bundle,
-        } => build(target, &project, bundle),
+        } => {
+            let cfg = config::ProjectConfig::load(&project)?;
+            build(
+                target.or(cfg.build_target),
+                &project,
+                bundle || cfg.build_bundle,
+            )
+        }
         Command::Benchmark { project } => benchmark(&project),
         Command::Doctor { project, a11y, fix } => {
             if a11y {
