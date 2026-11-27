@@ -5,6 +5,8 @@
 //! accessibility and AI-affordance problems (unlabeled inputs, nameless buttons, skipped heading
 //! levels, duplicate keys, missing image alt text and undocumented AI actions).
 
+pub mod snapshot;
+
 use std::collections::HashSet;
 use std::fmt::Debug;
 
