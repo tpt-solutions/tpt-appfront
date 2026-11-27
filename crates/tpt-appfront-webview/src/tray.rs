@@ -86,7 +86,6 @@ mod win {
     use std::sync::Mutex;
 
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{HICON, HMENU};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
@@ -99,6 +98,7 @@ mod win {
         MF_SEPARATOR, MF_STRING, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONUP,
         WM_NULL, WM_RBUTTONUP, WNDCLASSW,
     };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{HICON, HMENU};
 
     use super::{TrayBackend, TrayEvent, TrayMenuItem};
 

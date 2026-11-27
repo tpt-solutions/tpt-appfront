@@ -280,7 +280,6 @@ impl AppBuilder {
     }
 }
 
-
 /// Serves a file from `dist_dir` over the custom `app://` protocol, with
 /// path-traversal protection (see [`crate::serve`]). Internal failures are
 /// answered with a 500, since wry's protocol handler returns a plain response.

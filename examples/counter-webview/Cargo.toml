@@ -5,6 +5,5 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tpt-appfront-core = { path = "../../crates/tpt-appfront-core" }
 tpt-appfront-webview = { path = "../../crates/tpt-appfront-webview" }
 anyhow = "1"

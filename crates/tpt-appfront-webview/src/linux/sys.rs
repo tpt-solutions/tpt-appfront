@@ -65,13 +65,8 @@ pub(crate) type WebKitUserContentManagerNew = unsafe extern "C" fn() -> *mut c_v
 pub(crate) type WebKitWebContextGetDefault = unsafe extern "C" fn() -> *mut c_void;
 /// `void webkit_web_context_register_uri_scheme(WebKitWebContext *context, const gchar *scheme,
 /// WebKitURISchemeRequestCallback callback, gpointer user_data, GDestroyNotify destroy)`
-pub(crate) type WebKitWebContextRegisterUriScheme = unsafe extern "C" fn(
-    *mut c_void,
-    *const c_char,
-    *const c_void,
-    *mut c_void,
-    *const c_void,
-);
+pub(crate) type WebKitWebContextRegisterUriScheme =
+    unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void, *mut c_void, *const c_void);
 /// `const gchar *webkit_uri_scheme_request_get_path(WebKitURISchemeRequest *request)`
 pub(crate) type WebKitUriSchemeRequestGetPath = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 /// `void webkit_uri_scheme_request_finish(WebKitURISchemeRequest *request, GInputStream *stream,

@@ -189,13 +189,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: jetli/trunk-action@v0.5.1
+        with:
+          version: "latest"
       - name: Install runtime libraries and a virtual display
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libwayland-dev libgtk-3-0 libwebkit2gtk-4.1-0 xvfb
       # Unit tests, including the loader's missing-library and missing-symbol cases.
       - run: xvfb-run -a cargo test -p tpt-appfront-webview
+      # The host serves examples/counter-webview/ui/dist, which is git-ignored and must be built
+      # first. Without it the host exits 1 with "Missing .../ui/dist/index.html".
+      - name: Build the counter-webview UI
+        run: (cd examples/counter-webview/ui && trunk build)
       # Smoke test: the example must stay up under the real GTK main loop for 20 s. `timeout`
       # exits 124 only when it had to kill a process that was still running. Any other status
       # means the app crashed or quit early.
