@@ -1,0 +1,10 @@
+[book]
+title = "TPT AppFront guide"
+description = "Write a UI once in Rust and render it to the web, a native window, a terminal, and AI-readable formats."
+authors = ["TPT AppFront contributors"]
+language = "en"
+src = "src"
+
+[build]
+# Keep build output out of the source tree.
+build-dir = "../../target/book"
