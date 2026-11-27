@@ -5,9 +5,9 @@
 //! accessibility and AI-affordance problems (unlabeled inputs, nameless buttons, skipped heading
 //! levels, duplicate keys, missing image alt text and undocumented AI actions).
 
-pub mod resource;
 #[cfg(feature = "record")]
 pub mod record;
+pub mod resource;
 pub mod snapshot;
 
 use std::collections::HashSet;
