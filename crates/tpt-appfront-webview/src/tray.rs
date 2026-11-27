@@ -86,6 +86,7 @@ mod win {
     use std::sync::Mutex;
 
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{HICON, HMENU};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
@@ -176,11 +177,11 @@ mod win {
         // SAFETY: NOTIFYICONDATAW is plain old data, and all-zero is a valid starting value.
         let mut data: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
         data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        data.hWnd = window;
+        data.hWnd = window as HWND;
         data.uID = ICON_UID;
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         data.uCallbackMessage = WM_TRAY;
-        data.hIcon = icon;
+        data.hIcon = icon as HICON;
         fill_tip(&mut data.szTip, tip);
         data
     }
@@ -197,17 +198,17 @@ mod win {
         // SetForegroundWindow the menu may not dismiss on a click elsewhere. The WM_NULL post
         // is the documented follow-up for the same reason.
         unsafe {
-            SetForegroundWindow(window);
+            SetForegroundWindow(window as HWND);
             TrackPopupMenu(
-                menu,
+                menu as HMENU,
                 TPM_RIGHTBUTTON,
                 point.x,
                 point.y,
                 0,
-                window,
+                window as HWND,
                 std::ptr::null(),
             );
-            PostMessageW(window, WM_NULL, 0, 0);
+            PostMessageW(window as HWND, WM_NULL, 0, 0);
         }
     }
 
@@ -217,7 +218,7 @@ mod win {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        let key = hwnd;
+        let key = hwnd as isize;
         if msg == WM_TRAY {
             // The mouse message is in the low word of lparam (legacy callback form).
             match (lparam as u32) & 0xFFFF {
@@ -238,7 +239,7 @@ mod win {
         if taskbar != 0 && msg == taskbar {
             // Explorer restarted and dropped the icon. Add it again.
             let tip = tip_for(key);
-            let icon = unsafe { LoadIconW(0, IDI_APPLICATION) };
+            let icon = unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) } as isize;
             let data = notify_data(key, &tip, icon);
             // SAFETY: `data` is a fully initialised NOTIFYICONDATAW for this window.
             unsafe { Shell_NotifyIconW(NIM_ADD, &data) };
@@ -258,9 +259,9 @@ mod win {
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: GetModuleHandleW(std::ptr::null()),
-                hIcon: 0,
-                hCursor: 0,
-                hbrBackground: 0,
+                hIcon: std::ptr::null_mut(),
+                hCursor: std::ptr::null_mut(),
+                hbrBackground: std::ptr::null_mut(),
                 lpszMenuName: std::ptr::null(),
                 lpszClassName: CLASS_NAME.as_ptr(),
             };
@@ -295,22 +296,23 @@ mod win {
                     0,
                     0,
                     HWND_MESSAGE,
-                    0,
+                    std::ptr::null_mut(),
                     GetModuleHandleW(std::ptr::null()),
                     std::ptr::null(),
                 )
             };
-            if window == 0 {
+            if window.is_null() {
                 anyhow::bail!("could not create the tray window");
             }
+            let window = window as isize;
             // SAFETY: loads a stock system icon, which needs no cleanup.
-            let icon = unsafe { LoadIconW(0, IDI_APPLICATION) };
+            let icon = unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) } as isize;
             let data = notify_data(window, tooltip, icon);
             // SAFETY: `data` is fully initialised for this window and icon id.
             let added = unsafe { Shell_NotifyIconW(NIM_ADD, &data) };
             if added == 0 {
                 // SAFETY: the window was created above and is destroyed once.
-                unsafe { DestroyWindow(window) };
+                unsafe { DestroyWindow(window as HWND) };
                 anyhow::bail!(
                     "Shell_NotifyIconW(NIM_ADD) failed; the notification area may be unavailable"
                 );
@@ -343,9 +345,9 @@ mod win {
             // SAFETY: the old menu is ours and no longer referenced once replaced.
             unsafe {
                 if self.menu != 0 {
-                    DestroyMenu(self.menu);
+                    DestroyMenu(self.menu as HMENU);
                 }
-                self.menu = CreatePopupMenu();
+                self.menu = CreatePopupMenu() as isize;
             }
             if let Ok(mut commands) = COMMANDS.lock() {
                 commands.retain(|(w, _, _)| *w != self.window);
@@ -357,7 +359,7 @@ mod win {
             for item in items {
                 if item.separator {
                     // SAFETY: appends a separator to the menu created above.
-                    unsafe { AppendMenuW(self.menu, MF_SEPARATOR, 0, std::ptr::null()) };
+                    unsafe { AppendMenuW(self.menu as HMENU, MF_SEPARATOR, 0, std::ptr::null()) };
                     continue;
                 }
                 let command = self.next_command;
@@ -368,7 +370,7 @@ mod win {
                 let flags = MF_STRING | if item.disabled { MF_GRAYED } else { 0 };
                 let label = wide(&item.label);
                 // SAFETY: `label` is NUL-terminated and outlives the call.
-                unsafe { AppendMenuW(self.menu, flags, command as usize, label.as_ptr()) };
+                unsafe { AppendMenuW(self.menu as HMENU, flags, command as usize, label.as_ptr()) };
             }
         }
 
@@ -385,9 +387,9 @@ mod win {
             // SAFETY: the menu and window are owned by this backend and destroyed once.
             unsafe {
                 if self.menu != 0 {
-                    DestroyMenu(self.menu);
+                    DestroyMenu(self.menu as HMENU);
                 }
-                DestroyWindow(self.window);
+                DestroyWindow(self.window as HWND);
             }
             if let Ok(mut events) = EVENTS.lock() {
                 events.retain(|(w, _)| *w != self.window);

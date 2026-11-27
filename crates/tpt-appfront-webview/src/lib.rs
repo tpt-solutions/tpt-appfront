@@ -1,6 +1,7 @@
 //! Desktop webview shell for appfront DOM apps.
 //!
-//! A thin wrapper around [`wry`] + [`tao`] (the same stack Tauri uses). It hosts
+//! A thin wrapper around [`wry`] (the OS webview) and `tpt-window` (the native
+//! window and event loop). It hosts
 //! the `trunk build` output of an `tpt-appfront-dom` app — the OS's own webview
 //! (WebView2 / WKWebView / WebKitGTK), with **no bundled Chromium and no npm
 //! toolchain** — and bridges DOM events back to native Rust code over a small,
@@ -28,9 +29,9 @@
 //! From custom JS you can also call `window.__appfront.post(action, params)`
 //! directly.
 
-// The Linux event loop is still a stub (`linux/mod.rs`), so the `manager` code that calls
-// the IPC, serve and window-state helpers is compiled out there and they look unused. Allow
-// that on Linux only, until the GTK backend calls them. Other platforms keep the full lint.
+// On Linux, the wry/tao event loop in `manager` is compiled out, and some helpers it used (window
+// state, dialogs) are not yet called by the GTK backend in `linux/`. Allow dead code there only.
+// Other platforms keep the full lint.
 #![cfg_attr(target_os = "linux", allow(dead_code, unused_imports))]
 
 use std::borrow::Cow;
@@ -50,10 +51,12 @@ mod rate_limit;
 mod app;
 pub use app::{AppBuilder, WindowConfig};
 
-// Native event loop: `tao` + `wry` on Windows and macOS. Linux has its own backend
-// (see `docs/linux-webview-backend.md`); until it lands, `AppBuilder::run` returns an error there.
+// Native event loops. Windows and macOS use `tpt-window` + `wry` (`manager`). Linux uses GTK 3 and
+// WebKitGTK 4.1, loaded at runtime (`linux/`, see `docs/linux-webview-backend.md`).
 #[cfg(target_os = "linux")]
 mod linux;
+// The IPC dispatch is shared by every backend, so it is not gated by platform.
+mod ipc_dispatch;
 #[cfg(not(target_os = "linux"))]
 mod manager;
 

@@ -1,8 +1,8 @@
 [package]
 name = "tpt-appfront-webview"
-description = "Thin OS-webview desktop shell (wry + tao) for TPT AppFront, hosting the DOM WASM bundle with no Electron/Node."
+description = "Thin OS-webview desktop shell (wry + tpt-window) for TPT AppFront, hosting the DOM WASM bundle with no Electron/Node."
 readme = "README.md"
-keywords = ["webview", "desktop", "wry", "tao", "gui"]
+keywords = ["webview", "desktop", "wry", "tpt-window", "gui"]
 categories = ["gui", "os"]
 version.workspace = true
 edition.workspace = true
@@ -19,13 +19,13 @@ dirs = "5"
 notify-rust = "4"
 rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "tokio"] }
 keyring = "4"
-crossbeam-channel = "0.5"
 fs4 = "0.9"
 
-# `tao` + `wry` host the webview on Windows and macOS. Linux uses its own backend
-# (docs/linux-webview-backend.md), so these are not built there.
+# `tpt-window` (window and event loop) + `wry` (webview) host the webview on Windows and
+# macOS. Linux uses its own backend (docs/linux-webview-backend.md), so these are not built
+# there. `tpt-window` is pre-release and not on crates.io; pinned to master as of 2026-11-27.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-tao = "0.37"
+tpt-window = { git = "https://github.com/tpt-solutions/tpt-window", rev = "fd227cc6fd77858079636f5c90ca9d2018d4367a" }
 wry = "0.57"
 
 # Linux loads GTK3 and WebKitGTK at runtime (docs/linux-webview-backend.md).
