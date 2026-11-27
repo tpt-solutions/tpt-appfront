@@ -107,16 +107,22 @@ jobs:
         env:
           WASM_BINDGEN_TEST_RUNNER_CHROME: /usr/bin/chromium
         run: |
-          set -e
-          cargo test -p tpt-appfront-dom --target wasm32-unknown-unknown --no-run
+          set -eo pipefail
           # Run every test binary this build produced: the unit tests and each file in tests/.
-          # The old glob matched only the unit-test binary, which has no browser tests, so the
-          # tests in tests/ never ran.
-          set -e
-          for w in target/wasm32-unknown-unknown/debug/deps/*.wasm; do
+          # Ask cargo for the executable paths rather than globbing target/.../deps/: cargo does
+          # not always place the wasm test binaries there (they can land under build/*/out/), so
+          # a deps/ glob matched nothing and the runner was handed a literal pattern.
+          cargo test -p tpt-appfront-dom --target wasm32-unknown-unknown --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null and .profile.test == true) | .executable' \
+            > wasm-test-bins.txt
+          if [ ! -s wasm-test-bins.txt ]; then
+            echo "error: cargo reported no wasm test executables" >&2
+            exit 1
+          fi
+          while read -r w; do
             echo "== $w"
             wasm-bindgen-test-runner "$w"
-          done
+          done < wasm-test-bins.txt
 
   cli-llm:
     name: CLI `llm` feature (clippy)
@@ -173,6 +179,34 @@ jobs:
       # Compile-only for now: the webview's Linux tests and the window itself need a display.
       - run: cargo build -p tpt-appfront-webview
       - run: cargo clippy -p tpt-appfront-webview --all-targets -- -D warnings
+
+  linux-webview:
+    # Stage 5 of docs/linux-webview-backend.md: the GTK/WebKitGTK backend runs for real under a
+    # virtual display. The loader, window, scheme and IPC code is type-checked on every push by
+    # `webview-linux`; this job is where it first runs.
+    name: Webview (Linux runtime under xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install runtime libraries and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libgtk-3-0 libwebkit2gtk-4.1-0 xvfb
+      # Unit tests, including the loader's missing-library and missing-symbol cases.
+      - run: xvfb-run -a cargo test -p tpt-appfront-webview
+      # Smoke test: the example must stay up under the real GTK main loop for 20 s. `timeout`
+      # exits 124 only when it had to kill a process that was still running. Any other status
+      # means the app crashed or quit early.
+      - name: Run counter-webview under xvfb
+        run: |
+          cargo build --manifest-path examples/counter-webview/Cargo.toml
+          set +e
+          xvfb-run -a timeout 20 examples/counter-webview/target/debug/counter-webview
+          code=$?
+          echo "counter-webview exit status: $code"
+          test "$code" -eq 124
 
   canvas-macos:
     name: Canvas (macOS build and tests)
