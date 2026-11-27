@@ -9,6 +9,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
+use std::sync::mpsc;
 use std::time::Duration;
 use std::{fs, thread};
 
@@ -881,11 +882,10 @@ fn ui_dir(project: &Path) -> Option<PathBuf> {
 // dev --desktop watch/reload loop
 // ---------------------------------------------------------------------------
 
-/// Poll-based file watcher over a project's source tree. It re-scans on each
-/// call (cheap for the small trees a dev session has) and reports whether the
-/// watched set changed since the previous snapshot. A kernel-level watcher
-/// (`notify`) would avoid the polling, but a dependency-free poll is enough for
-/// a dev-time restart loop.
+/// Change detector for a project's source tree. The kernel watcher (`notify`, see
+/// `dev_watch`) says *when* to look; this type decides *whether* the watched files
+/// really changed, by comparing content hashes. That keeps `Cargo.lock` writes and
+/// duplicate events from restarting the app.
 struct Watcher {
     roots: Vec<PathBuf>,
 }
@@ -981,12 +981,33 @@ fn dev_watch(roots: Vec<PathBuf>, spawn: impl Fn() -> anyhow::Result<Child>) -> 
     let mut baseline = watcher.snapshot();
     println!("watching {} for changes (Ctrl-C to stop)…", roots_display);
 
+    // Filesystem events wake the loop. A one-second timeout covers any event the OS drops, so
+    // a missed notification costs at most one second.
+    let (tx, rx) = mpsc::channel();
+    let mut notifier = notify::recommended_watcher(move |event| {
+        let _ = tx.send(event);
+    })
+    .context("start the file watcher")?;
+    for root in &watcher.roots {
+        let src = root.join("src");
+        if src.is_dir() {
+            notify::Watcher::watch(&mut notifier, &src, notify::RecursiveMode::Recursive)
+                .with_context(|| format!("watch {}", src.display()))?;
+        }
+        let manifest = root.join("Cargo.toml");
+        if manifest.is_file() {
+            notify::Watcher::watch(&mut notifier, &manifest, notify::RecursiveMode::NonRecursive)
+                .with_context(|| format!("watch {}", manifest.display()))?;
+        }
+    }
+
     let mut child = spawn()?;
-    let poll_interval = Duration::from_millis(400);
     let debounce = Duration::from_millis(150);
 
     loop {
-        thread::sleep(poll_interval);
+        let _ = rx.recv_timeout(Duration::from_secs(1));
+        // Drain the burst so one save does not cause several passes.
+        while rx.try_recv().is_ok() {}
         if watcher.changed(&mut baseline) {
             // Wait until changes settle before restarting, so a burst of saves
             // (or a file being rewritten mid-write) only triggers one rebuild.
