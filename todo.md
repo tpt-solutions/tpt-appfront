@@ -356,7 +356,7 @@ Source: full-project review (plan: `.claude/plans/review-project-fix-any-zippy-l
 - [~] `trybuild` compile-fail tests for `view!`/`#[component]`: done 2026-11-11 in `crates/tpt-appfront-core/tests/ui/` (one pass case, three fail cases: unknown tag, missing `on_click`, wrong return type). They live in core because core re-exports the macros. Snapshots depend on rustc wording, so a toolchain upgrade may need `TRYBUILD=overwrite`. Still open: better errors (valid attrs per tag, custom-component typo heuristic); the nearest-tag typo hint already exists
 - [x] Umbrella `full`/`web` feature bundles (2026-11-11: `web` is checked for wasm32 and native, `full` for native)
 - [ ] mdBook docs site + rustdoc on GitHub Pages; missing guides: routing, forms/`FormState`, `Resource`/`Suspense`, `Store`, styling/`class!`, hydration/islands, MCP, smart-router options, webview IPC/ACL, `view!` reference
-- [ ] `insta`-style `assert_snapshot!` (update flag) and a signal/`Resource` test driver in `tpt-appfront-test`; `assert_accessible` action-params check
+- [~] `insta`-style `assert_snapshot!` (update flag) and a signal/`Resource` test driver in `tpt-appfront-test`; `assert_accessible` action-params check. *(2026-11-28: `assert_snapshot!` done with `TPT_UPDATE_SNAPSHOTS=1` in `crates/tpt-appfront-test/src/snapshot.rs`. Still open: the signal/`Resource` driver and the action-params check)*
 - [ ] `view!` tooling: `tpt-appfront fmt` formats macro bodies; VS Code snippets (then TextMate grammar extension)
 - [~] `dev`: replace the polling watcher with `notify`; browser dev error overlay *(2026-11-28: the watcher now uses `notify` to wake the loop, and content hashes still decide what counts as a change (`crates/tpt-appfront-cli/src/main.rs`). The browser dev error overlay is still open)*
 - [ ] CLI: `add store|route|form|test|template`; `migrate` (wire `ingest` + `docs/migration/*`); cargo-generate template repo; PR-friendly `CONTRIBUTING.md`
@@ -365,7 +365,7 @@ Source: full-project review (plan: `.claude/plans/review-project-fix-any-zippy-l
 - [x] `llms.txt` / OpenAPI export from the AI schema *(Done: `to_llms_txt` and `to_openapi` in `tpt-appfront-ai-schema`)*
 - [ ] Design tokens/theming and `t!` i18n shared across backends
 - [ ] `.tptrec` Msg-stream record/replay for bug reports and tests
-- [ ] `appfront.toml` project config (spec section 5) consumed by CLI `dev`/`build`
+- [x] `appfront.toml` project config (spec section 5) consumed by CLI `dev`/`build`. *(2026-11-28: `[dev]` target, devtools and reload, `[build]` target and bundle; flags win; unknown keys are errors. Documented in `docs/quickstart.md`. The spec gives no schema, so this is the minimal one)*
 - [ ] State-preserving hot reload
 
 ### 24e — License policy: no Apache-only dependencies
