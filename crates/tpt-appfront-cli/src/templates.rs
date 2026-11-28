@@ -953,6 +953,95 @@ pub fn start() -> Result<(), JsValue> {{
     )
 }
 
+/// A store module: shared state behind a `Store`, scaffolded by `tpt-appfront add store`.
+pub fn store_rs(name: &str, snake: &str) -> String {
+    format!(
+        r#"//! Store `{name}`: shared state for the app. Scaffolded by `tpt-appfront add store`.
+
+use tpt_appfront::core::Store;
+
+/// The state this store owns. Add the fields the app needs.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct {name}State {{}}
+
+/// Builds the store. Chain `with_time_travel(50)` for undo and redo, or
+/// `with_persistence(..)` to save the state between runs.
+pub fn {snake}() -> Store<{name}State> {{
+    Store::new({name}State::default())
+}}
+"#
+    )
+}
+
+/// A form module: a `FormState` with its fields, scaffolded by `tpt-appfront add form`.
+pub fn form_rs(name: &str, snake: &str) -> String {
+    format!(
+        r#"//! Form `{name}`: field values and validation. Scaffolded by `tpt-appfront add form`.
+
+use tpt_appfront::core::FormState;
+
+/// Builds the form. Each field is a signal, so an input bound to it updates as the user types.
+pub fn {snake}() -> FormState {{
+    let form = FormState::new();
+    // form.field("email", "");
+    // form.validate("email", |v| {{
+    //     if v.contains('@') {{ None }} else {{ Some("Enter an email address".into()) }}
+    // }});
+    form
+}}
+"#
+    )
+}
+
+/// A route page: a `view!` page that receives its `:param` captures, scaffolded by
+/// `tpt-appfront add route`.
+pub fn route_rs(name: &str, snake: &str, pattern: &str) -> String {
+    format!(
+        r#"//! Route `{pattern}`: page `{name}`. Scaffolded by `tpt-appfront add route`.
+
+use std::collections::HashMap;
+
+use tpt_appfront::core::{{UITree, view}};
+
+#[derive(Debug, Clone)]
+pub enum Msg {{
+    Navigated,
+}}
+
+/// Builds the page for route `{pattern}`. `params` holds each `:name` capture.
+pub fn {snake}(params: &HashMap<String, String>) -> UITree<Msg> {{
+    let title = params.values().next().cloned().unwrap_or_else(|| "{name}".to_string());
+    view! {{
+        <Container>
+            <Heading level={{1u8}}>{{ title }}</Heading>
+        </Container>
+    }}
+}}
+
+// Register it on your route table:
+//     RouteTable::new().route("{pattern}", {snake})?
+"#
+    )
+}
+
+/// An integration test skeleton using the headless harness, scaffolded by `tpt-appfront add test`.
+pub fn test_rs(name: &str) -> String {
+    format!(
+        r#"//! Scaffolded by `tpt-appfront add test {name}`. Needs `tpt-appfront-test` in [dev-dependencies].
+
+#[allow(unused_imports)]
+use tpt_appfront_test::Harness;
+
+#[test]
+fn {name}() {{
+    // let mut h = Harness::new(build_ui());
+    // h.click("Increment");
+    // h.assert_msg_emitted(&Msg::Increment);
+}}
+"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -226,6 +226,41 @@ enum AddKind {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Add a store under `src/stores/`: a `Store` with its state type.
+    Store {
+        /// Store name (PascalCase, e.g. `Cart`).
+        name: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Add a form under `src/forms/`: a `FormState` with its fields.
+    Form {
+        /// Form name (PascalCase, e.g. `Signup`).
+        name: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Add a route page under `src/pages/`. The page receives the route's `:param` captures.
+    Route {
+        /// Page name (PascalCase, e.g. `UserProfile`).
+        name: String,
+        /// Route pattern, e.g. `/users/:id`.
+        #[arg(long)]
+        path: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Add an integration test under `tests/` that uses the headless harness.
+    Test {
+        /// Test name (snake_case or PascalCase, e.g. `checkout_flow`).
+        name: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -338,6 +373,14 @@ fn main() -> anyhow::Result<()> {
         Command::Add { kind } => match kind {
             AddKind::Component { name, project } => add_component(&name, &project),
             AddKind::Page { name, project } => add_page(&name, &project),
+            AddKind::Store { name, project } => add_store(&name, &project),
+            AddKind::Form { name, project } => add_form(&name, &project),
+            AddKind::Route {
+                name,
+                path,
+                project,
+            } => add_route(&name, &path, &project),
+            AddKind::Test { name, project } => add_test(&name, &project),
         },
         Command::Fmt => fmt_cmd(),
         Command::Lint => lint_cmd(),
@@ -785,6 +828,129 @@ fn add_page(name: &str, project: &Path) -> anyhow::Result<()> {
     fs::write(&file, templates::page_rs(name, &kebab_case(name)))?;
     declare_module(project, "pages")?;
     println!("Created page `{}` at {}", name, file.display());
+    Ok(())
+}
+
+/// Writes `content` to `dir/file_name`, creating `dir`. Refuses to overwrite an existing file.
+fn write_new_file(
+    dir: &Path,
+    file_name: &str,
+    content: &str,
+    label: &str,
+) -> anyhow::Result<PathBuf> {
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let path = dir.join(file_name);
+    if path.exists() {
+        bail!("{label} already exists at {}", path.display());
+    }
+    fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+    Ok(path)
+}
+
+/// PascalCase to snake_case: `CartItem` becomes `cart_item`.
+fn snake_case(name: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in name.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn add_store(name: &str, project: &Path) -> anyhow::Result<()> {
+    validate_identifier(name)?;
+    let snake = snake_case(name);
+    let file = write_new_file(
+        &project.join("src").join("stores"),
+        &format!("{snake}.rs"),
+        &templates::store_rs(name, &snake),
+        &format!("store `{name}`"),
+    )?;
+    declare_module(project, "stores")?;
+    println!("Created store `{name}` at {}", file.display());
+    Ok(())
+}
+
+fn add_form(name: &str, project: &Path) -> anyhow::Result<()> {
+    validate_identifier(name)?;
+    let snake = snake_case(name);
+    let file = write_new_file(
+        &project.join("src").join("forms"),
+        &format!("{snake}.rs"),
+        &templates::form_rs(name, &snake),
+        &format!("form `{name}`"),
+    )?;
+    declare_module(project, "forms")?;
+    println!("Created form `{name}` at {}", file.display());
+    Ok(())
+}
+
+fn add_route(name: &str, pattern: &str, project: &Path) -> anyhow::Result<()> {
+    validate_identifier(name)?;
+    validate_route_pattern(pattern)?;
+    let snake = snake_case(name);
+    let file = write_new_file(
+        &project.join("src").join("pages"),
+        &format!("{snake}.rs"),
+        &templates::route_rs(name, &snake, pattern),
+        &format!("page `{name}`"),
+    )?;
+    declare_module(project, "pages")?;
+    println!(
+        "Created route page `{name}` for `{pattern}` at {}\nRegister it with RouteTable::route(\"{pattern}\", {snake}).",
+        file.display()
+    );
+    Ok(())
+}
+
+fn add_test(name: &str, project: &Path) -> anyhow::Result<()> {
+    validate_identifier(name)?;
+    let snake = snake_case(name);
+    let file = write_new_file(
+        &project.join("tests"),
+        &format!("{snake}.rs"),
+        &templates::test_rs(&snake),
+        &format!("test `{name}`"),
+    )?;
+    println!(
+        "Created test `{snake}` at {}\nAdd tpt-appfront-test to [dev-dependencies] to run it.",
+        file.display()
+    );
+    Ok(())
+}
+
+/// Checks a route pattern the way the router will read it: it starts with `/`, has no empty
+/// segment, each `:name` capture has a name, and `*` wildcards are rejected (not supported).
+fn validate_route_pattern(pattern: &str) -> anyhow::Result<()> {
+    if !pattern.starts_with('/') {
+        bail!("route `{pattern}` must start with `/`");
+    }
+    let inner = pattern.trim_start_matches('/').trim_end_matches('/');
+    if inner.is_empty() {
+        return Ok(());
+    }
+    for segment in inner.split('/') {
+        if segment.is_empty() {
+            bail!("route `{pattern}` has an empty segment");
+        }
+        if segment == "*" {
+            bail!("route `{pattern}`: wildcards are not supported; use a `:name` capture");
+        }
+        if let Some(param) = segment.strip_prefix(':') {
+            if param.is_empty() {
+                bail!("route `{pattern}`: a `:` capture needs a name");
+            }
+            if !param.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                bail!("route `{pattern}`: parameter `:{param}` must use letters, digits or `_`");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2730,6 +2896,72 @@ opt-level = 3
             root.matches("mod components;").count(),
             1,
             "no duplicate decl"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod add_kind_tests {
+    use super::*;
+
+    fn scratch(test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tpt-add-{test}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn snake_case_splits_pascal_case_words() {
+        assert_eq!(snake_case("CartItem"), "cart_item");
+        assert_eq!(snake_case("Signup"), "signup");
+    }
+
+    #[test]
+    fn route_patterns_are_checked_before_a_file_is_written() {
+        assert!(validate_route_pattern("/").is_ok());
+        assert!(validate_route_pattern("/users/:id").is_ok());
+        assert!(validate_route_pattern("users").is_err());
+        assert!(validate_route_pattern("/a//b").is_err());
+        assert!(validate_route_pattern("/users/:").is_err());
+        assert!(validate_route_pattern("/files/*").is_err());
+        assert!(validate_route_pattern("/x/:bad-name").is_err());
+    }
+
+    #[test]
+    fn add_store_writes_the_module_and_declares_it() {
+        let dir = scratch("store");
+        add_store("Cart", &dir).unwrap();
+        let file = fs::read_to_string(dir.join("src/stores/cart.rs")).unwrap();
+        assert!(
+            file.contains("pub fn cart()") && file.contains("CartState"),
+            "{file}"
+        );
+        let main = fs::read_to_string(dir.join("src/main.rs")).unwrap();
+        assert!(main.contains("mod stores;"), "{main}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_route_writes_a_param_page_for_its_pattern() {
+        let dir = scratch("route");
+        add_route("UserProfile", "/users/:id", &dir).unwrap();
+        let file = fs::read_to_string(dir.join("src/pages/user_profile.rs")).unwrap();
+        assert!(file.contains("params: &HashMap<String, String>"), "{file}");
+        assert!(file.contains("/users/:id"), "{file}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_test_writes_under_tests_and_never_overwrites() {
+        let dir = scratch("test");
+        add_test("checkout_flow", &dir).unwrap();
+        assert!(dir.join("tests/checkout_flow.rs").is_file());
+        assert!(
+            add_test("checkout_flow", &dir).is_err(),
+            "second add must refuse"
         );
         let _ = fs::remove_dir_all(&dir);
     }
