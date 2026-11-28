@@ -1,0 +1,70 @@
+{
+  "view! block": {
+    "scope": "rust",
+    "prefix": "view",
+    "description": "A view! block with a container",
+    "body": [
+      "view! {",
+      "    <Container>",
+      "        $0",
+      "    </Container>",
+      "}"
+    ]
+  },
+  "Button with on_click": {
+    "scope": "rust",
+    "prefix": "vbutton",
+    "description": "view! Button wired to a message",
+    "body": [
+      "<Button on_click={Msg::${1:Increment}}>\"${2:Label}\"</Button>"
+    ]
+  },
+  "Input with on_input": {
+    "scope": "rust",
+    "prefix": "vinput",
+    "description": "view! Input bound to a message",
+    "body": [
+      "<Input value={${1:value}} on_input={|v| Msg::${2:Changed}(v)} />"
+    ]
+  },
+  "Heading": {
+    "scope": "rust",
+    "prefix": "vheading",
+    "description": "view! Heading at a level",
+    "body": [
+      "<Heading level={${1:2}u8}>\"${2:Title}\"</Heading>"
+    ]
+  },
+  "#[component] function": {
+    "scope": "rust",
+    "prefix": "vcomponent",
+    "description": "A component returning UITree<Msg>",
+    "body": [
+      "/// ${1:Describe the component.}",
+      "#[component]",
+      "pub fn ${2:name}() -> UITree<${3:Msg}> {",
+      "    view! {",
+      "        <Container>",
+      "            $0",
+      "        </Container>",
+      "    }",
+      "}"
+    ]
+  },
+  "t! translation": {
+    "scope": "rust",
+    "prefix": "t!",
+    "description": "Translate a key in the current locale",
+    "body": [
+      "t!(\"${1:key}\"$2)"
+    ]
+  },
+  "Signal::persisted": {
+    "scope": "rust",
+    "prefix": "persisted",
+    "description": "A signal that survives tpt-appfront dev hot reload",
+    "body": [
+      "let ${1:value} = Signal::persisted(\"${2:module.value}\", ${3:0});"
+    ]
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "TPT AppFront view! markup",
+  "scopeName": "source.rust.tpt-view.injection",
+  "injectionSelector": "L:source.rust -comment -string",
+  "patterns": [
+    { "include": "#view-block" }
+  ],
+  "repository": {
+    "view-block": {
+      "begin": "\\bview!\\s*(\\{)",
+      "beginCaptures": {
+        "0": { "name": "entity.name.function.macro.tpt-view" },
+        "1": { "name": "punctuation.section.braces.begin.tpt-view" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.braces.end.tpt-view" }
+      },
+      "name": "meta.macro.tpt-view",
+      "patterns": [
+        { "include": "#markup" },
+        { "include": "#expr" },
+        { "include": "#line-comment" }
+      ]
+    },
+    "markup": {
+      "patterns": [
+        { "include": "#closing-tag" },
+        { "include": "#open-tag" },
+        { "include": "#string" }
+      ]
+    },
+    "closing-tag": {
+      "match": "</\\s*([A-Za-z][A-Za-z0-9_]*)\\s*>",
+      "captures": {
+        "1": { "name": "entity.name.tag.tpt-view" }
+      },
+      "name": "meta.tag.closing.tpt-view"
+    },
+    "open-tag": {
+      "begin": "(<)([A-Za-z][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.tpt-view" },
+        "2": { "name": "entity.name.tag.tpt-view" }
+      },
+      "end": "(/?>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.tpt-view" }
+      },
+      "name": "meta.tag.opening.tpt-view",
+      "patterns": [
+        { "include": "#attribute-name" },
+        { "include": "#string" },
+        { "include": "#expr" }
+      ]
+    },
+    "attribute-name": {
+      "match": "[A-Za-z_][A-Za-z0-9_]*(?=\\s*=)",
+      "name": "entity.other.attribute-name.tpt-view"
+    },
+    "string": {
+      "match": "\"(?:[^\"\\\\]|\\\\.)*\"",
+      "name": "string.quoted.double.tpt-view"
+    },
+    "expr": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.embedded.begin.tpt-view" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.embedded.end.tpt-view" }
+      },
+      "name": "meta.embedded.expression.tpt-view",
+      "patterns": [
+        { "include": "source.rust" },
+        { "include": "#expr" }
+      ]
+    },
+    "line-comment": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.tpt-view"
+    }
+  }
+}

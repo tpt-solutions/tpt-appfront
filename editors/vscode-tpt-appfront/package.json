@@ -1,0 +1,26 @@
+{
+  "name": "tpt-appfront-view",
+  "displayName": "TPT AppFront view!",
+  "description": "Syntax highlighting for the view! markup inside Rust files (TPT AppFront).",
+  "version": "0.1.0",
+  "publisher": "tpt-appfront",
+  "license": "MIT OR Apache-2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "grammars": [
+      {
+        "scopeName": "source.rust.tpt-view.injection",
+        "path": "./syntaxes/tpt-view.injection.json",
+        "injectTo": [
+          "source.rust"
+        ]
+      }
+    ]
+  }
+}
