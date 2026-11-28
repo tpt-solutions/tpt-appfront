@@ -265,3 +265,24 @@ fn readme_hero_example() {
     h.click("Increment");
     assert_eq!(h.drain_msgs(), vec![Msg::Increment]);
 }
+
+/// docs/quickstart.md, "Translations and design tokens".
+#[test]
+fn recipe_translations_and_tokens() {
+    use tpt_appfront::core::i18n::{self, Catalog};
+    use tpt_appfront::core::{t, theme::{Scheme, Theme}};
+
+    let mut catalog = Catalog::new("en");
+    catalog.add("en", &[("greeting", "Hello, {name}")]);
+    catalog.add("fr", &[("greeting", "Bonjour, {name}")]);
+    i18n::install(catalog);
+    i18n::set_locale("fr");
+    assert_eq!(t!("greeting", name = "Ada"), "Bonjour, Ada");
+    i18n::set_locale("en");
+
+    let theme = Theme::new()
+        .light("color.primary", "#2563eb")
+        .dark("color.primary", "#60a5fa");
+    assert_eq!(theme.value("color.primary", Scheme::Dark), Some("#60a5fa"));
+    assert!(theme.to_css().contains("--color-primary: #2563eb;"));
+}

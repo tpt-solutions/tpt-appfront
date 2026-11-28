@@ -13,7 +13,9 @@
 
 use std::collections::BTreeSet;
 
-use tpt_appfront_core::{NodeKind, UITree};
+use tpt_appfront_core::UITree;
+
+pub use tpt_appfront_core::text_words::{expected_words, required_words, words};
 
 /// Words a backend dropped, or did not show, compared with the core tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,64 +26,6 @@ pub struct BackendGap {
     pub missing: Vec<String>,
 }
 
-/// Splits `text` into lower-cased words. Any run of characters that are not letters or digits
-/// separates words, so `Count: 0` gives `count` and `0`.
-pub fn words(text: &str) -> BTreeSet<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-        .collect()
-}
-
-/// The visible text the core tree declares, as words. Option labels of selects and radio groups
-/// are included.
-pub fn expected_words<Msg>(ui: &UITree<Msg>) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    collect_expected(ui, true, &mut out);
-    out
-}
-
-/// The text every backend is required to show. Option labels are left out: a terminal shows only
-/// the selected option of a select, which is a design choice, not a lost word.
-pub fn required_words<Msg>(ui: &UITree<Msg>) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    collect_expected(ui, false, &mut out);
-    out
-}
-
-fn collect_expected<Msg>(ui: &UITree<Msg>, include_options: bool, out: &mut BTreeSet<String>) {
-    let mut add = |text: &str| out.extend(words(text));
-    match &ui.kind {
-        NodeKind::Container { children } => {
-            for child in children {
-                collect_expected(child, include_options, out);
-            }
-        }
-        NodeKind::List { items } => {
-            for item in items {
-                collect_expected(item, include_options, out);
-            }
-        }
-        NodeKind::Portal { content, .. } => collect_expected(content, include_options, out),
-        NodeKind::Heading { text, .. } | NodeKind::Text { text } | NodeKind::Link { text, .. } => {
-            add(text)
-        }
-        NodeKind::Button { label } | NodeKind::Checkbox { label, .. } => add(label),
-        NodeKind::Select { options, .. } | NodeKind::Radio { options, .. } => {
-            if include_options {
-                for (_, label) in options {
-                    add(label);
-                }
-            }
-        }
-        NodeKind::Input { .. }
-        | NodeKind::Textarea { .. }
-        | NodeKind::DataGrid { .. }
-        | NodeKind::Image { .. }
-        | NodeKind::Viewport { .. }
-        | NodeKind::Media { .. } => {}
-    }
-}
 
 /// Removes markup from HTML and decodes the entities the HTML backend emits. Attribute values
 /// sit inside tags, so they are removed along with the tags, and only visible text remains.
