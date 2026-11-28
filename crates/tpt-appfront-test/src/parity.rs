@@ -26,7 +26,6 @@ pub struct BackendGap {
     pub missing: Vec<String>,
 }
 
-
 /// Removes markup from HTML and decodes the entities the HTML backend emits. Attribute values
 /// sit inside tags, so they are removed along with the tags, and only visible text remains.
 pub fn strip_html(html: &str) -> String {

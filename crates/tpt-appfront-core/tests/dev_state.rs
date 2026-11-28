@@ -18,7 +18,10 @@ fn persisted_signals_survive_restart() {
     assert_eq!(off.get(), 7);
     off.set(9);
     assert_eq!(off.get(), 9);
-    assert!(!path.exists(), "no file is written while persistence is off");
+    assert!(
+        !path.exists(),
+        "no file is written while persistence is off"
+    );
 
     // On: a write is saved under its name.
     std::env::set_var(DEV_STATE_ENV, &path);

@@ -385,10 +385,7 @@ fn starts_with(c: &[char], i: usize, s: &str) -> bool {
 /// The number of spaces at the start of the line that contains index `i`.
 fn leading_spaces(c: &[char], i: usize) -> usize {
     let line_start = line_start(c, i);
-    c[line_start..]
-        .iter()
-        .take_while(|ch| **ch == ' ')
-        .count()
+    c[line_start..].iter().take_while(|ch| **ch == ' ').count()
 }
 
 fn line_start(c: &[char], i: usize) -> usize {
@@ -448,7 +445,10 @@ fn skip_char_literal(c: &[char], i: usize) -> usize {
     if c.get(i + 1) == Some(&'\\') {
         // An escape such as '\n' or '\u{1F600}': find the closing quote.
         let limit = (i + 12).min(c.len());
-        match c[(i + 2).min(limit)..limit].iter().position(|&ch| ch == '\'') {
+        match c[(i + 2).min(limit)..limit]
+            .iter()
+            .position(|&ch| ch == '\'')
+        {
             Some(offset) => i + 2 + offset + 1,
             None => i + 1,
         }
@@ -526,16 +526,28 @@ mod tests {
     fn expressions_are_kept_verbatim() {
         let src = "let ui = view! {\n<Text>{ format!(\"{} items }}\", n) }</Text>\n<Button on_click={ move |_| { dispatch(Msg::Go) } }>\"Go\"</Button>\n};";
         let out = fmt(src);
-        assert!(out.contains("<Text>{ format!(\"{} items }}\", n) }</Text>"), "{out}");
-        assert!(out.contains("on_click={ move |_| { dispatch(Msg::Go) } }"), "{out}");
+        assert!(
+            out.contains("<Text>{ format!(\"{} items }}\", n) }</Text>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("on_click={ move |_| { dispatch(Msg::Go) } }"),
+            "{out}"
+        );
     }
 
     #[test]
     fn a_wide_opening_tag_wraps_one_attribute_per_line() {
         let src = "let ui = view! { <Input value={draft.get()} class=\"mb-2 w-full rounded border border-gray-300 px-3 py-2 focus:outline-none focus:ring\" on_input={Msg::SetDraft} /> };";
         let out = fmt(src);
-        assert!(out.contains("\n    <Input\n        value={draft.get()}\n"), "{out}");
-        assert!(out.contains("\n        on_input={Msg::SetDraft}\n    />"), "{out}");
+        assert!(
+            out.contains("\n    <Input\n        value={draft.get()}\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\n        on_input={Msg::SetDraft}\n    />"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -570,8 +582,14 @@ mod tests {
     fn crlf_files_keep_crlf_endings() {
         let src = "let ui = view! {\r\n<Container>\r\n<Text>\"a\"</Text>\r\n</Container>\r\n};\r\nfn f() {}\r\n";
         let out = format_source(src).text;
-        assert!(!out.replace("\r\n", "").contains('\n'), "no bare LF: {out:?}");
-        assert!(out.contains("    <Container>\r\n        <Text>\"a\"</Text>\r\n    </Container>"), "{out:?}");
+        assert!(
+            !out.replace("\r\n", "").contains('\n'),
+            "no bare LF: {out:?}"
+        );
+        assert!(
+            out.contains("    <Container>\r\n        <Text>\"a\"</Text>\r\n    </Container>"),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -587,6 +605,10 @@ mod tests {
         let src = "let ui = view! {\n<Text>{ if c == '}' { \"}\" } else { \"{\" } }</Text>\n};";
         let formatted = format_source(src);
         assert_eq!(formatted.blocks, 1, "{}", formatted.text);
-        assert!(formatted.text.contains("'}' { \"}\" } else { \"{\" }"), "{}", formatted.text);
+        assert!(
+            formatted.text.contains("'}' { \"}\" } else { \"{\" }"),
+            "{}",
+            formatted.text
+        );
     }
 }

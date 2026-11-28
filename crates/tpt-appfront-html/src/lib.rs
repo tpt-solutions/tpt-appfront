@@ -642,7 +642,10 @@ mod tests {
         let head_end = html.find("</head>").expect("head end");
         assert!(style_start < head_end, "style is inside head");
         assert!(html.contains("--color-primary: #2563eb;"));
-        assert!(!html.contains("</style><script>"), "value cannot break out of style");
+        assert!(
+            !html.contains("</style><script>"),
+            "value cannot break out of style"
+        );
         assert_eq!(html.matches("</style>").count(), 1);
     }
 }

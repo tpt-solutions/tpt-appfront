@@ -846,8 +846,7 @@ fn declare_module(project: &Path, dir: &str, child: &str) -> anyhow::Result<()> 
         }
         text.push_str(&child_decl);
         text.push('\n');
-        fs::write(&mod_file, text)
-            .with_context(|| format!("updating {}", mod_file.display()))?;
+        fs::write(&mod_file, text).with_context(|| format!("updating {}", mod_file.display()))?;
     }
 
     let Some(root) = root_src_file(project) else {
@@ -1934,7 +1933,11 @@ fn fmt_views_cmd(paths: &[PathBuf], check: bool) -> anyhow::Result<()> {
     }
 
     for file in &changed_files {
-        println!("{} {}", if check { "would format" } else { "formatted" }, file.display());
+        println!(
+            "{} {}",
+            if check { "would format" } else { "formatted" },
+            file.display()
+        );
     }
     println!(
         "{} view! block(s) checked across {} file(s); {} block(s) skipped because they could not be parsed (left unchanged)",
@@ -2578,7 +2581,9 @@ mod tests {
         let p = dev_state_path(Path::new("proj"));
         assert_eq!(
             p,
-            Path::new("proj").join("target").join("tpt-appfront-dev-state.json")
+            Path::new("proj")
+                .join("target")
+                .join("tpt-appfront-dev-state.json")
         );
     }
 
@@ -3239,7 +3244,10 @@ mod add_kind_tests {
         assert!(login.contains("pub fn login<Msg"), "{login}");
         let mod_rs = fs::read_to_string(dir.join("src/templates/mod.rs")).unwrap();
         assert!(mod_rs.contains("pub mod settings;"), "{mod_rs}");
-        assert!(add_template("login", &dir).is_err(), "second add must refuse");
+        assert!(
+            add_template("login", &dir).is_err(),
+            "second add must refuse"
+        );
         assert!(add_template("carousel", &dir).is_err(), "unknown piece");
         let _ = fs::remove_dir_all(&dir);
     }
