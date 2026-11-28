@@ -36,6 +36,44 @@ tpt-appfront dev --web --project myapp/dom          # browser, `trunk serve`
 
 `--project` defaults to `.`, so these also work run from inside the crate directory itself with no flag.
 
+### Keeping state across hot reload
+
+Each source change restarts the app, which resets every plain `Signal` to its initial value. Use `Signal::persisted` for state that should survive a restart:
+
+```rust
+let count = Signal::persisted("counter.count", 0);
+```
+
+While `tpt-appfront dev` runs:
+
+- **Native** (`--desktop`, `--tui`, `--desktop-webview` host): each write is saved to `target/tpt-appfront-dev-state.json`, and the next start reads it back.
+- **Browser** (`--web`, debug builds): values are saved in `sessionStorage`, so they survive the page reload that `trunk serve` triggers.
+
+Keys are the names you pass in. Renaming a signal starts it fresh, and a saved value that no longer fits the type falls back to the initial value. A new `dev` session clears the native file, so it starts from the initial values. Release builds never save anything.
+
+### Browser error overlay
+
+`dev --web` runs `trunk serve` with its error reporting on. A failed build shows its error over the page, and the page reloads when the next build succeeds. Nothing extra is needed.
+
+### Translations and design tokens
+
+Build a `Catalog` once, install it, and call `t!` from views. A missing key shows the key itself:
+
+```rust
+use tpt_appfront::core::{i18n::{self, Catalog}, t};
+
+let mut catalog = Catalog::new("en");
+catalog.add("en", &[("greeting", "Hello, {name}")]);
+catalog.add("fr", &[("greeting", "Bonjour, {name}")]);
+i18n::install(catalog);
+i18n::set_locale("fr");
+let text = t!("greeting", name = "Ada"); // "Bonjour, Ada"
+```
+
+Lookup tries the exact locale, then its language (`fr-CA` → `fr`), then the default. Changing the locale reruns effects that read `t!`.
+
+Design tokens live in a `Theme` with light and dark values. `theme.to_css()` gives the stylesheet with `--color-primary`-style custom properties and a dark-scheme block. Rust code reads the same values with `theme.value(name, Scheme::Dark)`. Two backends write the stylesheet for you: `tpt_appfront::html::render_page_themed(&ui, title, description, &theme)` puts it in `<head>` of the page, and `tpt_appfront::dom::apply_theme(&theme)` (wasm) writes it to a `<style id="tpt-appfront-theme">`, replacing the earlier tokens on each call. Canvas and TUI read values with `theme.value`.
+
 ## Build
 
 ```sh
@@ -247,8 +285,14 @@ below invoke `cargo +nightly fmt` for you, so you don't run plain `cargo fmt`
 
 ```sh
 tpt-appfront fmt                 # cargo +nightly fmt across workspace + examples
+tpt-appfront fmt --views         # reformat the markup inside view! blocks (in .)
+tpt-appfront fmt --views --check --path src   # report unformatted blocks; fail if any
 tpt-appfront lint                # cargo clippy -D warnings across workspace + examples
 ```
+
+`fmt --views` changes only element structure and indentation. Attribute values and `{ ... }` children are copied verbatim. A block it cannot parse is left unchanged and reported. `tests/ui` directories are skipped, because trybuild compares error positions. A CRLF file stays CRLF.
+
+The VS Code syntax extension for `view!` markup is in `editors/vscode-tpt-appfront/`.
 
 A `justfile` wraps the common tasks (install `just` via `cargo install just`):
 
