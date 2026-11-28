@@ -4,6 +4,7 @@ mod ingest;
 mod llm;
 mod presets;
 mod templates;
+mod viewfmt;
 
 mod config;
 
@@ -208,7 +209,19 @@ enum Command {
         kind: AddKind,
     },
     /// Format the workspace and every standalone example with `cargo +nightly fmt`.
-    Fmt,
+    /// With `--views`, format the markup inside `view!` blocks in the given
+    /// paths (default: the current directory) instead.
+    Fmt {
+        /// Format `view!` blocks instead of running `cargo fmt`.
+        #[arg(long)]
+        views: bool,
+        /// With `--views`: do not write; exit with an error if any file would change.
+        #[arg(long, requires = "views")]
+        check: bool,
+        /// With `--views`: files or directories to format (default: `.`).
+        #[arg(long = "path", requires = "views")]
+        paths: Vec<PathBuf>,
+    },
     /// Lint the workspace and every standalone example with
     /// `cargo clippy --all-targets -- -D warnings`.
     Lint,
@@ -261,6 +274,15 @@ enum AddKind {
         /// Route pattern, e.g. `/users/:id`.
         #[arg(long)]
         path: String,
+        /// Directory of the project to grow (defaults to the current dir).
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Add a module under `src/templates/` that wraps a prebuilt
+    /// `tpt-appfront-templates` piece (login, dashboard or settings).
+    Template {
+        /// One of: login, dashboard, settings.
+        piece: String,
         /// Directory of the project to grow (defaults to the current dir).
         #[arg(long, default_value = ".")]
         project: PathBuf,
@@ -394,8 +416,19 @@ fn main() -> anyhow::Result<()> {
                 project,
             } => add_route(&name, &path, &project),
             AddKind::Test { name, project } => add_test(&name, &project),
+            AddKind::Template { piece, project } => add_template(&piece, &project),
         },
-        Command::Fmt => fmt_cmd(),
+        Command::Fmt {
+            views,
+            check,
+            paths,
+        } => {
+            if views {
+                fmt_views_cmd(&paths, check)
+            } else {
+                fmt_cmd()
+            }
+        }
         Command::Lint => lint_cmd(),
         Command::Completions { shell } => {
             let shell: clap_complete::Shell = shell.parse().map_err(|_| {
@@ -798,7 +831,25 @@ fn root_src_file(project: &Path) -> Option<PathBuf> {
 
 /// Appends `mod <dir>;` to the project's root source file if a `src/<dir>`
 /// module isn't already declared there.
-fn declare_module(project: &Path, dir: &str) -> anyhow::Result<()> {
+/// Wires a new file `src/<dir>/<child>.rs` into the module tree. Rust resolves
+/// `mod <dir>;` only to `src/<dir>.rs` or `src/<dir>/mod.rs`, so this writes
+/// `pub mod <child>;` into `src/<dir>/mod.rs` (created if missing) and declares
+/// `mod <dir>;` in the crate root.
+fn declare_module(project: &Path, dir: &str, child: &str) -> anyhow::Result<()> {
+    let mod_file = project.join("src").join(dir).join("mod.rs");
+    let child_decl = format!("pub mod {child};");
+    let existing = fs::read_to_string(&mod_file).unwrap_or_default();
+    if !existing.lines().any(|line| line.trim() == child_decl) {
+        let mut text = existing;
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&child_decl);
+        text.push('\n');
+        fs::write(&mod_file, text)
+            .with_context(|| format!("updating {}", mod_file.display()))?;
+    }
+
     let Some(root) = root_src_file(project) else {
         return Ok(());
     };
@@ -825,7 +876,7 @@ fn add_component(name: &str, project: &Path) -> anyhow::Result<()> {
         bail!("component `{}` already exists at {}", name, file.display());
     }
     fs::write(&file, templates::component_rs(name, &kebab_case(name)))?;
-    declare_module(project, "components")?;
+    declare_module(project, "components", &name.to_ascii_lowercase())?;
     println!("Created component `{}` at {}", name, file.display());
     Ok(())
 }
@@ -839,7 +890,7 @@ fn add_page(name: &str, project: &Path) -> anyhow::Result<()> {
         bail!("page `{}` already exists at {}", name, file.display());
     }
     fs::write(&file, templates::page_rs(name, &kebab_case(name)))?;
-    declare_module(project, "pages")?;
+    declare_module(project, "pages", &name.to_ascii_lowercase())?;
     println!("Created page `{}` at {}", name, file.display());
     Ok(())
 }
@@ -911,7 +962,7 @@ fn add_store(name: &str, project: &Path) -> anyhow::Result<()> {
         &templates::store_rs(name, &snake),
         &format!("store `{name}`"),
     )?;
-    declare_module(project, "stores")?;
+    declare_module(project, "stores", &snake)?;
     println!("Created store `{name}` at {}", file.display());
     Ok(())
 }
@@ -925,7 +976,7 @@ fn add_form(name: &str, project: &Path) -> anyhow::Result<()> {
         &templates::form_rs(name, &snake),
         &format!("form `{name}`"),
     )?;
-    declare_module(project, "forms")?;
+    declare_module(project, "forms", &snake)?;
     println!("Created form `{name}` at {}", file.display());
     Ok(())
 }
@@ -940,11 +991,35 @@ fn add_route(name: &str, pattern: &str, project: &Path) -> anyhow::Result<()> {
         &templates::route_rs(name, &snake, pattern),
         &format!("page `{name}`"),
     )?;
-    declare_module(project, "pages")?;
+    declare_module(project, "pages", &snake)?;
     println!(
         "Created route page `{name}` for `{pattern}` at {}\nRegister it with RouteTable::route(\"{pattern}\", {snake}).",
         file.display()
     );
+    Ok(())
+}
+
+/// `add template <piece>`: writes `src/templates/<piece>.rs`, a generic wrapper
+/// around a prebuilt `tpt-appfront-templates` piece.
+fn add_template(piece: &str, project: &Path) -> anyhow::Result<()> {
+    let Some(piece) = presets::WithPiece::from_str(piece) else {
+        bail!("unknown template `{piece}`: choose login, dashboard or settings");
+    };
+    let file = write_new_file(
+        &project.join("src").join("templates"),
+        &format!("{}.rs", piece.name()),
+        templates::template_rs(piece),
+        &format!("template `{}`", piece.name()),
+    )?;
+    declare_module(project, "templates", piece.name())?;
+    let manifest = fs::read_to_string(project.join("Cargo.toml")).unwrap_or_default();
+    if !manifest.contains("\"templates\"") {
+        println!(
+            "Enable the `templates` feature of the tpt-appfront dependency in Cargo.toml, \
+             for example: features = [\"templates\"]"
+        );
+    }
+    println!("Created template `{}` at {}", piece.name(), file.display());
     Ok(())
 }
 
@@ -1025,6 +1100,12 @@ fn dev(
     if desktop_webview {
         preflight(project, &["webview"], false)?;
     }
+    // A new `dev` session starts from initial signal values. Saved values carry over
+    // only between restarts within one session (see `dev_state_path`).
+    let state = dev_state_path(project);
+    let _ = fs::remove_file(&state);
+    let state_str = state.to_string_lossy().into_owned();
+    let state_env: [(&str, &str); 1] = [(DEV_STATE_ENV, state_str.as_str())];
     match (desktop, web, tui, desktop_webview) {
         (true, true, _, _)
         | (true, _, true, _)
@@ -1036,7 +1117,7 @@ fn dev(
         }
         (true, false, false, false) => {
             if no_reload {
-                run_in(project, "cargo", &["run"], devtools)
+                run_in_env(project, "cargo", &["run"], devtools, &state_env)
             } else {
                 dev_desktop_watch(project, devtools)
             }
@@ -1048,7 +1129,7 @@ fn dev(
             // crate's source and restarts on change (same poll-restart loop as
             // `--desktop`), `--no-reload` runs a single `cargo run`.
             if no_reload {
-                run_in(project, "cargo", &["run"], devtools)
+                run_in_env(project, "cargo", &["run"], devtools, &state_env)
             } else {
                 dev_watch(vec![project.to_path_buf()], move || {
                     spawn_cargo_run(project, devtools)
@@ -1070,7 +1151,7 @@ fn dev(
                 run_in(&ui, "trunk", &["build"], devtools).context(
                     "failed to run `trunk build` — install it with `cargo install trunk`",
                 )?;
-                run_in(project, "cargo", &["run"], devtools)
+                run_in_env(project, "cargo", &["run"], devtools, &state_env)
             } else {
                 // Hot reload: watch both the host crate and the nested `ui/`
                 // trunk app, rebuild `ui/` on change, and restart the host.
@@ -1093,6 +1174,19 @@ fn dev(
             )
         }
     }
+}
+
+/// Environment variable the core crate reads to find the dev-state file. Must
+/// match `tpt_appfront_core::dev_state::DEV_STATE_ENV`; the CLI does not depend
+/// on the core crate.
+const DEV_STATE_ENV: &str = "TPT_APPFRONT_DEV_STATE";
+
+/// Where `Signal::persisted` values are saved during a `dev` session. It lives
+/// under `target/` so it is never committed. `dev` clears it at start, so a fresh
+/// session starts from the initial values, while each restart within a session
+/// keeps them.
+fn dev_state_path(project: &Path) -> PathBuf {
+    project.join("target").join("tpt-appfront-dev-state.json")
 }
 
 /// Returns the `ui/` subdirectory (a `trunk` app) of a webview host project,
@@ -1263,6 +1357,7 @@ fn spawn_cargo_run(project: &Path, devtools: bool) -> anyhow::Result<Child> {
     if devtools {
         cmd.env("TPT_APPFRONT_DEVTOOLS", "1");
     }
+    cmd.env(DEV_STATE_ENV, dev_state_path(project));
     cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             anyhow::anyhow!(
@@ -1799,6 +1894,87 @@ fn example_dirs() -> Vec<PathBuf> {
 /// (`group_imports` / `imports_granularity` / `format_code_in_doc_comments`)
 /// that the stable formatter silently ignores, so nightly must be the formatter
 /// or CI's `fmt` job will reject the diff.
+/// `tpt-appfront fmt --views [--check] [--path <p>]...`: formats `view!` blocks in
+/// every `.rs` file under the given paths, skipping `target/` and hidden
+/// directories. Blocks the formatter cannot parse are left as they are and
+/// reported. With `--check`, nothing is written, and the command fails when any
+/// file would change.
+fn fmt_views_cmd(paths: &[PathBuf], check: bool) -> anyhow::Result<()> {
+    let roots: Vec<PathBuf> = if paths.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        paths.to_vec()
+    };
+    let mut files = Vec::new();
+    for root in &roots {
+        if root.is_file() {
+            files.push(root.clone());
+        } else {
+            rust_files(root, &mut files);
+        }
+    }
+    files.sort();
+
+    let (mut changed_files, mut blocks, mut skipped) = (Vec::new(), 0, 0);
+    for file in &files {
+        let Ok(src) = fs::read_to_string(file) else {
+            eprintln!("skipping {} (not readable as UTF-8 text)", file.display());
+            continue;
+        };
+        let formatted = viewfmt::format_source(&src);
+        blocks += formatted.blocks;
+        skipped += formatted.skipped;
+        if formatted.text != src {
+            if !check {
+                fs::write(file, &formatted.text)
+                    .with_context(|| format!("writing {}", file.display()))?;
+            }
+            changed_files.push(file.clone());
+        }
+    }
+
+    for file in &changed_files {
+        println!("{} {}", if check { "would format" } else { "formatted" }, file.display());
+    }
+    println!(
+        "{} view! block(s) checked across {} file(s); {} block(s) skipped because they could not be parsed (left unchanged)",
+        blocks,
+        files.len(),
+        skipped
+    );
+    if check && !changed_files.is_empty() {
+        bail!(
+            "{} file(s) have unformatted view! blocks; run `tpt-appfront fmt --views` to fix them",
+            changed_files.len()
+        );
+    }
+    Ok(())
+}
+
+/// Collects every `.rs` file under `dir`, skipping `target/` and directories
+/// whose names start with `.`.
+fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            // `tests/ui` holds trybuild cases whose expected errors record source
+            // positions, so reformatting them would break those snapshots.
+            let in_tests = dir.file_name().is_some_and(|n| n == "tests");
+            if name == "target" || name.starts_with('.') || (name == "ui" && in_tests) {
+                continue;
+            }
+            rust_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
 fn fmt_cmd() -> anyhow::Result<()> {
     run_in(
         Path::new("."),
@@ -2398,6 +2574,15 @@ mod tests {
     }
 
     #[test]
+    fn dev_state_file_lives_under_target() {
+        let p = dev_state_path(Path::new("proj"));
+        assert_eq!(
+            p,
+            Path::new("proj").join("target").join("tpt-appfront-dev-state.json")
+        );
+    }
+
+    #[test]
     fn dev_rejects_conflicting_flags() {
         let dir = PathBuf::from(".");
         assert!(dev(true, true, false, false, false, false, &dir).is_err());
@@ -2874,7 +3059,7 @@ opt-level = 3
         let file = dir.join("src").join("components").join("userbadge.rs");
         assert!(file.exists(), "component file created");
         let src = fs::read_to_string(&file).unwrap();
-        assert!(src.contains("pub fn UserBadge(on_activate: Rc<dyn Fn()>) -> UITree<Msg>"));
+        assert!(src.contains("pub fn UserBadge() -> UITree<Msg>"));
         assert!(src.contains("class=\"user-badge\""));
 
         let root = fs::read_to_string(dir.join("src").join("lib.rs")).unwrap();
@@ -3024,6 +3209,38 @@ mod add_kind_tests {
             add_test("checkout_flow", &dir).is_err(),
             "second add must refuse"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_component_writes_mod_file_so_the_module_resolves() {
+        let dir = scratch("modfile");
+        add_component("UserBadge", &dir).unwrap();
+        add_component("Avatar", &dir).unwrap();
+        let mod_rs = fs::read_to_string(dir.join("src/components/mod.rs")).unwrap();
+        assert!(mod_rs.contains("pub mod userbadge;"), "{mod_rs}");
+        assert!(mod_rs.contains("pub mod avatar;"), "{mod_rs}");
+        let root = fs::read_to_string(dir.join("src/main.rs")).unwrap();
+        assert_eq!(root.matches("mod components;").count(), 1, "{root}");
+        // Declaring the same child again must not duplicate its line.
+        declare_module(&dir, "components", "avatar").unwrap();
+        let mod_rs = fs::read_to_string(dir.join("src/components/mod.rs")).unwrap();
+        assert_eq!(mod_rs.matches("pub mod avatar;").count(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_template_writes_the_piece_and_rejects_unknown_names() {
+        let dir = scratch("template");
+        add_template("login", &dir).unwrap();
+        add_template("settings", &dir).unwrap();
+        assert!(dir.join("src/templates/login.rs").is_file());
+        let login = fs::read_to_string(dir.join("src/templates/login.rs")).unwrap();
+        assert!(login.contains("pub fn login<Msg"), "{login}");
+        let mod_rs = fs::read_to_string(dir.join("src/templates/mod.rs")).unwrap();
+        assert!(mod_rs.contains("pub mod settings;"), "{mod_rs}");
+        assert!(add_template("login", &dir).is_err(), "second add must refuse");
+        assert!(add_template("carousel", &dir).is_err(), "unknown piece");
         let _ = fs::remove_dir_all(&dir);
     }
 }

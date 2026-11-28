@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `add component|page|store|form|route` declared `mod <dir>;` without creating `<dir>/mod.rs`, so the generated project did not compile (E0583). Each add now writes `pub mod <child>;` into `src/<dir>/mod.rs` as well.
+- The `add component` scaffold passed a closure to `on_click`, which takes a `Msg`, so it did not compile. The component now takes no arguments and sends `Msg::Activated`.
+
 ### Added
+- `add template login|dashboard|settings` writes `src/templates/<piece>.rs`, a generic wrapper around the matching `tpt-appfront-templates` piece. It needs the umbrella's `templates` feature.
+- `fmt --views [--check] [--path <p>]...` reformats the markup inside `view!` blocks. Expressions are copied verbatim. A block it cannot parse is left unchanged and reported. `tests/ui` directories are skipped. CRLF files keep CRLF. The default `fmt` still runs `cargo +nightly fmt`.
+- VS Code syntax extension for `view!` markup (`editors/vscode-tpt-appfront`), an injection grammar checked with `vscode-textmate`.
+- VS Code snippets for `view!` tags, `t!`, `#[component]` and `Signal::persisted` (`.vscode/tpt-appfront.code-snippets`).
+- `dev` sets `TPT_APPFRONT_DEV_STATE` for native runs, so `Signal::persisted` values survive hot-reload restarts. The state file is cleared at the start of each `dev` session.
 - `init --preset login|dashboard|crud-app|saas-starter` scaffolds a runnable DOM app
   from `tpt-appfront-templates` (+ `view!`) wired to `Signal`-backed state.
 - `init --with login,dashboard,settings` composes an à la carte DOM app from the selected
