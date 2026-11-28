@@ -182,7 +182,13 @@ struct SignalInner<T> {
     /// how often this signal is written. `None` (the default) means the signal
     /// is anonymous and never contributes to the activity log.
     label: Option<String>,
+    /// Set only for signals created by [`Signal::persisted`] while dev-state
+    /// persistence is on: called with the new value on every write.
+    persist: Option<PersistFn<T>>,
 }
+
+/// The write hook of a [`Signal::persisted`] signal.
+type PersistFn<T> = Box<dyn Fn(&T)>;
 
 // ---------------------------------------------------------------------------
 // Optional signal-write activity tracking (devtools inspector).
@@ -229,6 +235,7 @@ impl<T: 'static> Signal<T> {
                 members: HashMap::new(),
                 memo_effect: None,
                 label: None,
+                persist: None,
             })),
         }
     }
@@ -325,7 +332,13 @@ impl<T: 'static> Signal<T> {
     /// still alive) before returning. Inside `batch()`, affected effects are
     /// deferred and deduped until the outermost `batch()` call exits.
     pub fn set(&self, value: T) {
-        self.inner.borrow_mut().value = value;
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.value = value;
+            if let Some(persist) = &inner.persist {
+                persist(&inner.value);
+            }
+        }
         self.notify();
     }
 
@@ -371,6 +384,32 @@ impl<T: Clone + 'static> Signal<T> {
     pub fn get(&self) -> T {
         self.track();
         self.inner.borrow().value.clone()
+    }
+}
+
+impl<T: serde::Serialize + DeserializeOwned + 'static> Signal<T> {
+    /// A signal whose value survives hot reload in `tpt-appfront dev`.
+    ///
+    /// While dev-state persistence is on (see [`crate::dev_state`]), the initial
+    /// value is the one saved under `name` by a previous run, if it still
+    /// deserializes to `T`, and every write is saved under `name`. Otherwise this
+    /// is the same as [`Signal::new`]: release builds and apps run without the
+    /// dev server get `init` and no saving.
+    pub fn persisted(name: &str, init: T) -> Self {
+        if !crate::dev_state::enabled() {
+            return Signal::new(init);
+        }
+        let value = crate::dev_state::load(name)
+            .and_then(|saved| serde_json::from_value::<T>(saved).ok())
+            .unwrap_or(init);
+        let signal = Signal::new(value);
+        let key = name.to_string();
+        signal.inner.borrow_mut().persist = Some(Box::new(move |value: &T| {
+            if let Ok(saved) = serde_json::to_value(value) {
+                crate::dev_state::save(&key, saved);
+            }
+        }));
+        signal
     }
 }
 

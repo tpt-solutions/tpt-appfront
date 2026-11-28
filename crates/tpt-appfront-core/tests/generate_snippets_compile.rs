@@ -77,7 +77,9 @@ fn fallback_snippet_compiles() {
     let _ui: UITree<Msg> = view! {
         <Container class="app">
             <Heading level={1u8}>"Hello"</Heading>
-            <Text>"Describe your UI more specifically (e.g. \"counter\", \"login form\", \"todo list\", \"card\", \"nav bar\") for a closer starting point."</Text>
+            <Text>
+                "Describe your UI more specifically (e.g. \"counter\", \"login form\", \"todo list\", \"card\", \"nav bar\") for a closer starting point."
+            </Text>
         </Container>
     };
 }

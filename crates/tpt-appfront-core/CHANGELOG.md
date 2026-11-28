@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `i18n` module: `Catalog` (per-locale strings with language and default-locale fallback, `add`, `add_json`), `install`, `set_locale`/`locale` (the locale is a `Signal`, so effects that call `t!` rerun on change), and the `t!` macro (`t!("key")`, `t!("key", name = value)`).
+- `text_words` module: the visible-text word helpers (`words`, `expected_words`, `required_words`) moved here from `tpt-appfront-test::parity`, which re-exports them. Core has no TUI dependency, so a wasm test can use them.
+- `theme` module: `Theme` design tokens with light and dark values, `value` lookup, and `to_css()` emitting `:root` custom properties plus a `prefers-color-scheme: dark` block.
+- `Signal::persisted(name, init)` keeps its value across `tpt-appfront dev` restarts (state-preserving hot reload). It is saved to `target/tpt-appfront-dev-state.json` for native dev runs and to `sessionStorage` for debug wasm builds, and it behaves like `Signal::new` otherwise. New module `dev_state` (`DEV_STATE_ENV`).
 - `ContainerBuilder` now exposes `textarea`, `checkbox`, `select`, and
   `radio_group` node builders (consumed by the `view!` macro's
   `Textarea`/`Checkbox`/`Select`/`Radio` tags).

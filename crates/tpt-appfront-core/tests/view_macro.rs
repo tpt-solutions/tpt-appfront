@@ -187,10 +187,14 @@ fn static_subtree_inside_dynamic_root_still_builds() {
 #[test]
 fn static_view_is_reproducible_across_calls() {
     let a: UITree<Msg> = view! {
-        <Container><Text>"same"</Text></Container>
+        <Container>
+            <Text>"same"</Text>
+        </Container>
     };
     let b: UITree<Msg> = view! {
-        <Container><Text>"same"</Text></Container>
+        <Container>
+            <Text>"same"</Text>
+        </Container>
     };
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
 }
@@ -360,9 +364,7 @@ fn node_expr_child_is_appended_via_with() {
 fn control_flow_marks_view_dynamic() {
     let flag = true;
     let ui: UITree<Msg> = view! {
-        <Container>
-            {if flag { <Text>"x"</Text> }}
-        </Container>
+        <Container>{if flag { <Text>"x"</Text> }}</Container>
     };
     assert!(
         ui.meta.is_dynamic,
