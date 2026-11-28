@@ -359,7 +359,7 @@ Source: full-project review (plan: `.claude/plans/review-project-fix-any-zippy-l
 - [x] `insta`-style `assert_snapshot!` (update flag), a signal/`Resource` test driver, and `assert_accessible` action-params check in `tpt-appfront-test`. *(2026-11-28: `assert_snapshot!` in `snapshot.rs`, `ResourceDriver` in `resource.rs`, and the `action-without-params` lint rule. The signal-level driver is not separate: `ResourceDriver` covers loads, and signals are exercised by core's own tests)*
 - [ ] `view!` tooling: `tpt-appfront fmt` formats macro bodies; VS Code snippets (then TextMate grammar extension)
 - [~] `dev`: replace the polling watcher with `notify`; browser dev error overlay *(2026-11-28: the watcher now uses `notify` to wake the loop, and content hashes still decide what counts as a change (`crates/tpt-appfront-cli/src/main.rs`). The browser dev error overlay is still open)*
-- [~] CLI: `add store|route|form|test` done (2026-11-28, `crates/tpt-appfront-cli/src/main.rs`; the generated code is not compiled in CI yet). Still open: `add template`; `migrate` (wire `ingest` + `docs/migration/*`); cargo-generate template repo; PR-friendly `CONTRIBUTING.md`
+- [~] CLI: `add store|route|form|test` done (2026-11-28, `crates/tpt-appfront-cli/src/main.rs`; the generated code is not compiled in CI yet). `migrate` is done (2026-11-28): it links the guide for react, leptos or dioxus, and `--html` runs ingest. Still open: `add template`; cargo-generate template repo; PR-friendly `CONTRIBUTING.md`
 
 ### 24d — Innovative additions
 - [x] `llms.txt` / OpenAPI export from the AI schema *(Done: `to_llms_txt` and `to_openapi` in `tpt-appfront-ai-schema`)*
