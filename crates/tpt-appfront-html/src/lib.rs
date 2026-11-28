@@ -41,6 +41,21 @@ pub fn render_page<Msg>(ui: &UITree<Msg>, title: &str, description: &str) -> Str
     )
 }
 
+/// Like [`render_page`], with the design tokens of `theme` as a `<style>` block
+/// in `<head>` (see `tpt_appfront_core::theme`). The token values are trusted
+/// CSS written by the app. A `<` in a value is escaped as a CSS hex escape, so
+/// a value cannot close the `<style>` element.
+pub fn render_page_themed<Msg>(
+    ui: &UITree<Msg>,
+    title: &str,
+    description: &str,
+    theme: &tpt_appfront_core::theme::Theme,
+) -> String {
+    let css = theme.to_css().replace('<', "\\3c ");
+    let style = format!("<style>\n{css}</style>\n");
+    render_page(ui, title, description).replacen("</head>", &format!("{style}</head>"), 1)
+}
+
 // ---------------------------------------------------------------------------
 // Node rendering
 // ---------------------------------------------------------------------------
@@ -613,5 +628,21 @@ mod tests {
                 .ai_action("submit")
                 .ai_param("key", "val");
         })
+    }
+
+    #[test]
+    fn themed_page_puts_tokens_in_head_and_escapes_style_breakout() {
+        use tpt_appfront_core::theme::Theme;
+        let ui = ui_tree();
+        let theme = Theme::new()
+            .light("color.primary", "#2563eb")
+            .light("font.family", "</style><script>x</script>");
+        let html = render_page_themed(&ui, "T", "D", &theme);
+        let style_start = html.find("<style>").expect("style block");
+        let head_end = html.find("</head>").expect("head end");
+        assert!(style_start < head_end, "style is inside head");
+        assert!(html.contains("--color-primary: #2563eb;"));
+        assert!(!html.contains("</style><script>"), "value cannot break out of style");
+        assert_eq!(html.matches("</style>").count(), 1);
     }
 }

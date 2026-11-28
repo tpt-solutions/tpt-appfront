@@ -2341,3 +2341,28 @@ where
 
     Ok(needs_hydration)
 }
+
+/// Id of the `<style>` element that [`apply_theme`] writes into `<head>`.
+pub const THEME_STYLE_ID: &str = "tpt-appfront-theme";
+
+/// Applies a theme's design tokens (see `tpt_appfront_core::theme`) by writing
+/// them to a `<style id="tpt-appfront-theme">` in `<head>`. A later call replaces
+/// the earlier tokens, so switching themes is one call. Token values are trusted
+/// CSS written by the app.
+pub fn apply_theme(theme: &tpt_appfront_core::theme::Theme) -> Result<(), wasm_bindgen::JsValue> {
+    let doc = document()?;
+    let style = match doc.get_element_by_id(THEME_STYLE_ID) {
+        Some(existing) => existing,
+        None => {
+            let el = doc.create_element("style")?;
+            el.set_id(THEME_STYLE_ID);
+            let head = doc
+                .query_selector("head")?
+                .ok_or_else(|| wasm_bindgen::JsValue::from_str("no <head> element"))?;
+            head.append_child(&el)?;
+            el
+        }
+    };
+    style.set_text_content(Some(&theme.to_css()));
+    Ok(())
+}
