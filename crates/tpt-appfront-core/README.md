@@ -38,7 +38,7 @@ builds on.
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
+tpt-appfront-core = "0.2"
 ```
 
 This crate has no Cargo features.

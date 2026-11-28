@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - Initial umbrella crate. It re-exports `tpt-appfront-core` as `tpt_appfront::core`
   and adds one feature flag per backend: `dom`, `canvas`, `tui`, `html`, `ai-schema`,

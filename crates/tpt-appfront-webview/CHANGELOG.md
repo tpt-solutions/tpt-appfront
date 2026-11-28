@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - macOS clipboard: `clipboard.read` and `clipboard.write` use `NSPasteboard` (plain text).
   The dependency is `objc2-app-kit`, MIT or Zlib/Apache-2.0/MIT. Compile-checked for macOS

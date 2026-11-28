@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - `MountedRoot::render` reconciles a mounted tree against a new `UITree` in place.
   `MountedRoot::unmount` removes every tracked event listener and drops every

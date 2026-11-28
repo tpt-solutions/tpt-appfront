@@ -49,8 +49,8 @@ always reflect the current state.
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-mcp = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-mcp = "0.2"
 ```
 
 This crate has no Cargo feature flags.

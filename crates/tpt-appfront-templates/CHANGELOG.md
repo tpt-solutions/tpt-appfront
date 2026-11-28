@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - Starter presets in the CLI (`tpt-appfront init --preset login|dashboard|crud-app|
   saas-starter`) are built on these templates, wired to live `Signal`-backed state.

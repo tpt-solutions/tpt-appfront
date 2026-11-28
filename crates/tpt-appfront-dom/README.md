@@ -50,8 +50,8 @@ Mounting and updating (`container` is a `web_sys::Element`, `dispatch` is
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-dom = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-dom = "0.2"
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["Document", "Window", "Element"] }
 ```

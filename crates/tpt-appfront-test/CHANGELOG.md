@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - Initial crate: `Harness<Msg>`, a headless harness for `UITree`s with `new`,
   `rerender`, `tree`, `snapshot`, `find_by_text`, `find_by_role`, `find_by_key`,

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Changed (breaking)
 - The HTTP layer is built on hyper instead of axum and tower-http. Both pulled in
   `sync_wrapper`, which the license policy bans. The public types changed:

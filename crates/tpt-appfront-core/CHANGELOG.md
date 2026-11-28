@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - `i18n` module: `Catalog` (per-locale strings with language and default-locale fallback, `add`, `add_json`), `install`, `set_locale`/`locale` (the locale is a `Signal`, so effects that call `t!` rerun on change), and the `t!` macro (`t!("key")`, `t!("key", name = value)`).
 - `text_words` module: the visible-text word helpers (`words`, `expected_words`, `required_words`) moved here from `tpt-appfront-test::parity`, which re-exports them. Core has no TUI dependency, so a wasm test can use them.

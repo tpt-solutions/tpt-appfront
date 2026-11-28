@@ -55,11 +55,11 @@ Re-exported from `src/lib.rs`:
 
 ```toml
 [dev-dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-test = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-test = "0.2"
 
 # for the parity checker
-# tpt-appfront-test = { version = "0.1", features = ["parity"] }
+# tpt-appfront-test = { version = "0.2", features = ["parity"] }
 ```
 
 ## Example

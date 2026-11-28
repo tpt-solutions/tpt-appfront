@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - `Select` and `Radio` are interactive. A click, Enter, Space, or an arrow key steps through the
   options and reports the new value through `on_input`. `Radio` is keyboard-focusable.

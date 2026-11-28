@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - `to_llms_txt`: an `llms.txt`-style Markdown summary of a page (content and interactive
   elements with their actions and params).

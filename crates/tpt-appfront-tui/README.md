@@ -37,8 +37,8 @@ terminal app.
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-tui = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-tui = "0.2"
 anyhow = "1"
 ```
 

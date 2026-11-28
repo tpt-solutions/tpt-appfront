@@ -10,7 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.2" }
 taffy = "0.15"
 # Reads glyph outlines for the internal painter (crate::glyphs). MIT/Apache-2.0.
 ttf-parser = "0.25"

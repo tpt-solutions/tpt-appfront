@@ -6,7 +6,7 @@ Cargo feature flag, so one dependency can cover the backends an app uses.
 
 ```toml
 [dependencies]
-tpt-appfront = { version = "0.1", features = ["html", "test"] }
+tpt-appfront = { version = "0.2", features = ["html", "test"] }
 ```
 
 ```rust
@@ -83,7 +83,7 @@ headless tests:
 
 ```toml
 [dependencies]
-tpt-appfront = { version = "0.1", features = ["html", "server", "test"] }
+tpt-appfront = { version = "0.2", features = ["html", "server", "test"] }
 ```
 
 ## License

@@ -10,16 +10,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.1" }
-tpt-appfront-dom = { path = "../tpt-appfront-dom", version = "0.1", optional = true }
-tpt-appfront-canvas = { path = "../tpt-appfront-canvas", version = "0.1", optional = true }
-tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.1", optional = true }
-tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema", version = "0.1", optional = true }
-tpt-appfront-server = { path = "../tpt-appfront-server", version = "0.1", optional = true }
-tpt-appfront-tui = { path = "../tpt-appfront-tui", version = "0.1", optional = true }
-tpt-appfront-mcp = { path = "../tpt-appfront-mcp", version = "0.1", optional = true }
-tpt-appfront-test = { path = "../tpt-appfront-test", version = "0.1", optional = true }
-tpt-appfront-templates = { path = "../tpt-appfront-templates", version = "0.1", optional = true }
+tpt-appfront-core = { path = "../tpt-appfront-core", version = "0.2" }
+tpt-appfront-dom = { path = "../tpt-appfront-dom", version = "0.2", optional = true }
+tpt-appfront-canvas = { path = "../tpt-appfront-canvas", version = "0.2", optional = true }
+tpt-appfront-html = { path = "../tpt-appfront-html", version = "0.2", optional = true }
+tpt-appfront-ai-schema = { path = "../tpt-appfront-ai-schema", version = "0.2", optional = true }
+tpt-appfront-server = { path = "../tpt-appfront-server", version = "0.2", optional = true }
+tpt-appfront-tui = { path = "../tpt-appfront-tui", version = "0.2", optional = true }
+tpt-appfront-mcp = { path = "../tpt-appfront-mcp", version = "0.2", optional = true }
+tpt-appfront-test = { path = "../tpt-appfront-test", version = "0.2", optional = true }
+tpt-appfront-templates = { path = "../tpt-appfront-templates", version = "0.2", optional = true }
 
 [features]
 default = []

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - `view!` supports the `Textarea`/`Checkbox`/`Select`/`Radio` tags (self-closing,
   with `on_input` two-way binding and `on_toggle` for checkboxes), matching the

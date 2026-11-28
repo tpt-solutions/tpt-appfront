@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Fixed
 - The interactive node list is rebuilt from each frame's tree (`TuiDriver::refresh`, called by
   `run`). Controls that appear after startup, and controls after a route change, are reachable

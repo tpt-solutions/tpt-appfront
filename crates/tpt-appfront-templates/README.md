@@ -49,8 +49,8 @@ Re-exported from `src/lib.rs`:
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-templates = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-templates = "0.2"
 ```
 
 Or enable the `templates` feature of the umbrella crate, `tpt-appfront`.

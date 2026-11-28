@@ -32,8 +32,8 @@ Output details:
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-html = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-html = "0.2"
 ```
 
 This crate has no Cargo features.

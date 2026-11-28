@@ -27,8 +27,8 @@ needs the complete element set.
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-ai-schema = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-ai-schema = "0.2"
 serde_json = "1"   # to print the output
 ```
 

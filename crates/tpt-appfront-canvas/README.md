@@ -80,8 +80,8 @@ must be `Clone + 'static`.
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-canvas = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-canvas = "0.2"
 ```
 
 ## Example

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Fixed
 - `add component|page|store|form|route` declared `mod <dir>;` without creating `<dir>/mod.rs`, so the generated project did not compile (E0583). Each add now writes `pub mod <child>;` into `src/<dir>/mod.rs` as well.
 - The `add component` scaffold passed a closure to `on_click`, which takes a `Msg`, so it did not compile. The component now takes no arguments and sends `Msg::Activated`.

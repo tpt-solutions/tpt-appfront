@@ -66,8 +66,8 @@ Without `allowed_actions`, every action the handler accepts is allowed.
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
-tpt-appfront-server = "0.1"
+tpt-appfront-core = "0.2"
+tpt-appfront-server = "0.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

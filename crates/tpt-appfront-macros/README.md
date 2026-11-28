@@ -31,7 +31,7 @@ Depend on `tpt-appfront-core`, which re-exports the macros:
 
 ```toml
 [dependencies]
-tpt-appfront-core = "0.1"
+tpt-appfront-core = "0.2"
 ```
 
 ## Example

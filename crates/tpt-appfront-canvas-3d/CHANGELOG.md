@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
 ### Added
 - `SceneDelegate` trait: the contract an external 3D engine implements to drive a viewport.
 - `Viewport3D<D>`: owns a delegate and a viewport size, and forwards resize, frame, pixel
