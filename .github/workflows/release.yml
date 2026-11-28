@@ -47,7 +47,7 @@ jobs:
         run: |
           # Dependencies first. tpt-appfront-webview is `publish = false` and is left out.
           # The umbrella comes after every backend it can enable, and the test crate after core.
-          crates="tpt-appfront-macros tpt-appfront-core tpt-appfront-templates tpt-appfront-test tpt-appfront-html tpt-appfront-ai-schema tpt-appfront-server tpt-appfront-tui tpt-appfront-canvas tpt-appfront-dom tpt-appfront-mcp tpt-appfront tpt-appfront-cli"
+          crates="tpt-appfront-macros tpt-appfront-core tpt-appfront-templates tpt-appfront-canvas-3d tpt-appfront-test tpt-appfront-html tpt-appfront-ai-schema tpt-appfront-server tpt-appfront-tui tpt-appfront-canvas tpt-appfront-dom tpt-appfront-mcp tpt-appfront tpt-appfront-cli"
           echo "dry run: $DRY_RUN"
           for c in $crates; do
             if [ "$DRY_RUN" = "true" ]; then
