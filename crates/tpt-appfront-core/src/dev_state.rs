@@ -44,9 +44,10 @@ pub(crate) fn save(key: &str, value: Value) {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod backend {
-    use super::{Map, Value, DEV_STATE_ENV};
     use std::fs;
     use std::path::PathBuf;
+
+    use super::{Map, Value, DEV_STATE_ENV};
 
     fn path() -> Option<PathBuf> {
         std::env::var_os(DEV_STATE_ENV).map(PathBuf::from)

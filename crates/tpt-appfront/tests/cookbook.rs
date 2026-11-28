@@ -270,10 +270,8 @@ fn readme_hero_example() {
 #[test]
 fn recipe_translations_and_tokens() {
     use tpt_appfront::core::i18n::{self, Catalog};
-    use tpt_appfront::core::{
-        t,
-        theme::{Scheme, Theme},
-    };
+    use tpt_appfront::core::t;
+    use tpt_appfront::core::theme::{Scheme, Theme};
 
     let mut catalog = Catalog::new("en");
     catalog.add("en", &[("greeting", "Hello, {name}")]);

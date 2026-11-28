@@ -185,9 +185,10 @@ mod tests {
 
     #[test]
     fn effect_reruns_when_locale_changes() {
-        use crate::signal::create_effect;
         use std::cell::RefCell;
         use std::rc::Rc;
+
+        use crate::signal::create_effect;
 
         let mut c = sample();
         c.add("en", &[("status", "English")]);

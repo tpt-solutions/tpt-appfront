@@ -20,6 +20,23 @@ enum Msg {
     Go,
 }
 
+/// The text a reader would see under `node`. `text_content` joins adjacent nodes with no
+/// separator, so `<h1>Dashboard Overview</h1>Count` would read as one word, `overviewcount`.
+/// Walking the tree and putting a space after every node keeps the boundaries apart.
+fn visible_text(node: &web_sys::Node, out: &mut String) {
+    if node.node_type() == web_sys::Node::TEXT_NODE {
+        out.push_str(&node.node_value().unwrap_or_default());
+    } else {
+        let children = node.child_nodes();
+        for i in 0..children.length() {
+            if let Some(child) = children.item(i) {
+                visible_text(&child, out);
+            }
+        }
+    }
+    out.push(' ');
+}
+
 #[wasm_bindgen_test]
 fn dom_shows_every_declared_word() {
     let ui: UITree<Msg> = UITree::container(|c: &mut ContainerBuilder<Msg>| {
@@ -33,7 +50,9 @@ fn dom_shows_every_declared_word() {
     document.body().unwrap().append_child(&host).unwrap();
     let _root = mount(&host, &ui, Rc::new(|_: Msg| {})).unwrap();
 
-    let shown = words(&host.text_content().unwrap_or_default());
+    let mut text = String::new();
+    visible_text(&host, &mut text);
+    let shown = words(&text);
     let missing: Vec<String> = required_words(&ui).difference(&shown).cloned().collect();
     assert!(missing.is_empty(), "the DOM dropped words: {missing:?}");
 }

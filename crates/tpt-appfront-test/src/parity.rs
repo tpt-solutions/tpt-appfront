@@ -13,9 +13,8 @@
 
 use std::collections::BTreeSet;
 
-use tpt_appfront_core::UITree;
-
 pub use tpt_appfront_core::text_words::{expected_words, required_words, words};
+use tpt_appfront_core::UITree;
 
 /// Words a backend dropped, or did not show, compared with the core tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
