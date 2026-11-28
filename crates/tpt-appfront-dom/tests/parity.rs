@@ -13,6 +13,8 @@ use tpt_appfront_core::{ContainerBuilder, UITree};
 use tpt_appfront_dom::mount;
 use wasm_bindgen_test::*;
 
+wasm_bindgen_test_configure!(run_in_browser);
+
 #[derive(Debug, Clone, PartialEq)]
 enum Msg {
     Go,
