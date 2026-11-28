@@ -188,6 +188,18 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Start a port from another framework: print its migration guide, and with
+    /// `--html` turn a rendered page into a `view!` skeleton.
+    Migrate {
+        /// The framework you are porting from: `react`, `leptos` or `dioxus`.
+        from: String,
+        /// HTML of the old page, converted to a `view!` skeleton with `ingest`.
+        #[arg(long)]
+        html: Option<PathBuf>,
+        /// Write the skeleton to this file instead of stdout (with `--html`).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Grow an existing project: scaffold a new reusable `view!` component or
     /// route-sized page inside it and wire it into the module tree.
     Add {
@@ -370,6 +382,7 @@ fn main() -> anyhow::Result<()> {
             )
         }
         Command::Ingest { input, out } => ingest::ingest_file(&input, out.as_deref()),
+        Command::Migrate { from, html, out } => migrate_cmd(&from, html.as_deref(), out.as_deref()),
         Command::Add { kind } => match kind {
             AddKind::Component { name, project } => add_component(&name, &project),
             AddKind::Page { name, project } => add_page(&name, &project),
@@ -828,6 +841,32 @@ fn add_page(name: &str, project: &Path) -> anyhow::Result<()> {
     fs::write(&file, templates::page_rs(name, &kebab_case(name)))?;
     declare_module(project, "pages")?;
     println!("Created page `{}` at {}", name, file.display());
+    Ok(())
+}
+
+/// The migration guide for `from`, as a link into the repository.
+fn migration_guide_url(from: &str) -> anyhow::Result<String> {
+    let guide = match from.to_ascii_lowercase().as_str() {
+        "react" => "react",
+        "leptos" => "leptos",
+        "dioxus" => "dioxus",
+        other => bail!("no migration guide for `{other}`; choose react, leptos or dioxus"),
+    };
+    Ok(format!(
+        "{}/blob/master/docs/migration/{guide}.md",
+        env!("CARGO_PKG_REPOSITORY")
+    ))
+}
+
+fn migrate_cmd(from: &str, html: Option<&Path>, out: Option<&Path>) -> anyhow::Result<()> {
+    let url = migration_guide_url(from)?;
+    println!("Migration guide: {url}");
+    println!(
+        "Read the concept map first, then the gotchas. A port usually rewrites the state layer."
+    );
+    if let Some(input) = html {
+        ingest::ingest_file(input, out)?;
+    }
     Ok(())
 }
 
@@ -2898,6 +2937,28 @@ opt-level = 3
             "no duplicate decl"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+
+    #[test]
+    fn each_supported_framework_links_its_guide() {
+        for fw in ["react", "Leptos", "DIOXUS"] {
+            let url = migration_guide_url(fw).unwrap();
+            assert!(
+                url.ends_with(&format!("docs/migration/{}.md", fw.to_ascii_lowercase())),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_framework_names_the_choices() {
+        let err = migration_guide_url("svelte").unwrap_err().to_string();
+        assert!(err.contains("svelte") && err.contains("react"), "{err}");
     }
 }
 
